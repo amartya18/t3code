@@ -34,7 +34,12 @@ export function presentConnectionState(
       return { phase: "offline", error: null, traceId: null };
     case "connecting":
       return {
-        phase: state.attempt <= 1 && state.lastFailure === null ? "connecting" : "reconnecting",
+        // Within the boot grace window a cold backend is still coming up, so
+        // transient failures keep presenting as the initial connection.
+        phase:
+          (state.attempt <= 1 && state.lastFailure === null) || state.bootGrace === true
+            ? "connecting"
+            : "reconnecting",
         error: state.lastFailure?.message ?? null,
         traceId: state.lastFailure?.traceId ?? null,
       };
@@ -42,7 +47,7 @@ export function presentConnectionState(
       return { phase: "connected", error: null, traceId: null };
     case "backoff":
       return {
-        phase: "reconnecting",
+        phase: state.bootGrace === true ? "connecting" : "reconnecting",
         error: state.lastFailure?.message ?? null,
         traceId: state.lastFailure?.traceId ?? null,
       };

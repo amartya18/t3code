@@ -32,6 +32,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
@@ -398,6 +399,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const repositoryIdentityResolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
   const repositoryIdentityResolutionConcurrency = 4;
+  const lastKnownRepositoryIdentities = yield* Ref.make<
+    ReadonlyMap<string, OrchestrationProject["repositoryIdentity"]>
+  >(new Map());
   const resolveRepositoryIdentitiesForProjects = Effect.fn(
     "ProjectionSnapshotQuery.resolveRepositoryIdentitiesForProjects",
   )(function* (
@@ -419,9 +423,19 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           .pipe(Effect.map((identity) => [workspaceRoot, identity] as const)),
       { concurrency: repositoryIdentityResolutionConcurrency },
     ).pipe(Effect.timeoutOption(REPOSITORY_IDENTITY_SNAPSHOT_TIMEOUT));
-    const repositoryIdentityByWorkspaceRoot = new Map(
-      Option.getOrElse(repositoryIdentityEntries, () => []),
-    );
+    // When resolution overruns the snapshot budget, serve identities from the
+    // last completed round instead of dropping them — stale beats missing.
+    const repositoryIdentityByWorkspaceRoot = yield* Option.match(repositoryIdentityEntries, {
+      onNone: () => Ref.get(lastKnownRepositoryIdentities),
+      onSome: (entries) =>
+        Ref.modify(lastKnownRepositoryIdentities, (previous) => {
+          const next = new Map(previous);
+          for (const [workspaceRoot, identity] of entries) {
+            next.set(workspaceRoot, identity);
+          }
+          return [next, next] as const;
+        }),
+    });
 
     return new Map(
       filteredProjectRows.map((row) => [

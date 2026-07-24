@@ -23,6 +23,8 @@ import { isCommandAvailable, resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
 import * as FileSystem from "effect/FileSystem";
@@ -68,6 +70,16 @@ interface TargetPathAndPosition {
 }
 
 const TARGET_WITH_POSITION_PATTERN = /^(.*?):(\d+)(?::(\d+))?$/;
+// Editor discovery stats every PATH entry for each of ~20 editor commands.
+// Endpoint-security agents (e.g. CrowdStrike Falcon) tax each stat, so a cold
+// scan can take tens of seconds — long enough to blow the client's
+// connection-establishment budget when it runs inline in getConfig. Scans run
+// in the background instead: the first caller waits a bounded interval for the
+// initial scan, later callers get the cached snapshot immediately and trigger
+// an out-of-band rescan at most once per interval.
+const INITIAL_EDITOR_SCAN_WAIT = Duration.seconds(5);
+const EDITOR_RESCAN_INTERVAL = Duration.minutes(5);
+const EDITOR_PROBE_CONCURRENCY = 8;
 const POWERSHELL_ARGUMENTS_PREFIX = [
   "-NoProfile",
   "-NonInteractive",
@@ -426,23 +438,18 @@ const buildAvailableEditors = Effect.fn("externalLauncher.buildAvailableEditors"
   never,
   FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
 > {
-  const available: EditorId[] = [];
+  const availability = yield* Effect.forEach(
+    EDITORS,
+    (editor) =>
+      editor.commands === null
+        ? resolveUsableFileManagerCommand(platform, env).pipe(
+            Effect.map((command) => command !== undefined),
+          )
+        : resolveAvailableCommand(editor.commands, env).pipe(Effect.map(Option.isSome)),
+    { concurrency: EDITOR_PROBE_CONCURRENCY },
+  );
 
-  for (const editor of EDITORS) {
-    if (editor.commands === null) {
-      if ((yield* resolveUsableFileManagerCommand(platform, env)) !== undefined) {
-        available.push(editor.id);
-      }
-      continue;
-    }
-
-    const command = yield* resolveAvailableCommand(editor.commands, env);
-    if (Option.isSome(command)) {
-      available.push(editor.id);
-    }
-  }
-
-  return available;
+  return EDITORS.filter((_, index) => availability[index] === true).map((editor) => editor.id);
 });
 
 const resolveBrowserLaunch = Effect.fn("externalLauncher.resolveBrowserLaunch")(function* (
@@ -466,29 +473,6 @@ const resolveFileManagerRevealKind = Effect.fn("externalLauncher.resolveFileMana
     return yield* fileManagerRevealKindForPlatform(platform, env);
   },
 );
-
-// Editor discovery walks PATH for every known editor and runs for every
-// client connect (the server config embeds the available editors). Memoize
-// the discovered set for a bounded window so repeat connects skip even the
-// per-command cache lookups in @t3tools/shared/shell.
-//
-// This deliberately does not use `Effect.cachedWithTTL`: that memoizes the
-// first caller's Exit whatever it is, including an interrupt. Callers run this
-// on the connection fiber under a timeout (`resolveAvailableEditorsForConfig`),
-// so one client disconnecting mid-scan would cache the interrupt and replay it
-// to every later connect for the whole TTL, breaking `server.getConfig`
-// permanently. Storing only on success means an interrupted scan leaves the
-// cache untouched and the next connect simply rescans.
-// Expiry uses the monotonic clock (Clock.currentTimeNanos), matching the
-// command-resolution cache in @t3tools/shared/shell, so a backward wall-clock
-// adjustment cannot keep an expired entry alive.
-const EDITOR_DISCOVERY_CACHE_TTL_NANOS = 60_000_000_000n;
-
-interface EditorDiscoveryCacheEntry {
-  readonly editors: ReadonlyArray<EditorId>;
-  readonly expiresAtNanos: bigint;
-}
-
 /**
  * ExternalLauncher - Service tag for browser/editor launch operations.
  */
@@ -758,30 +742,54 @@ export const make = Effect.gen(function* () {
       Effect.provideService(Path.Path, path),
     );
 
-  const editorDiscoveryCache = yield* Ref.make<Option.Option<EditorDiscoveryCacheEntry>>(
+  const availableEditorsCache = yield* Ref.make<Option.Option<ReadonlyArray<EditorId>>>(
     Option.none(),
   );
-  const cachedAvailableEditors = Effect.gen(function* () {
-    const nowNanos = yield* Clock.currentTimeNanos;
-    const entry = yield* Ref.get(editorDiscoveryCache);
-    if (Option.isSome(entry) && entry.value.expiresAtNanos > nowNanos) {
-      return entry.value.editors;
+  const initialScan = yield* Deferred.make<ReadonlyArray<EditorId>>();
+  const scanInFlight = yield* Ref.make(false);
+  const lastScanAt = yield* Ref.make<number | null>(null);
+
+  const scanAvailableEditors = Effect.gen(function* () {
+    const claimed = yield* Ref.modify(scanInFlight, (busy) => [!busy, true] as const);
+    if (!claimed) {
+      return;
     }
-    const editors = yield* provideCommandResolutionServices(resolveAvailableEditors()).pipe(
+    yield* provideCommandResolutionServices(resolveAvailableEditors()).pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.flatMap((editors) =>
+        Effect.gen(function* () {
+          yield* Ref.set(availableEditorsCache, Option.some(editors));
+          yield* Ref.set(lastScanAt, yield* Clock.currentTimeMillis);
+          yield* Deferred.succeed(initialScan, editors);
+        }),
+      ),
+      Effect.ensuring(Ref.set(scanInFlight, false)),
     );
-    yield* Ref.set(
-      editorDiscoveryCache,
-      Option.some({
-        editors,
-        expiresAtNanos: nowNanos + EDITOR_DISCOVERY_CACHE_TTL_NANOS,
-      }),
+  });
+
+  const rescanWhenStale = Effect.gen(function* () {
+    const scannedAt = yield* Ref.get(lastScanAt);
+    const now = yield* Clock.currentTimeMillis;
+    if (scannedAt !== null && now - scannedAt < Duration.toMillis(EDITOR_RESCAN_INTERVAL)) {
+      return;
+    }
+    yield* Effect.forkDetach(scanAvailableEditors);
+  });
+
+  const currentAvailableEditors = Effect.gen(function* () {
+    yield* rescanWhenStale;
+    const cached = yield* Ref.get(availableEditorsCache);
+    if (Option.isSome(cached)) {
+      return cached.value;
+    }
+    const initial = yield* Deferred.await(initialScan).pipe(
+      Effect.timeoutOption(INITIAL_EDITOR_SCAN_WAIT),
     );
-    return editors;
+    return Option.getOrElse(initial, (): ReadonlyArray<EditorId> => []);
   });
 
   return ExternalLauncher.of({
-    resolveAvailableEditors: () => cachedAvailableEditors,
+    resolveAvailableEditors: () => currentAvailableEditors,
     resolveFileManagerRevealKind: () =>
       provideCommandResolutionServices(resolveFileManagerRevealKind()).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),

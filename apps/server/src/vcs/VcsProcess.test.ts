@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import { TestClock } from "effect/testing";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import {
   VcsProcessExitError,
@@ -314,4 +315,60 @@ describe("VcsProcess.run", () => {
       expect(error).toBeInstanceOf(VcsProcessTimeoutError);
     }).pipe(provideLive),
   );
+
+  it.effect("applies the environment timeout scale to every process timeout", () =>
+    Effect.gen(function* () {
+      const inputs: ProcessRunner.ProcessRunInput[] = [];
+      process.env[VcsProcess.VCS_TIMEOUT_SCALE_ENV_VAR] = "3";
+
+      const service = yield* VcsProcess.make.pipe(
+        Effect.provideService(
+          ProcessRunner.ProcessRunner,
+          ProcessRunner.ProcessRunner.of({
+            run: (input) =>
+              Effect.sync(() => {
+                inputs.push(input);
+                return {
+                  stdout: "",
+                  stderr: "",
+                  code: ChildProcessSpawner.ExitCode(0),
+                  timedOut: false,
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                };
+              }),
+          }),
+        ),
+      );
+
+      yield* service.run({ ...baseInput, timeoutMs: 5_000 });
+      yield* service.run(baseInput);
+
+      expect(inputs[0]?.timeout).toBe(15_000);
+      expect(inputs[1]?.timeout).toBe(90_000);
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          delete process.env[VcsProcess.VCS_TIMEOUT_SCALE_ENV_VAR];
+        }),
+      ),
+    ),
+  );
+});
+
+describe("resolveVcsTimeoutScale", () => {
+  it("defaults to 1 when the variable is unset, empty, or invalid", () => {
+    expect(VcsProcess.resolveVcsTimeoutScale({})).toBe(1);
+    expect(VcsProcess.resolveVcsTimeoutScale({ T3_VCS_TIMEOUT_SCALE: "" })).toBe(1);
+    expect(VcsProcess.resolveVcsTimeoutScale({ T3_VCS_TIMEOUT_SCALE: "  " })).toBe(1);
+    expect(VcsProcess.resolveVcsTimeoutScale({ T3_VCS_TIMEOUT_SCALE: "not-a-number" })).toBe(1);
+    expect(VcsProcess.resolveVcsTimeoutScale({ T3_VCS_TIMEOUT_SCALE: "0" })).toBe(1);
+    expect(VcsProcess.resolveVcsTimeoutScale({ T3_VCS_TIMEOUT_SCALE: "-2" })).toBe(1);
+  });
+
+  it("parses positive scales and caps extreme values", () => {
+    expect(VcsProcess.resolveVcsTimeoutScale({ T3_VCS_TIMEOUT_SCALE: "3" })).toBe(3);
+    expect(VcsProcess.resolveVcsTimeoutScale({ T3_VCS_TIMEOUT_SCALE: "2.5" })).toBe(2.5);
+    expect(VcsProcess.resolveVcsTimeoutScale({ T3_VCS_TIMEOUT_SCALE: "1000" })).toBe(20);
+  });
 });

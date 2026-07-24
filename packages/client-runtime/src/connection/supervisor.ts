@@ -30,10 +30,19 @@ import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
 
 const RETRY_DELAYS_MS = [3_000, 4_000, 8_000, 16_000] as const;
-const CONNECTION_ESTABLISHMENT_TIMEOUT = "15 seconds";
+// Setup traverses several server round-trips (WebSocket open, getConfig); a
+// backend taxed by endpoint-security scanning can legitimately take longer
+// than the fast-machine budget, so leave generous headroom before declaring
+// the attempt dead — retries are cheap, spurious failures churn the UI.
+const CONNECTION_ESTABLISHMENT_TIMEOUT = "30 seconds";
 const CONNECTION_PROBE_TIMEOUT = "15 seconds";
 const MOBILE_CONNECTION_PROBE_TIMEOUT = "3 seconds";
 const BACKOFF_RESET_AFTER_MS = 30_000;
+// A cold backend (especially under endpoint-security scanning) can take tens
+// of seconds before it services requests. Transient failures within this
+// window after the first attempt of a never-connected session present as
+// still-connecting instead of a reconnect failure.
+const BOOT_GRACE_MS = 60_000;
 
 interface SupervisorIntent {
   readonly desired: boolean;
@@ -150,6 +159,7 @@ function connectingState(
   attempt: number,
   lastFailure: ConnectionAttemptError | null,
   stage: SupervisorConnectionState["stage"] = "preparing",
+  bootGrace = false,
 ): SupervisorConnectionState {
   return {
     desired: true,
@@ -160,6 +170,7 @@ function connectingState(
     generation,
     lastFailure,
     retryAt: null,
+    ...(bootGrace ? { bootGrace } : {}),
   };
 }
 
@@ -245,6 +256,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   );
   const session = yield* SubscriptionRef.make<Option.Option<RpcSession.RpcSession>>(Option.none());
   const prepared = yield* SubscriptionRef.make<Option.Option<PreparedConnection>>(Option.none());
+  const bootGraceRef = yield* Ref.make(false);
 
   const clearLease = Effect.all(
     [SubscriptionRef.set(session, Option.none()), SubscriptionRef.set(prepared, Option.none())],
@@ -280,7 +292,14 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       yield* SubscriptionRef.set(prepared, Option.some(progress.prepared));
     }
     yield* setState(
-      connectingState(yield* Ref.get(intent), generation, attempt, lastFailure, progress.stage),
+      connectingState(
+        yield* Ref.get(intent),
+        generation,
+        attempt,
+        lastFailure,
+        progress.stage,
+        yield* Ref.get(bootGraceRef),
+      ),
     );
   });
 
@@ -649,17 +668,21 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       failureCount = 0;
       pendingRetry = Option.none();
     };
+    let hasConnectedOnce = false;
+    let seriesStartedAt: number | null = null;
 
     for (;;) {
       if (yield* Ref.getAndSet(resetRetryState, false)) {
-        failureCount = 0;
+        resetRetryLadder();
         latestFailure = null;
-        pendingRetry = Option.none();
       }
       const currentIntent = yield* Ref.get(intent);
       if (!currentIntent.desired) {
         resetRetryLadder();
         latestFailure = null;
+        hasConnectedOnce = false;
+        seriesStartedAt = null;
+        yield* Ref.set(bootGraceRef, false);
         yield* clearLease;
         yield* setState(availableState(currentIntent, generation));
         yield* waitForSignal;
@@ -675,6 +698,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         continue;
       }
 
+      if (seriesStartedAt === null) {
+        seriesStartedAt = yield* Clock.currentTimeMillis;
+      }
       const attempt = failureCount + 1;
       const nextGeneration = generation + 1;
       const outcome: AttemptOutcome = yield* Effect.scoped(
@@ -685,6 +711,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       const failedWakeProbe = yield* Ref.getAndSet(wakeProbeFailed, false);
       if (outcome.established) {
         generation = nextGeneration;
+        hasConnectedOnce = true;
+        yield* Ref.set(bootGraceRef, false);
         if (outcome.stable) {
           resetRetryLadder();
           latestFailure = null;
@@ -738,6 +766,13 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         reason: error.reason,
       }));
       const failedIntent = yield* Ref.get(intent);
+      const now = yield* Clock.currentTimeMillis;
+      const withinBootGrace =
+        !hasConnectedOnce &&
+        seriesStartedAt !== null &&
+        now - seriesStartedAt < BOOT_GRACE_MS &&
+        error._tag === "ConnectionTransientError";
+      yield* Ref.set(bootGraceRef, withinBootGrace);
       yield* setState({
         desired: failedIntent.desired,
         network: failedIntent.network,
@@ -746,7 +781,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         attempt,
         generation,
         lastFailure: error,
-        retryAt: (yield* Clock.currentTimeMillis) + delayMs,
+        retryAt: now + delayMs,
+        ...(withinBootGrace ? { bootGrace: withinBootGrace } : {}),
       });
       const applicationActivated = yield* waitForRetrySignal(delayMs);
       if (applicationActivated) {
