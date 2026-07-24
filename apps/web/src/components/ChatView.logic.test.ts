@@ -21,6 +21,7 @@ import {
   getStartedThreadModelChangeBlockReason,
   hasServerAcknowledgedLocalDispatch,
   isBranchMismatchDismissedForSession,
+  isPlanSidebarDismissedForThreadTurn,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
   resolveThreadMetadataUpdateForNextTurn,
@@ -83,6 +84,36 @@ const readySession = {
   lastError: null,
   updatedAt: "2026-03-29T00:00:10.000Z",
 };
+
+describe("isPlanSidebarDismissedForThreadTurn", () => {
+  const dismissedTurnByThreadKey = {
+    "environment-local:thread-a": "turn-a",
+  };
+
+  it("keeps a dismissal scoped to its thread and turn", () => {
+    expect(
+      isPlanSidebarDismissedForThreadTurn({
+        dismissedTurnByThreadKey,
+        threadKey: "environment-local:thread-a",
+        turnKey: "turn-a",
+      }),
+    ).toBe(true);
+    expect(
+      isPlanSidebarDismissedForThreadTurn({
+        dismissedTurnByThreadKey,
+        threadKey: "environment-local:thread-b",
+        turnKey: "turn-a",
+      }),
+    ).toBe(false);
+    expect(
+      isPlanSidebarDismissedForThreadTurn({
+        dismissedTurnByThreadKey,
+        threadKey: "environment-local:thread-a",
+        turnKey: "turn-b",
+      }),
+    ).toBe(false);
+  });
+});
 
 describe("resolveThreadMetadataUpdateForNextTurn", () => {
   const modelSelection = {

@@ -252,6 +252,7 @@ import {
   dismissBranchMismatchForSession,
   hasServerAcknowledgedLocalDispatch,
   isBranchMismatchDismissedForSession,
+  isPlanSidebarDismissedForThreadTurn,
   shouldShowBranchMismatchBanner,
   getStartedThreadModelChangeBlockReason,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
@@ -1265,8 +1266,8 @@ function ChatViewContent(props: ChatViewProps) {
   const [pendingUserInputQuestionIndexByRequestId, setPendingUserInputQuestionIndexByRequestId] =
     useState<Record<string, number>>({});
   const shouldUsePlanSidebarSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
-  // Tracks whether the user explicitly dismissed the sidebar for the active turn.
-  const planSidebarDismissedForTurnRef = useRef<string | null>(null);
+  // Tracks whether the user explicitly dismissed the sidebar for a thread's active turn.
+  const planSidebarDismissedTurnByThreadKeyRef = useRef<Record<string, string>>({});
   // When set, the thread-change reset effect will open the sidebar instead of closing it.
   // Used by "Implement in a new thread" to carry the sidebar-open intent across navigation.
   const planSidebarOpenOnNextThreadRef = useRef(false);
@@ -2966,18 +2967,28 @@ function ChatViewContent(props: ChatViewProps) {
     handleInteractionModeChange(interactionMode === "plan" ? "default" : "plan");
   }, [handleInteractionModeChange, interactionMode]);
   const dismissPlanSidebarForCurrentTurn = useCallback(() => {
-    planSidebarDismissedForTurnRef.current =
+    if (!activeThreadKey) return;
+    planSidebarDismissedTurnByThreadKeyRef.current[activeThreadKey] =
       activePlan?.turnId ?? sidebarProposedPlan?.turnId ?? "__dismissed__";
-  }, [activePlan?.turnId, sidebarProposedPlan?.turnId]);
+  }, [activePlan?.turnId, activeThreadKey, sidebarProposedPlan?.turnId]);
+  const clearPlanSidebarDismissalForCurrentThread = useCallback(() => {
+    if (!activeThreadKey) return;
+    delete planSidebarDismissedTurnByThreadKeyRef.current[activeThreadKey];
+  }, [activeThreadKey]);
   const togglePlanSidebar = useCallback(() => {
     if (!activeThreadRef) return;
     if (planSidebarOpen) {
       dismissPlanSidebarForCurrentTurn();
     } else {
-      planSidebarDismissedForTurnRef.current = null;
+      clearPlanSidebarDismissalForCurrentThread();
     }
     useRightPanelStore.getState().toggle(activeThreadRef, "plan");
-  }, [activeThreadRef, dismissPlanSidebarForCurrentTurn, planSidebarOpen]);
+  }, [
+    activeThreadRef,
+    clearPlanSidebarDismissalForCurrentThread,
+    dismissPlanSidebarForCurrentTurn,
+    planSidebarOpen,
+  ]);
   const closePlanSidebar = useCallback(() => {
     if (!activeThreadRef) return;
     setMaximizedRightPanelThreadKey(null);
@@ -3137,7 +3148,7 @@ function ChatViewContent(props: ChatViewProps) {
     (surface: RightPanelSurface) => {
       if (!activeThreadRef) return;
       if (surface.kind === "plan") {
-        planSidebarDismissedForTurnRef.current = null;
+        clearPlanSidebarDismissalForCurrentThread();
       } else if (planSidebarOpen) {
         dismissPlanSidebarForCurrentTurn();
       }
@@ -3152,7 +3163,14 @@ function ChatViewContent(props: ChatViewProps) {
         onDiffPanelOpen?.();
       }
     },
-    [activeThreadRef, diffOpen, dismissPlanSidebarForCurrentTurn, onDiffPanelOpen, planSidebarOpen],
+    [
+      activeThreadRef,
+      clearPlanSidebarDismissalForCurrentThread,
+      diffOpen,
+      dismissPlanSidebarForCurrentTurn,
+      onDiffPanelOpen,
+      planSidebarOpen,
+    ],
   );
   const toggleRightPanel = useCallback(() => {
     if (!activeThreadRef) return;
@@ -3709,7 +3727,6 @@ function ChatViewContent(props: ChatViewProps) {
         useRightPanelStore.getState().open(activeThreadRef, "plan");
       }
     }
-    planSidebarDismissedForTurnRef.current = null;
     // activeThreadRef resets transitively with the active thread.
   }, [activeThread?.id]);
 
@@ -3722,13 +3739,22 @@ function ChatViewContent(props: ChatViewProps) {
     const latestTurnId = activeLatestTurn?.turnId ?? null;
     if (latestTurnId && activePlan.turnId !== latestTurnId) return;
     const turnKey = activePlan.turnId ?? sidebarProposedPlan?.turnId ?? "__dismissed__";
-    if (planSidebarDismissedForTurnRef.current === turnKey) return;
+    if (
+      isPlanSidebarDismissedForThreadTurn({
+        dismissedTurnByThreadKey: planSidebarDismissedTurnByThreadKeyRef.current,
+        threadKey: activeThreadKey,
+        turnKey,
+      })
+    ) {
+      return;
+    }
     if (activeThreadRef) {
       useRightPanelStore.getState().open(activeThreadRef, "plan");
     }
   }, [
     activePlan,
     activeLatestTurn?.turnId,
+    activeThreadKey,
     activeThreadRef,
     autoOpenPlanSidebar,
     planSidebarOpen,
@@ -5134,7 +5160,7 @@ function ChatViewContent(props: ChatViewProps) {
         // "default" mode here means the agent is executing the plan, which produces
         // step-tracking activities that the sidebar will display.
         if (nextInteractionMode === "default" && autoOpenPlanSidebar) {
-          planSidebarDismissedForTurnRef.current = null;
+          clearPlanSidebarDismissalForCurrentThread();
           if (activeThreadRef) {
             useRightPanelStore.getState().open(activeThreadRef, "plan");
           }
@@ -5160,6 +5186,7 @@ function ChatViewContent(props: ChatViewProps) {
       activeThread,
       activeProposedPlan,
       beginLocalDispatch,
+      clearPlanSidebarDismissalForCurrentThread,
       isConnecting,
       isSendBusy,
       isServerThread,
