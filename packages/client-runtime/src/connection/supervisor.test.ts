@@ -338,6 +338,92 @@ describe("EnvironmentSupervisor", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect("grants boot grace to early transient failures until the first connection", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        prepare: (attempt) =>
+          attempt <= 2 ? Effect.fail(transient()) : Effect.succeed(PREPARED_CONNECTION),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      const firstBackoff = yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "backoff" && state.attempt === 1,
+      );
+      expect(firstBackoff.bootGrace).toBe(true);
+
+      yield* TestClock.adjust(1_000);
+      const secondBackoff = yield* eventuallyState(
+        supervisor.state,
+        (state) => state.phase === "backoff" && state.attempt === 2,
+      );
+      expect(secondBackoff.bootGrace).toBe(true);
+
+      yield* TestClock.adjust(2_000);
+      const connected = yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      expect(connected.bootGrace).toBeUndefined();
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("stops granting boot grace once the window elapses without a connection", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        prepare: () => Effect.fail(transient()),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      const firstBackoff = yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "backoff" && state.attempt === 1,
+      );
+      expect(firstBackoff.bootGrace).toBe(true);
+
+      // Backoff delays 1+2+4+8+16+16 = 47s elapse before attempt 7, so every
+      // failure through attempt 7 lands inside the 60s window. The following
+      // 16s backoff crosses the boundary and attempt 8's failure gets no grace.
+      for (const [index, delay] of [1_000, 2_000, 4_000, 8_000, 16_000, 16_000].entries()) {
+        yield* TestClock.adjust(delay);
+        const gracedBackoff = yield* eventuallyState(
+          supervisor.state,
+          (state) => state.phase === "backoff" && state.attempt === index + 2,
+        );
+        expect(gracedBackoff.bootGrace).toBe(true);
+      }
+
+      yield* TestClock.adjust(16_000);
+      const afterWindow = yield* eventuallyState(
+        supervisor.state,
+        (state) => state.phase === "backoff" && state.attempt === 8,
+      );
+      expect(afterWindow.bootGrace).toBeUndefined();
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("does not grant boot grace to reconnects after an established session drops", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        prepare: (attempt) =>
+          attempt === 2 ? Effect.fail(transient()) : Effect.succeed(PREPARED_CONNECTION),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* harness.closeLatestSession();
+
+      const reconnectBackoff = yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "backoff",
+      );
+      expect(reconnectBackoff.bootGrace).toBeUndefined();
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("keeps the latest failure visible throughout the next connection attempt", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
@@ -385,7 +471,7 @@ describe("EnvironmentSupervisor", () => {
         supervisor.state,
         (state) => state.phase === "connecting" && state.stage === "synchronizing",
       );
-      yield* TestClock.adjust("14 seconds");
+      yield* TestClock.adjust("29 seconds");
       expect((yield* SubscriptionRef.get(supervisor.state)).stage).toBe("synchronizing");
 
       yield* TestClock.adjust("1 second");
@@ -417,7 +503,7 @@ describe("EnvironmentSupervisor", () => {
         supervisor.state,
         (state) => state.phase === "connecting" && state.stage === "preparing",
       );
-      yield* TestClock.adjust("15 seconds");
+      yield* TestClock.adjust("30 seconds");
       const retrying = yield* eventuallyState(
         supervisor.state,
         (state) => state.phase === "backoff" && state.attempt === 1,
@@ -569,7 +655,7 @@ describe("EnvironmentSupervisor", () => {
 
       expect(yield* Ref.get(harness.prepareCount)).toBe(1);
 
-      yield* TestClock.adjust("15 seconds");
+      yield* TestClock.adjust("30 seconds");
       const retrying = yield* eventuallyState(
         supervisor.state,
         (state) => state.phase === "backoff" && state.attempt === 1,
