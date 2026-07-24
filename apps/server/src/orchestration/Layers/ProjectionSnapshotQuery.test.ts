@@ -1716,3 +1716,77 @@ it.effect(
     }).pipe(Effect.provide(Layer.merge(layer, TestClock.layer())));
   },
 );
+
+it.effect(
+  "ProjectionSnapshotQuery serves last known repository identities when a later resolution exceeds the snapshot budget",
+  () => {
+    let hang = false;
+    const layer = OrchestrationProjectionSnapshotQueryLive.pipe(
+      Layer.provideMerge(
+        Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+          resolve: (cwd: string) =>
+            hang
+              ? Effect.never
+              : Effect.succeed({
+                  canonicalKey: `github.com/acme${cwd}`,
+                  locator: {
+                    source: "git-remote" as const,
+                    remoteName: "origin",
+                    remoteUrl: `https://github.com/acme${cwd}.git`,
+                  },
+                  rootPath: cwd,
+                }),
+        }),
+      ),
+      Layer.provideMerge(SqlitePersistenceMemory),
+    );
+
+    return Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_turns`;
+      yield* sql`DELETE FROM projection_state`;
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id,
+          title,
+          workspace_root,
+          default_model_selection_json,
+          scripts_json,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'project-stale',
+          'Project keeps stale metadata',
+          '/tmp/stale-root',
+          '{"provider":"codex","model":"gpt-5-codex"}',
+          '[]',
+          '2026-07-23T00:00:00.000Z',
+          '2026-07-23T00:00:01.000Z',
+          NULL
+        )
+      `;
+
+      const warmSnapshot = yield* snapshotQuery.getShellSnapshot();
+      assert.equal(warmSnapshot.projects[0]?.repositoryIdentity?.rootPath, "/tmp/stale-root");
+
+      hang = true;
+      const snapshotFiber = yield* snapshotQuery.getShellSnapshot().pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust(Duration.seconds(3));
+      const staleSnapshot = yield* Fiber.join(snapshotFiber);
+
+      assert.equal(staleSnapshot.projects.length, 1);
+      assert.equal(staleSnapshot.projects[0]?.repositoryIdentity?.rootPath, "/tmp/stale-root");
+      assert.equal(
+        staleSnapshot.projects[0]?.repositoryIdentity?.canonicalKey,
+        "github.com/acme/tmp/stale-root",
+      );
+    }).pipe(Effect.provide(Layer.merge(layer, TestClock.layer())));
+  },
+);

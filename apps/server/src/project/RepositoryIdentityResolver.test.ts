@@ -271,7 +271,7 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
   );
 });
 
-it.effect("passes an explicit one-second timeout to both Git metadata commands", () => {
+it.effect("passes an explicit five-second timeout to both Git metadata commands", () => {
   const inputs: ProcessRunner.ProcessRunInput[] = [];
   const run: ProcessRunner.ProcessRunner["Service"]["run"] = (input) =>
     Effect.sync(() => {
@@ -289,7 +289,7 @@ it.effect("passes an explicit one-second timeout to both Git metadata commands",
     expect(inputs).toHaveLength(2);
     for (const input of inputs) {
       expect(Duration.toMillis(Duration.fromInputUnsafe(input.timeout ?? Duration.zero))).toBe(
-        1_000,
+        5_000,
       );
       expect(input.timeoutBehavior).toBe("timedOutResult");
     }

@@ -13,9 +13,13 @@ import * as Layer from "effect/Layer";
 import * as ProcessRunner from "../processRunner.ts";
 
 const DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY = 512;
-const DEFAULT_POSITIVE_CACHE_TTL = Duration.minutes(1);
+// Remote URLs change rarely; a long positive TTL keeps steady-state git spawns
+// near zero on hosts where process spawning is expensive (endpoint security).
+const DEFAULT_POSITIVE_CACHE_TTL = Duration.hours(6);
 const DEFAULT_NEGATIVE_CACHE_TTL = Duration.minutes(1);
-const REPOSITORY_IDENTITY_PROCESS_TIMEOUT = Duration.seconds(1);
+// Spawn alone can cost hundreds of milliseconds under endpoint-security
+// scanning, so the per-command budget must comfortably exceed that.
+const REPOSITORY_IDENTITY_PROCESS_TIMEOUT = Duration.seconds(5);
 
 export interface RepositoryIdentityResolverOptions {
   readonly cacheCapacity?: number;
