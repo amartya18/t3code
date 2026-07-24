@@ -27,6 +27,16 @@ export const MAX_HIDDEN_MOUNTED_PREVIEW_THREADS = 3;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 
+export function isPlanSidebarDismissedForThreadTurn(input: {
+  dismissedTurnByThreadKey: Readonly<Record<string, string>>;
+  threadKey: string | null;
+  turnKey: string;
+}): boolean {
+  return (
+    input.threadKey !== null && input.dismissedTurnByThreadKey[input.threadKey] === input.turnKey
+  );
+}
+
 export function resolveThreadMetadataUpdateForNextTurn(input: {
   currentModelSelection: ModelSelection;
   nextModelSelection?: ModelSelection;
