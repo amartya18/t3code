@@ -38,6 +38,16 @@ export function startNewThreadForProject(
   return true;
 }
 
+export function isPlanSidebarDismissedForThreadTurn(input: {
+  dismissedTurnByThreadKey: Readonly<Record<string, string>>;
+  threadKey: string | null;
+  turnKey: string;
+}): boolean {
+  return (
+    input.threadKey !== null && input.dismissedTurnByThreadKey[input.threadKey] === input.turnKey
+  );
+}
+
 export function resolveThreadMetadataUpdateForNextTurn(input: {
   currentModelSelection: ModelSelection;
   nextModelSelection?: ModelSelection;
