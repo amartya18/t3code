@@ -98,14 +98,22 @@ const BOOT_GRACE_MS = 60_000;
 ## Syncing with upstream T3 Code
 
 Upstream is `pingdotgg/t3code`. The `upstream` remote is already configured in this clone (push is
-deliberately disabled). Keep fork work on a dedicated branch:
+deliberately disabled).
+
+**Always rebase; never fast-forward `main` onto upstream.** This fork's `main` carries the patch
+commits described above — it is not a clean mirror of upstream. Syncing means replaying those patches
+on top of upstream's new commits (`git rebase upstream/main`), not resetting or fast-forwarding
+`main` to match `upstream/main`. A plain fork "sync" / fast-forward would fail on the divergence, and
+force-resetting `main` to `upstream/main` would silently discard the fork patches. Do neither.
+
+To sync, rebase the branch that carries the patches onto the latest upstream `main`:
 
 ```bash
 git remote -v
 git remote add upstream https://github.com/pingdotgg/t3code # only if it is missing
 git fetch upstream
-git switch <fork-branch>
-git rebase upstream/main
+git switch main                 # or the feature branch holding the patches
+git rebase upstream/main        # replays the fork patches on top of upstream
 ```
 
 Resolve conflicts by preserving behavior, not by blindly choosing one side. Start from upstream's
