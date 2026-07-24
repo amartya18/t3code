@@ -61,6 +61,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -94,6 +95,7 @@ const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.UnknownFromJ
 const decodeUnknownJsonStringExit = Schema.decodeUnknownExit(Schema.UnknownFromJsonString);
 
 const PROVIDER = ProviderDriverKind.make("claudeAgent");
+const CONTEXT_USAGE_REFRESH_TIMEOUT_MS = 1_000;
 type ClaudeTextStreamKind = Extract<RuntimeContentStreamKind, "assistant_text" | "reasoning_text">;
 type ClaudeToolResultStreamKind = Extract<
   RuntimeContentStreamKind,
@@ -1791,9 +1793,41 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       return undefined;
     }
 
-    context.lastKnownContextWindow = usage.maxTokens;
     return normalizeClaudeContextUsageApiSnapshot(usage, totalProcessedTokens);
   });
+
+  const refreshContextUsageAfterCompletion = Effect.fn("refreshContextUsageAfterCompletion")(
+    function* (
+      context: ClaudeSessionContext,
+      input: {
+        readonly expectedSessionUpdatedAt: string;
+        readonly totalProcessedTokens?: number;
+      },
+    ) {
+      const usage = yield* queryCurrentContextUsage(context, input.totalProcessedTokens).pipe(
+        Effect.timeoutOption(CONTEXT_USAGE_REFRESH_TIMEOUT_MS),
+      );
+      const usageSnapshot = Option.getOrUndefined(usage);
+      if (usageSnapshot === undefined) {
+        return;
+      }
+
+      // A new turn or session transition wins over this best-effort enrichment.
+      // Never let a late usage response overwrite fresher turn telemetry.
+      if (
+        context.stopped ||
+        context.turnState !== undefined ||
+        context.session.updatedAt !== input.expectedSessionUpdatedAt
+      ) {
+        return;
+      }
+
+      if (usageSnapshot.maxTokens !== undefined) {
+        context.lastKnownContextWindow = usageSnapshot.maxTokens;
+      }
+      yield* emitThreadTokenUsage(context, usageSnapshot);
+    },
+  );
 
   const emitProposedPlanCompleted = Effect.fn("emitProposedPlanCompleted")(function* (
     context: ClaudeSessionContext,
@@ -1895,10 +1929,6 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       context.lastKnownTotalProcessedTokens = accumulatedTotalProcessedTokens;
     }
 
-    const contextUsageSnapshot = yield* queryCurrentContextUsage(
-      context,
-      accumulatedTotalProcessedTokens ?? context.lastKnownTotalProcessedTokens,
-    );
     const resultUsageRecord =
       result?.usage && typeof result.usage === "object" && !Array.isArray(result.usage)
         ? (result.usage as Record<string, unknown>)
@@ -1922,8 +1952,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       : undefined;
     const lastGoodUsage = context.lastKnownTokenUsage;
     const usageSnapshot: ThreadTokenUsageSnapshot | undefined =
-      contextUsageSnapshot ??
-      (resultTotalOnly && lastGoodUsage
+      resultTotalOnly && lastGoodUsage
         ? {
             ...lastGoodUsage,
             ...(typeof maxTokens === "number" && Number.isFinite(maxTokens) && maxTokens > 0
@@ -1937,22 +1966,22 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
                 }
               : {}),
           }
-        : resultIterationSnapshot) ??
-      (lastGoodUsage
-        ? {
-            ...lastGoodUsage,
-            ...(typeof maxTokens === "number" && Number.isFinite(maxTokens) && maxTokens > 0
-              ? { maxTokens }
-              : {}),
-            ...(typeof accumulatedTotalProcessedTokens === "number" &&
-            Number.isFinite(accumulatedTotalProcessedTokens) &&
-            accumulatedTotalProcessedTokens > lastGoodUsage.usedTokens
-              ? {
-                  totalProcessedTokens: accumulatedTotalProcessedTokens,
-                }
-              : {}),
-          }
-        : undefined);
+        : (resultIterationSnapshot ??
+          (lastGoodUsage
+            ? {
+                ...lastGoodUsage,
+                ...(typeof maxTokens === "number" && Number.isFinite(maxTokens) && maxTokens > 0
+                  ? { maxTokens }
+                  : {}),
+                ...(typeof accumulatedTotalProcessedTokens === "number" &&
+                Number.isFinite(accumulatedTotalProcessedTokens) &&
+                accumulatedTotalProcessedTokens > lastGoodUsage.usedTokens
+                  ? {
+                      totalProcessedTokens: accumulatedTotalProcessedTokens,
+                    }
+                  : {}),
+              }
+            : undefined));
 
     const turnState = context.turnState;
     if (!turnState) {
@@ -1980,6 +2009,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         },
         providerRefs: {},
       });
+      const expectedSessionUpdatedAt = context.session.updatedAt;
+      yield* refreshContextUsageAfterCompletion(context, {
+        expectedSessionUpdatedAt,
+        ...(accumulatedTotalProcessedTokens !== undefined
+          ? { totalProcessedTokens: accumulatedTotalProcessedTokens }
+          : {}),
+      }).pipe(Effect.forkChild({ startImmediately: true }), Effect.asVoid);
       return;
     }
 
@@ -2066,6 +2102,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       ...(status === "failed" && errorMessage ? { lastError: errorMessage } : {}),
     };
     yield* updateResumeCursor(context);
+    yield* refreshContextUsageAfterCompletion(context, {
+      expectedSessionUpdatedAt: updatedAt,
+      ...(accumulatedTotalProcessedTokens !== undefined
+        ? { totalProcessedTokens: accumulatedTotalProcessedTokens }
+        : {}),
+    }).pipe(Effect.forkChild({ startImmediately: true }), Effect.asVoid);
   });
 
   const handleStreamEvent = Effect.fn("handleStreamEvent")(function* (
