@@ -9,8 +9,11 @@ import {
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
@@ -1909,5 +1912,78 @@ it.effect(
       assert.equal(fullSnapshot.projects.length, 3);
       assert.equal(fullSnapshot.projects[2]?.repositoryIdentity?.rootPath, "/tmp/deleted-root");
     }).pipe(Effect.provide(layer));
+  },
+);
+
+it.effect(
+  "ProjectionSnapshotQuery returns complete shell projects without repository metadata when resolution exceeds the snapshot budget",
+  () => {
+    const layer = OrchestrationProjectionSnapshotQueryLive.pipe(
+      Layer.provideMerge(
+        Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+          resolve: () => Effect.never,
+        }),
+      ),
+      Layer.provideMerge(SqlitePersistenceMemory),
+    );
+
+    return Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_turns`;
+      yield* sql`DELETE FROM projection_state`;
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id,
+          title,
+          workspace_root,
+          default_model_selection_json,
+          scripts_json,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'project-timeout',
+          'Project survives metadata timeout',
+          '/tmp/repository-timeout',
+          '{"provider":"codex","model":"gpt-5-codex"}',
+          '[{"id":"script-timeout","name":"Build","command":"vp run build","icon":"build","runOnWorktreeCreate":false}]',
+          '2026-07-23T00:00:00.000Z',
+          '2026-07-23T00:00:01.000Z',
+          NULL
+        )
+      `;
+
+      const snapshotFiber = yield* snapshotQuery.getShellSnapshot().pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust(Duration.seconds(3));
+      const shellSnapshot = yield* Fiber.join(snapshotFiber);
+
+      assert.equal(shellSnapshot.projects.length, 1);
+      assert.equal(shellSnapshot.projects[0]?.id, asProjectId("project-timeout"));
+      assert.equal(shellSnapshot.projects[0]?.title, "Project survives metadata timeout");
+      assert.equal(shellSnapshot.projects[0]?.workspaceRoot, "/tmp/repository-timeout");
+      assert.deepStrictEqual(shellSnapshot.projects[0]?.defaultModelSelection, {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5-codex",
+      });
+      assert.deepStrictEqual(shellSnapshot.projects[0]?.scripts, [
+        {
+          id: "script-timeout",
+          name: "Build",
+          command: "vp run build",
+          icon: "build",
+          runOnWorktreeCreate: false,
+        },
+      ]);
+      assert.equal(shellSnapshot.projects[0]?.createdAt, "2026-07-23T00:00:00.000Z");
+      assert.equal(shellSnapshot.projects[0]?.updatedAt, "2026-07-23T00:00:01.000Z");
+      assert.isNull(shellSnapshot.projects[0]?.repositoryIdentity);
+      assert.equal(shellSnapshot.threads.length, 0);
+    }).pipe(Effect.provide(Layer.merge(layer, TestClock.layer())));
   },
 );
