@@ -1,17 +1,44 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import { TestClock } from "effect/testing";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import * as ProcessRunner from "../processRunner.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
 
 const normalizePathSeparators = (value: string) => value.replaceAll("\\", "/");
 const normalizeResolvedPath = (value: string) => normalizePathSeparators(value);
+const successfulProcessResult = (stdout: string): ProcessRunner.ProcessRunOutput => ({
+  stdout,
+  stderr: "",
+  code: ChildProcessSpawner.ExitCode(0),
+  timedOut: false,
+  stdoutTruncated: false,
+  stderrTruncated: false,
+});
+const failedProcessResult: ProcessRunner.ProcessRunOutput = {
+  stdout: "",
+  stderr: "",
+  code: ChildProcessSpawner.ExitCode(128),
+  timedOut: false,
+  stdoutTruncated: false,
+  stderrTruncated: false,
+};
+const timedOutProcessResult: ProcessRunner.ProcessRunOutput = {
+  stdout: "",
+  stderr: "",
+  code: null,
+  timedOut: true,
+  stdoutTruncated: false,
+  stderrTruncated: false,
+};
 
 const git = (cwd: string, args: ReadonlyArray<string>) =>
   Effect.gen(function* () {
@@ -33,6 +60,16 @@ const makeRepositoryIdentityResolverTestLayer = (options: {
       ...options,
     }),
   ).pipe(Layer.provide(ProcessRunner.layer));
+
+const makeMockRepositoryIdentityResolverTestLayer = (
+  run: ProcessRunner.ProcessRunner["Service"]["run"],
+) =>
+  Layer.effect(
+    RepositoryIdentityResolver.RepositoryIdentityResolver,
+    RepositoryIdentityResolver.make({ cacheCapacity: 16 }).pipe(
+      Effect.provideService(ProcessRunner.ProcessRunner, { run }),
+    ),
+  );
 
 it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
   it.effect("normalizes equivalent GitHub remotes into a stable repository identity", () =>
@@ -233,3 +270,133 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     ),
   );
 });
+
+it.effect("passes an explicit one-second timeout to both Git metadata commands", () => {
+  const inputs: ProcessRunner.ProcessRunInput[] = [];
+  const run: ProcessRunner.ProcessRunner["Service"]["run"] = (input) =>
+    Effect.sync(() => {
+      inputs.push(input);
+      return input.args.includes("rev-parse")
+        ? successfulProcessResult("/workspace\n")
+        : successfulProcessResult("origin\thttps://github.com/T3Tools/t3code.git (fetch)\n");
+    });
+
+  return Effect.gen(function* () {
+    const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+    const identity = yield* resolver.resolve("/workspace");
+
+    expect(identity?.canonicalKey).toBe("github.com/t3tools/t3code");
+    expect(inputs).toHaveLength(2);
+    for (const input of inputs) {
+      expect(Duration.toMillis(Duration.fromInputUnsafe(input.timeout ?? Duration.zero))).toBe(
+        1_000,
+      );
+      expect(input.timeoutBehavior).toBe("timedOutResult");
+    }
+  }).pipe(Effect.provide(makeMockRepositoryIdentityResolverTestLayer(run)));
+});
+
+it.effect("returns null when a Git metadata command times out", () => {
+  const run: ProcessRunner.ProcessRunner["Service"]["run"] = (input) =>
+    Effect.succeed(
+      input.args.includes("rev-parse")
+        ? successfulProcessResult("/workspace\n")
+        : timedOutProcessResult,
+    );
+
+  return Effect.gen(function* () {
+    const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+    expect(yield* resolver.resolve("/workspace")).toBeNull();
+  }).pipe(Effect.provide(makeMockRepositoryIdentityResolverTestLayer(run)));
+});
+
+it.effect("caches the complete positive resolution by workspace directory", () => {
+  const inputs: ProcessRunner.ProcessRunInput[] = [];
+  const run: ProcessRunner.ProcessRunner["Service"]["run"] = (input) =>
+    Effect.sync(() => {
+      inputs.push(input);
+      return input.args.includes("rev-parse")
+        ? successfulProcessResult("/repository\n")
+        : successfulProcessResult("origin\thttps://github.com/T3Tools/t3code.git (fetch)\n");
+    });
+
+  return Effect.gen(function* () {
+    const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+    yield* resolver.resolve("/repository/packages/web");
+    yield* resolver.resolve("/repository/packages/web");
+
+    expect(inputs.filter((input) => input.args.includes("rev-parse"))).toHaveLength(1);
+    expect(inputs.filter((input) => input.args.includes("remote"))).toHaveLength(1);
+  }).pipe(Effect.provide(makeMockRepositoryIdentityResolverTestLayer(run)));
+});
+
+it.effect("caches negative results for non-Git workspace directories", () => {
+  const inputs: ProcessRunner.ProcessRunInput[] = [];
+  const run: ProcessRunner.ProcessRunner["Service"]["run"] = (input) =>
+    Effect.sync(() => {
+      inputs.push(input);
+      return failedProcessResult;
+    });
+
+  return Effect.gen(function* () {
+    const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+    expect(yield* resolver.resolve("/not-a-repository")).toBeNull();
+    expect(yield* resolver.resolve("/not-a-repository")).toBeNull();
+
+    expect(inputs.filter((input) => input.args.includes("rev-parse"))).toHaveLength(1);
+    expect(inputs.filter((input) => input.args.includes("remote"))).toHaveLength(1);
+  }).pipe(Effect.provide(makeMockRepositoryIdentityResolverTestLayer(run)));
+});
+
+it.effect("keeps cache entries independent for different workspace directories", () => {
+  const inputs: ProcessRunner.ProcessRunInput[] = [];
+  const run: ProcessRunner.ProcessRunner["Service"]["run"] = (input) =>
+    Effect.sync(() => {
+      inputs.push(input);
+      const cwd = input.args[1] ?? "";
+      return input.args.includes("rev-parse")
+        ? successfulProcessResult(`${cwd}\n`)
+        : successfulProcessResult(`origin\thttps://github.com/acme${cwd}.git (fetch)\n`);
+    });
+
+  return Effect.gen(function* () {
+    const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+    yield* resolver.resolve("/workspace-one");
+    yield* resolver.resolve("/workspace-two");
+    yield* resolver.resolve("/workspace-one");
+
+    expect(
+      inputs.filter((input) => input.args.includes("rev-parse")).map((input) => input.args[1]),
+    ).toEqual(["/workspace-one", "/workspace-two"]);
+  }).pipe(Effect.provide(makeMockRepositoryIdentityResolverTestLayer(run)));
+});
+
+it.effect("retries after an interrupted cache load instead of retaining a poisoned entry", () =>
+  Effect.gen(function* () {
+    const firstLookupStarted = yield* Deferred.make<void>();
+    let revParseCalls = 0;
+    const run: ProcessRunner.ProcessRunner["Service"]["run"] = (input) => {
+      if (input.args.includes("rev-parse")) {
+        revParseCalls += 1;
+        if (revParseCalls === 1) {
+          return Deferred.succeed(firstLookupStarted, undefined).pipe(Effect.andThen(Effect.never));
+        }
+        return Effect.succeed(successfulProcessResult("/workspace\n"));
+      }
+      return Effect.succeed(
+        successfulProcessResult("origin\thttps://github.com/T3Tools/t3code.git (fetch)\n"),
+      );
+    };
+
+    const resolver = yield* RepositoryIdentityResolver.make({ cacheCapacity: 16 }).pipe(
+      Effect.provideService(ProcessRunner.ProcessRunner, { run }),
+    );
+    const firstResolve = yield* resolver.resolve("/workspace").pipe(Effect.forkChild);
+    yield* Deferred.await(firstLookupStarted);
+    yield* Fiber.interrupt(firstResolve);
+
+    const identity = yield* resolver.resolve("/workspace");
+    expect(revParseCalls).toBe(2);
+    expect(identity?.canonicalKey).toBe("github.com/t3tools/t3code");
+  }),
+);

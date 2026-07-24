@@ -15,6 +15,7 @@ import * as ProcessRunner from "../processRunner.ts";
 const DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY = 512;
 const DEFAULT_POSITIVE_CACHE_TTL = Duration.minutes(1);
 const DEFAULT_NEGATIVE_CACHE_TTL = Duration.minutes(1);
+const REPOSITORY_IDENTITY_PROCESS_TIMEOUT = Duration.seconds(1);
 
 export interface RepositoryIdentityResolverOptions {
   readonly cacheCapacity?: number;
@@ -98,6 +99,7 @@ const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.
       .run({
         command: "git",
         args: ["-C", cwd, "rev-parse", "--show-toplevel"],
+        timeout: REPOSITORY_IDENTITY_PROCESS_TIMEOUT,
         timeoutBehavior: "timedOutResult",
       })
       .pipe(Effect.option);
@@ -124,6 +126,7 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
     .run({
       command: "git",
       args: ["-C", cacheKey, "remote", "-v"],
+      timeout: REPOSITORY_IDENTITY_PROCESS_TIMEOUT,
       timeoutBehavior: "timedOutResult",
     })
     .pipe(Effect.option);
@@ -141,8 +144,9 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
   const processRunner = yield* ProcessRunner.ProcessRunner;
 
   const repositoryIdentityCache = yield* Cache.makeWith<string, RepositoryIdentity | null>(
-    (cacheKey) =>
-      resolveRepositoryIdentityFromCacheKey(cacheKey).pipe(
+    (cwd) =>
+      resolveRepositoryIdentityCacheKey(cwd).pipe(
+        Effect.flatMap(resolveRepositoryIdentityFromCacheKey),
         Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
       ),
     {
@@ -160,10 +164,7 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
   const resolve: RepositoryIdentityResolver["Service"]["resolve"] = Effect.fn(
     "RepositoryIdentityResolver.resolve",
   )(function* (cwd) {
-    const cacheKey = yield* resolveRepositoryIdentityCacheKey(cwd).pipe(
-      Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
-    );
-    return yield* Cache.get(repositoryIdentityCache, cacheKey);
+    return yield* Cache.get(repositoryIdentityCache, cwd);
   });
 
   return RepositoryIdentityResolver.of({ resolve });

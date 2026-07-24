@@ -26,6 +26,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -149,6 +150,7 @@ const REQUIRED_SNAPSHOT_PROJECTORS = [
   ORCHESTRATION_PROJECTOR_NAMES.threadSessions,
   ORCHESTRATION_PROJECTOR_NAMES.checkpoints,
 ] as const;
+const REPOSITORY_IDENTITY_SNAPSHOT_TIMEOUT = Duration.seconds(3);
 
 function maxIso(left: string | null, right: string): string {
   if (left === null) {
@@ -278,15 +280,16 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         ? projectRows
         : projectRows.filter((row) => row.deletedAt === null);
     const uniqueWorkspaceRoots = [...new Set(filteredProjectRows.map((row) => row.workspaceRoot))];
+    const repositoryIdentityEntries = yield* Effect.forEach(
+      uniqueWorkspaceRoots,
+      (workspaceRoot) =>
+        repositoryIdentityResolver
+          .resolve(workspaceRoot)
+          .pipe(Effect.map((identity) => [workspaceRoot, identity] as const)),
+      { concurrency: repositoryIdentityResolutionConcurrency },
+    ).pipe(Effect.timeoutOption(REPOSITORY_IDENTITY_SNAPSHOT_TIMEOUT));
     const repositoryIdentityByWorkspaceRoot = new Map(
-      yield* Effect.forEach(
-        uniqueWorkspaceRoots,
-        (workspaceRoot) =>
-          repositoryIdentityResolver
-            .resolve(workspaceRoot)
-            .pipe(Effect.map((identity) => [workspaceRoot, identity] as const)),
-        { concurrency: repositoryIdentityResolutionConcurrency },
-      ),
+      Option.getOrElse(repositoryIdentityEntries, () => []),
     );
 
     return new Map(
