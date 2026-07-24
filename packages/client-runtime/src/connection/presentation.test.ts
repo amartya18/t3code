@@ -119,6 +119,73 @@ describe("connection presentation", () => {
     });
   });
 
+  it("keeps presenting the boot grace window as the initial connection", () => {
+    const failure = new ConnectionTransientError({
+      reason: "timeout",
+      detail: "Remote environment endpoint timed out after 10000ms.",
+      traceId: "trace-boot",
+    });
+    expect(
+      presentConnectionState(
+        supervisorState({
+          phase: "backoff",
+          attempt: 2,
+          retryAt: 1,
+          lastFailure: failure,
+          bootGrace: true,
+        }),
+      ),
+    ).toEqual({
+      phase: "connecting",
+      error: "Remote environment endpoint timed out after 10000ms.",
+      traceId: "trace-boot",
+    });
+    expect(
+      presentConnectionState(
+        supervisorState({
+          phase: "connecting",
+          attempt: 3,
+          lastFailure: failure,
+          bootGrace: true,
+        }),
+      ),
+    ).toEqual({
+      phase: "connecting",
+      error: "Remote environment endpoint timed out after 10000ms.",
+      traceId: "trace-boot",
+    });
+    expect(
+      connectionStatusText(
+        presentConnectionState(
+          supervisorState({
+            phase: "backoff",
+            attempt: 2,
+            retryAt: 1,
+            lastFailure: failure,
+            bootGrace: true,
+          }),
+        ),
+      ),
+    ).toBe("Connecting...");
+  });
+
+  it("surfaces reconnect failures once the boot grace window has passed", () => {
+    expect(
+      presentConnectionState(
+        supervisorState({
+          phase: "backoff",
+          attempt: 2,
+          retryAt: 1,
+          lastFailure: new ConnectionTransientError({
+            reason: "timeout",
+            detail: "Still down.",
+          }),
+          bootGrace: false,
+        }),
+      ).phase,
+    ).toBe("reconnecting");
+  });
+
   it("gives offline status precedence in global messaging", () => {
     expect(connectionPhaseMessage("connected", TARGET.label, "offline")).toBe("You are offline");
   });

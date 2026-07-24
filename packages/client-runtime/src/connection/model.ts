@@ -141,6 +141,12 @@ export interface SupervisorConnectionState {
   readonly generation: number;
   readonly lastFailure: ConnectionAttemptError | null;
   readonly retryAt: number | null;
+  // True while transient failures fall inside the boot grace window: the
+  // environment has never connected in this desired-session and the first
+  // attempt started recently. Backends behind endpoint-security scanning can
+  // take tens of seconds to boot; presentation keeps showing "connecting"
+  // instead of surfacing a reconnect failure during that window.
+  readonly bootGrace?: boolean;
 }
 
 export type ConnectionProjectionPhase = "disconnected" | "synchronizing" | "ready";

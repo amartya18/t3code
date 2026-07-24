@@ -2,11 +2,13 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import { TestClock } from "effect/testing";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -153,6 +155,38 @@ it.effect("discovers editors through the service API", () =>
     assert.equal(editors.includes("vscode"), true);
     assert.equal(editors.includes("file-manager"), true);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("serves an empty editor list when the first scan outlives its wait budget", () =>
+  Effect.gen(function* () {
+    const realFileSystem = yield* FileSystem.FileSystem;
+    const hangingFileSystem = { ...realFileSystem, stat: () => Effect.never };
+
+    const editors = yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      const resolution = yield* Effect.forkChild(launcher.resolveAvailableEditors());
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("5 seconds");
+      return yield* Fiber.join(resolution);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          ExternalLauncher.layer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                NodeServices.layer,
+                Layer.succeed(FileSystem.FileSystem, hangingFileSystem),
+              ),
+            ),
+          ),
+          Layer.succeed(HostProcessPlatform, "linux"),
+          ConfigProvider.layer(ConfigProvider.fromEnv({ env: { PATH: "/usr/bin" } })),
+        ),
+      ),
+    );
+
+    assert.deepEqual(editors, []);
+  }).pipe(Effect.provide(Layer.merge(NodeServices.layer, TestClock.layer()))),
 );
 
 it.effect("rejects unknown editors through the service API", () =>

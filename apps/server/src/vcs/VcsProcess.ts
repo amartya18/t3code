@@ -50,6 +50,25 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
 
+// Hosts with endpoint-security agents (e.g. CrowdStrike Falcon) tax every
+// process spawn and file read, so per-command budgets tuned on fast machines
+// time out spuriously. The scale multiplies every VCS process timeout; set it
+// via `launchctl setenv` on macOS so GUI-launched apps inherit it.
+export const VCS_TIMEOUT_SCALE_ENV_VAR = "T3_VCS_TIMEOUT_SCALE";
+const MAX_TIMEOUT_SCALE = 20;
+
+export function resolveVcsTimeoutScale(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env[VCS_TIMEOUT_SCALE_ENV_VAR];
+  if (raw === undefined || raw.trim().length === 0) {
+    return 1;
+  }
+  const parsed = Number.parseFloat(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 1;
+  }
+  return Math.min(parsed, MAX_TIMEOUT_SCALE);
+}
+
 const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFailureKind => {
   const normalized = stderr.toLowerCase();
 
@@ -88,6 +107,7 @@ const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFai
 
 export const make = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
+  const timeoutScale = resolveVcsTimeoutScale();
 
   const run = Effect.fn("VcsProcess.run")(function* (input: VcsProcessInput) {
     const baseError = {
@@ -105,7 +125,7 @@ export const make = Effect.gen(function* () {
         ...(input.spawnCwd !== undefined ? { spawnCwd: input.spawnCwd } : {}),
         ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
         ...(input.env !== undefined ? { env: input.env } : {}),
-        timeout: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        timeout: Math.round((input.timeoutMs ?? DEFAULT_TIMEOUT_MS) * timeoutScale),
         maxOutputBytes: input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
         outputMode: "truncate",
         truncatedMarker: input.appendTruncationMarker ? OUTPUT_TRUNCATED_MARKER : "",
