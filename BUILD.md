@@ -64,8 +64,9 @@ install a second copy in `~/Applications` or `/Applications`, and never patch a 
 1. Quit the app: `osascript -e 'quit app "T3 Code (Nightly)"'`, then confirm no process remains.
 2. Unzip the new artifact to a temp dir and verify it before touching the installed bundle:
    bundle id is `com.t3tools.t3code` and `CFBundleShortVersionString` matches `<version>`.
-3. Move the current bundle aside to a recoverable backup:
-   `~/fun/app/.T3 Code (Nightly).app.bak-<short-sha>-<version>`.
+3. Move the current bundle aside to `~/fun/app/.T3 Code (Nightly).app.bak-<short-sha>-<version>`.
+   This is a transient rollback slot for the next step only — **backups are never retained**, see
+   step 5.
 4. Move the new bundle into the exact destination path. If the move fails, restore the backup
    immediately.
 5. Relaunch: `open "$HOME/fun/app/T3 Code (Nightly).app"`. An unsigned local build may need one
@@ -83,8 +84,15 @@ curl -s http://127.0.0.1:3773/.well-known/t3/environment
 - Main and backend processes must both run from `~/fun/app/T3 Code (Nightly).app`.
 - Logs: `~/.t3/userdata/logs/server-child.log`, `server.trace.ndjson*`.
 
-Once the app is confirmed healthy, delete this run's backup and confirm `~/fun/app` contains
-exactly one `T3 Code*.app`. Older `.bak-*` bundles can be removed too — ask first.
+Once the app is confirmed healthy, delete this run's backup. **Do not retain app-bundle backups, and
+do not ask about them** — also delete any stray `.bak-*` bundles from earlier runs in the same pass.
+They are ~735 MB each and accumulate fast. Rollback does not depend on them: the versioned artifact
+in `release/*.zip` is the recovery path, so a bad build is re-swapped by unzipping a known-good
+release, not by keeping bundles around.
+
+Finish by confirming `~/fun/app` contains exactly one `T3 Code*.app` and no `.bak-*` bundles. Note
+that `~/fun/app` also holds unrelated apps (Ghostty, Logseq, …) — "exactly one" means one _T3 Code_
+bundle, not one app.
 
 ## Report back
 
