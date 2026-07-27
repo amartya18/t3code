@@ -116,8 +116,26 @@ git switch main                 # or the feature branch holding the patches
 git rebase upstream/main        # replays the fork patches on top of upstream
 ```
 
-Resolve conflicts by preserving behavior, not by blindly choosing one side. Start from upstream's
-current structure in each file, then re-apply the invariants above:
+### Conflict policy
+
+Apply these rules in order. They are a priority ladder, not a menu.
+
+1. **Prefer upstream.** Take upstream's version as the base of every conflicted hunk — its
+   structure, naming, control flow, and APIs. The fork's shape is not worth defending merely
+   because it is familiar.
+2. **Re-apply the invariants on top.** The fork exists only to satisfy the "Behavioral contract"
+   above. Anything in the fork diff that is not one of those invariants is dead weight: drop it in
+   favor of upstream.
+3. **Never change application behavior or features to make a conflict go away.** Re-applying an
+   invariant must not alter user-visible behavior, remove a feature, or weaken WebSocket
+   reconnection semantics. If upstream already provides an equivalent guarantee, retire the fork
+   change and record that decision in this file.
+4. **Escalate to a human when 1–3 collide.** If upstream restructured a file such that the
+   invariant cannot be re-expressed without changing behavior — or the correct resolution is
+   genuinely ambiguous — stop with the conflict left in place, and report which invariant is at
+   risk and why. Do not guess and do not silently drop an invariant.
+
+Per-file guidance for step 2:
 
 - `RepositoryIdentityResolver.ts`: ensure the five-second timeout is supplied to both Git commands,
   the cache lookup begins with the original `cwd`, and the positive/negative TTLs are preserved.
@@ -158,6 +176,11 @@ not reintroduce duplicate timeout, caching, or grace layers.
 
 ## Required verification
 
+**A rebase is not finished until these suites pass.** They are mandatory whenever the rebase
+produced conflicts, and whenever it moved any maintained file listed above — a clean auto-merge is
+not evidence the invariants survived upstream's refactors. Never build or install an unverified
+rebase; a broken invariant shows up as a reconnect loop, not a compile error.
+
 Run the focused suites:
 
 ```bash
@@ -191,6 +214,9 @@ The suites must cover:
 
 Also run targeted formatting and the relevant package typecheck when available. Do not routinely run
 the workspace-wide test or typecheck suites; repository CI owns full verification.
+
+If a suite fails after a rebase, fix it under the conflict policy above — restore the invariant, or
+escalate under rule 4. Do not relax an assertion or delete a test to get green.
 
 ## Building and installing this fork
 
