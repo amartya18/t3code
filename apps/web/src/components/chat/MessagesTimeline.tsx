@@ -510,6 +510,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
               data: true,
               size: false,
             }}
+            onWheel={onManualNavigation}
+            onTouchMove={onManualNavigation}
+            onPointerDown={onManualNavigation}
             onScroll={handleScroll}
             className={cn(
               "scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain px-3 [overflow-anchor:none] sm:px-5",
