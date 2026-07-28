@@ -391,7 +391,9 @@ it.effect("retries after an interrupted cache load instead of retaining a poison
     const resolver = yield* RepositoryIdentityResolver.make({ cacheCapacity: 16 }).pipe(
       Effect.provideService(ProcessRunner.ProcessRunner, { run }),
     );
-    const firstResolve = yield* resolver.resolve("/workspace").pipe(Effect.forkChild);
+    const firstResolve = yield* resolver
+      .resolve("/workspace")
+      .pipe(Effect.forkChild({ startImmediately: true }));
     yield* Deferred.await(firstLookupStarted);
     yield* Fiber.interrupt(firstResolve);
 
