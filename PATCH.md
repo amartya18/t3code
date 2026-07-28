@@ -1,10 +1,8 @@
-# Endpoint-Security Reliability Patch
+# Fork Reliability Patches
 
-This fork carries a set of backend and client reliability patches so that T3 Code stays connected on
-hosts where an endpoint-security agent (e.g. CrowdStrike Falcon) taxes every process spawn and file
-read. On such hosts a cold backend can take tens of seconds to service its first requests, and
-git-heavy paths run far slower than on the machines upstream tunes against. Without these patches the
-desktop client disconnects during startup and repository metadata resolution blocks shell snapshots.
+This fork carries narrow backend and client reliability patches. Most keep T3 Code connected on hosts
+where an endpoint-security agent (e.g. CrowdStrike Falcon) taxes every process spawn and file read.
+It also preserves user control of the chat timeline while responses stream.
 
 Every change is deliberately narrow and rebase-friendly. Do **not** compensate for slowness by
 editing generated `dist/bin.mjs`, weakening WebSocket reconnection semantics, or making changes wider
@@ -55,6 +53,13 @@ The patch must preserve these invariants, grouped by concern.
 10. The connection-establishment timeout is **30 seconds** (was 15) to leave headroom for a
     slow-booting backend; retries remain cheap and spurious failures churn the UI.
 
+### Chat live-follow cancellation (`ChatView.tsx`, `MessagesTimeline.tsx`)
+
+11. Wheel, touch, and pointer navigation handlers are bound directly to the `LegendList` scroll
+    container. Manual navigation cancels live-follow even when the list mounts or remounts late.
+12. Sending still follows the active response until the user navigates away; explicit “Scroll to end”
+    resumes live-follow.
+
 ## Maintained files
 
 Server:
@@ -69,6 +74,11 @@ Client runtime:
 - `packages/client-runtime/src/connection/model.ts`
 - `packages/client-runtime/src/connection/presentation.ts` (+ `.test.ts`)
 - `packages/client-runtime/src/connection/supervisor.ts` (+ `.test.ts`)
+
+Web:
+
+- `apps/web/src/components/ChatView.tsx`
+- `apps/web/src/components/chat/MessagesTimeline.tsx` (+ `.test.tsx`)
 
 The implementation constants are intentionally local to their owning modules:
 
@@ -147,6 +157,8 @@ Per-file guidance for step 2:
   first-scan wait and cached snapshot.
 - `connection/{model,presentation,supervisor}.ts`: keep the boot-grace field and its 60-second
   window, and the 30-second establishment timeout.
+- `ChatView.tsx` and `MessagesTimeline.tsx`: keep manual-navigation handlers on `LegendList`; do not
+  replace them with a one-shot ref lookup or delayed DOM listener attachment.
 - Tests: retain new upstream coverage and re-express the invariants above using the current test
   helpers. Test names and fixture layout may change; the behaviors may not.
 
@@ -167,6 +179,9 @@ git diff upstream/main...HEAD -- \
   packages/client-runtime/src/connection/presentation.test.ts \
   packages/client-runtime/src/connection/supervisor.ts \
   packages/client-runtime/src/connection/supervisor.test.ts \
+  apps/web/src/components/ChatView.tsx \
+  apps/web/src/components/chat/MessagesTimeline.tsx \
+  apps/web/src/components/chat/MessagesTimeline.test.tsx \
   PATCH.md
 ```
 
@@ -197,6 +212,10 @@ vp test run \
   packages/client-runtime/src/connection/supervisor.test.ts
 ```
 
+```bash
+vp test run apps/web/src/components/chat/MessagesTimeline.test.tsx
+```
+
 The suites must cover:
 
 1. Both Git commands receive the explicit five-second timeout, and a timed-out command returns `null`.
@@ -211,6 +230,7 @@ The suites must cover:
 6. Boot grace is granted to early transient failures until first connection, stops once the window
    elapses, and is denied to reconnects after an established session drops; presentation maps the
    grace window to `connecting`.
+7. The chat timeline binds wheel, touch, and pointer navigation directly to `LegendList`.
 
 Also run targeted formatting and the relevant package typecheck when available. Do not routinely run
 the workspace-wide test or typecheck suites; repository CI owns full verification.
