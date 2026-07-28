@@ -39,6 +39,9 @@ vi.mock("@legendapp/list/react", async () => {
           size?: boolean;
           shouldRestorePosition?: (item: { id: string }) => boolean;
         };
+    onWheel?: () => void;
+    onTouchMove?: () => void;
+    onPointerDown?: () => void;
     ref?: Ref<LegendListRef>;
   }) => {
     if (props.anchoredEndSpace) {
@@ -94,6 +97,9 @@ vi.mock("@legendapp/list/react", async () => {
             ? Boolean(props.maintainVisibleContentPosition.shouldRestorePosition)
             : undefined
         }
+        data-on-wheel={Boolean(props.onWheel)}
+        data-on-touch-move={Boolean(props.onTouchMove)}
+        data-on-pointer-down={Boolean(props.onPointerDown)}
       >
         {props.ListHeaderComponent}
         {props.data.map((item) => (
@@ -345,6 +351,20 @@ describe("MessagesTimeline", () => {
     expect(compactMarkup).not.toContain("topbar-scroll-fade");
     expect(fadedMarkup).toContain('class="h-[var(--workspace-titlebar-scroll-fade-height)]"');
     expect(fadedMarkup).toContain("topbar-scroll-fade");
+  });
+
+  it("binds manual navigation directly to the timeline scroll container", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[buildUserTimelineEntry("Hello")]}
+        onManualNavigation={vi.fn()}
+      />,
+    );
+
+    expect(markup).toContain('data-on-wheel="true"');
+    expect(markup).toContain('data-on-touch-move="true"');
+    expect(markup).toContain('data-on-pointer-down="true"');
   });
 
   it("keeps assistant changed-files headers sticky below the thread header", () => {
