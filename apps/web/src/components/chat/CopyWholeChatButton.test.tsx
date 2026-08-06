@@ -8,12 +8,13 @@ vi.mock("~/hooks/useCopyToClipboard", () => ({
 import { CopyWholeChatButton } from "./CopyWholeChatButton";
 
 describe("CopyWholeChatButton", () => {
-  it("renders an accessible enabled action", () => {
+  it("renders an accessible enabled action with its label", () => {
     const markup = renderToStaticMarkup(
       <CopyWholeChatButton disabled={false} getTranscript={() => "transcript"} />,
     );
 
     expect(markup).toContain('aria-label="Copy chat"');
+    expect(markup).toContain("Copy chat</span>");
     expect(markup).not.toContain('disabled=""');
   });
 

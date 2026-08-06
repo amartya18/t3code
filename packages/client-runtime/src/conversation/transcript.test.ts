@@ -3,21 +3,20 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   buildChatTranscript,
   canCopyChatTranscript,
-  hasCopyableChatTranscriptMessages,
   type ChatTranscriptMessage,
-} from "./transcript";
+} from "./transcript.ts";
 
-const message = (
-  role: string,
-  text: string,
-  streaming = false,
-): ChatTranscriptMessage => ({ role, text, streaming });
+const message = (role: string, text: string, streaming = false): ChatTranscriptMessage => ({
+  role,
+  text,
+  streaming,
+});
 
 describe("buildChatTranscript", () => {
   it("formats one user and agent exchange", () => {
-    expect(
-      buildChatTranscript([message("user", "Hello"), message("assistant", "Hi there")]),
-    ).toBe("## User\n\nHello\n\n## Agent\n\nHi there");
+    expect(buildChatTranscript([message("user", "Hello"), message("assistant", "Hi there")])).toBe(
+      "## User\n\nHello\n\n## Agent\n\nHi there",
+    );
   });
 
   it("keeps multiple turns in input order", () => {
@@ -38,14 +37,52 @@ describe("buildChatTranscript", () => {
     );
   });
 
-  it("preserves Markdown and fenced code", () => {
-    const markdown = ["Use **bold** text.", "", "```ts", "const answer = 42;", "```"].join(
-      "\n",
-    );
+  it("writes the thread title as the transcript heading", () => {
+    expect(
+      buildChatTranscript([message("user", "Hello")], { title: "  Fix the flaky test  " }),
+    ).toBe("# Fix the flaky test\n\n## User\n\nHello");
+  });
 
-    expect(buildChatTranscript([message("assistant", markdown)])).toBe(
-      `## Agent\n\n${markdown}`,
+  it("omits the heading for a missing or blank title", () => {
+    expect(buildChatTranscript([message("user", "Hello")], { title: "   " })).toBe(
+      "## User\n\nHello",
     );
+    expect(buildChatTranscript([message("user", "Hello")], { title: null })).toBe(
+      "## User\n\nHello",
+    );
+  });
+
+  it("writes notes under the message text", () => {
+    expect(
+      buildChatTranscript([
+        {
+          role: "user",
+          text: "Fix this issue.",
+          streaming: false,
+          notes: ["1 terminal context omitted", "2 images attached"],
+        },
+      ]),
+    ).toBe("## User\n\nFix this issue.\n\n_[1 terminal context omitted]_\n_[2 images attached]_");
+  });
+
+  it("ignores blank notes", () => {
+    expect(
+      buildChatTranscript([{ role: "user", text: "Hello", streaming: false, notes: ["", "  "] }]),
+    ).toBe("## User\n\nHello");
+  });
+
+  it("keeps a turn that carried notes only", () => {
+    expect(
+      buildChatTranscript([
+        { role: "user", text: "  ", streaming: false, notes: ["1 terminal context omitted"] },
+      ]),
+    ).toBe("## User\n\n_[1 terminal context omitted]_");
+  });
+
+  it("preserves Markdown and fenced code", () => {
+    const markdown = ["Use **bold** text.", "", "```ts", "const answer = 42;", "```"].join("\n");
+
+    expect(buildChatTranscript([message("assistant", markdown)])).toBe(`## Agent\n\n${markdown}`);
   });
 
   it("trims outer whitespace and excludes blank messages", () => {
@@ -69,60 +106,42 @@ describe("buildChatTranscript", () => {
     ).toBe("## User\n\nComplete question");
   });
 
-  it("keeps provider-visible terminal and element context blocks", () => {
-    const prompt = [
-      "Fix this issue.",
-      "",
-      "<terminal_context>",
-      "- Terminal 1 lines 2-3:",
-      "  2 | error",
-      "  3 | details",
-      "</terminal_context>",
-      "",
-      "<element_context>",
-      "- button:",
-      "  Save",
-      "</element_context>",
-    ].join("\n");
-
-    expect(buildChatTranscript([message("user", prompt)])).toBe(`## User\n\n${prompt}`);
+  it("keeps the completed conversation while the agent answers", () => {
+    expect(
+      buildChatTranscript([
+        message("user", "First question"),
+        message("assistant", "First answer"),
+        message("user", "Second question"),
+        message("assistant", "Partial answer", true),
+      ]),
+    ).toBe(
+      ["## User\n\nFirst question", "## Agent\n\nFirst answer", "## User\n\nSecond question"].join(
+        "\n\n",
+      ),
+    );
   });
 
   it("does not truncate long transcripts", () => {
     const longText = "x".repeat(250_000);
 
-    expect(buildChatTranscript([message("assistant", longText)])).toBe(
-      `## Agent\n\n${longText}`,
-    );
-  });
-});
-
-describe("hasCopyableChatTranscriptMessages", () => {
-  it("requires completed user or agent text", () => {
-    expect(hasCopyableChatTranscriptMessages([message("system", "hidden")])).toBe(false);
-    expect(hasCopyableChatTranscriptMessages([message("assistant", "partial", true)])).toBe(false);
-    expect(hasCopyableChatTranscriptMessages([message("user", "ready")])).toBe(true);
+    expect(buildChatTranscript([message("assistant", longText)])).toBe(`## Agent\n\n${longText}`);
   });
 });
 
 describe("canCopyChatTranscript", () => {
-  it("disables copying during the active turn", () => {
-    const messages = [message("user", "ready")];
-
-    expect(canCopyChatTranscript(messages, true)).toBe(false);
-    expect(canCopyChatTranscript(messages, false)).toBe(true);
+  it("requires completed user or agent text", () => {
+    expect(canCopyChatTranscript([message("system", "hidden")])).toBe(false);
+    expect(canCopyChatTranscript([message("assistant", "partial", true)])).toBe(false);
+    expect(canCopyChatTranscript([message("user", "ready")])).toBe(true);
   });
 
-  it("disables copying when any message is still streaming", () => {
+  it("stays available while the agent answers", () => {
     expect(
-      canCopyChatTranscript(
-        [message("user", "ready"), message("assistant", "partial", true)],
-        false,
-      ),
-    ).toBe(false);
+      canCopyChatTranscript([message("user", "ready"), message("assistant", "partial", true)]),
+    ).toBe(true);
   });
 
-  it("disables copying when the transcript has no content", () => {
-    expect(canCopyChatTranscript([message("system", "hidden")], false)).toBe(false);
+  it("rejects an empty thread", () => {
+    expect(canCopyChatTranscript([])).toBe(false);
   });
 });

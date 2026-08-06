@@ -299,6 +299,7 @@ import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
 import { ChatHeader } from "./chat/ChatHeader";
+import { toChatTranscriptMessages } from "./chat/chatTranscript";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
@@ -2507,7 +2508,6 @@ function ChatViewContent(props: ChatViewProps) {
     threadError,
   });
   const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
-  const activeTurnInProgress = isWorking || !latestTurnSettled;
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
     activeLatestTurn,
     activeThread?.session ?? null,
@@ -2822,15 +2822,22 @@ function ChatViewContent(props: ChatViewProps) {
     feedbackSubmissions,
     optimisticUserMessages,
   ]);
+  // Stripping prompt context costs a regex per user message, so it runs on the
+  // click and not on every streamed frame. The enabled check stays a scan.
   const copyWholeChatMessagesRef = useRef(timelineMessages);
   copyWholeChatMessagesRef.current = timelineMessages;
+  const copyWholeChatTitleRef = useRef(activeThread?.title ?? null);
+  copyWholeChatTitleRef.current = activeThread?.title ?? null;
   const getWholeChatTranscript = useCallback(
-    () => buildChatTranscript(copyWholeChatMessagesRef.current),
+    () =>
+      buildChatTranscript(toChatTranscriptMessages(copyWholeChatMessagesRef.current), {
+        title: copyWholeChatTitleRef.current,
+      }),
     [],
   );
   const copyWholeChatDisabled = useMemo(
-    () => !canCopyChatTranscript(timelineMessages, activeTurnInProgress),
-    [activeTurnInProgress, timelineMessages],
+    () => !canCopyChatTranscript(timelineMessages),
+    [timelineMessages],
   );
   const timelineEntries = useMemo(
     () =>
