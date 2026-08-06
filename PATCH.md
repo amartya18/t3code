@@ -53,11 +53,25 @@ The patch must preserve these invariants, grouped by concern.
 10. The connection-establishment timeout is **30 seconds** (was 15) to leave headroom for a
     slow-booting backend; retries remain cheap and spurious failures churn the UI.
 
+### Chat transcript copy (`conversation/transcript.ts`, `chatTranscript.ts`, `CopyWholeChatButton.tsx`)
+
+11. The chat header carries a **Copy chat** action, first in the header action cluster. It writes a
+    Markdown transcript of the active thread: the thread title as an `#` heading, then each message
+    under a `## User` or `## Agent` heading. It is disabled only when no message can be copied.
+12. A running turn does not block the action. The streaming message drops out of the transcript and
+    the completed conversation before it still copies.
+13. Prompt context that the composer appended at send time (`<terminal_context>`,
+    `<element_context>`) is stripped from user messages, and attachments are not inlined. Each
+    dropped part leaves a note line such as `_[1 terminal context omitted]_` or
+    `_[1 image attached]_`, so nothing disappears silently. Tool activity, approvals, plans, and
+    diffs stay out of the transcript.
+14. Stripping runs when the action is used, never on every streamed frame.
+
 ### Chat live-follow cancellation (`ChatView.tsx`, `MessagesTimeline.tsx`)
 
-11. Wheel, touch, and pointer navigation handlers are bound directly to the `LegendList` scroll
+15. Wheel, touch, and pointer navigation handlers are bound directly to the `LegendList` scroll
     container. Manual navigation cancels live-follow even when the list mounts or remounts late.
-12. Sending still follows the active response until the user navigates away; explicit “Scroll to end”
+16. Sending still follows the active response until the user navigates away; explicit “Scroll to end”
     resumes live-follow.
 
 ## Maintained files
@@ -74,11 +88,15 @@ Client runtime:
 - `packages/client-runtime/src/connection/model.ts`
 - `packages/client-runtime/src/connection/presentation.ts` (+ `.test.ts`)
 - `packages/client-runtime/src/connection/supervisor.ts` (+ `.test.ts`)
+- `packages/client-runtime/src/conversation/transcript.ts` (+ `.test.ts`)
 
 Web:
 
 - `apps/web/src/components/ChatView.tsx`
 - `apps/web/src/components/chat/MessagesTimeline.tsx` (+ `.test.tsx`)
+- `apps/web/src/components/chat/CopyWholeChatButton.tsx` (+ `.test.tsx`)
+- `apps/web/src/components/chat/chatTranscript.ts` (+ `.test.ts`)
+- `apps/web/src/components/chat/ChatHeader.tsx`
 
 The implementation constants are intentionally local to their owning modules:
 

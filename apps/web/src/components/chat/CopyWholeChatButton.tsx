@@ -39,15 +39,19 @@ export const CopyWholeChatButton = memo(function CopyWholeChatButton({
         render={
           <Button
             aria-label={label}
+            className="w-7 px-0 sm:w-6 @3xl/header-actions:w-auto! @3xl/header-actions:px-[calc(--spacing(2)-1px)]"
             disabled={disabled || isCopied}
             onClick={() => copyToClipboard(getTranscript())}
-            size="icon-xs"
+            size="xs"
             type="button"
             variant="outline"
           />
         }
       >
         {isCopied ? <CheckIcon aria-hidden="true" /> : <CopyIcon aria-hidden="true" />}
+        <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
+          {label}
+        </span>
       </TooltipTrigger>
       <TooltipPopup side="top">{label}</TooltipPopup>
     </Tooltip>
