@@ -28,6 +28,10 @@ import {
 import { type EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { wasBootstrapThreadDeleted } from "@t3tools/client-runtime/errors";
 import { type CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifact-templates";
+import {
+  buildChatTranscript,
+  canCopyChatTranscript,
+} from "@t3tools/client-runtime/conversation";
 import { effectiveSnoozed, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import {
   codexFeedbackMessage,
@@ -2503,6 +2507,7 @@ function ChatViewContent(props: ChatViewProps) {
     threadError,
   });
   const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
+  const activeTurnInProgress = isWorking || !latestTurnSettled;
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
     activeLatestTurn,
     activeThread?.session ?? null,
@@ -2817,6 +2822,16 @@ function ChatViewContent(props: ChatViewProps) {
     feedbackSubmissions,
     optimisticUserMessages,
   ]);
+  const copyWholeChatMessagesRef = useRef(timelineMessages);
+  copyWholeChatMessagesRef.current = timelineMessages;
+  const getWholeChatTranscript = useCallback(
+    () => buildChatTranscript(copyWholeChatMessagesRef.current),
+    [],
+  );
+  const copyWholeChatDisabled = useMemo(
+    () => !canCopyChatTranscript(timelineMessages, activeTurnInProgress),
+    [activeTurnInProgress, timelineMessages],
+  );
   const timelineEntries = useMemo(
     () =>
       deriveTimelineEntries(timelineMessages, activeThread?.proposedPlans ?? [], workLogEntries),
@@ -7075,6 +7090,8 @@ function ChatViewContent(props: ChatViewProps) {
             availableEditors={availableEditors}
             rightPanelOpen={rightPanelOpen}
             gitCwd={gitCwd}
+            copyWholeChatDisabled={copyWholeChatDisabled}
+            getWholeChatTranscript={getWholeChatTranscript}
             onNewThreadInProject={handleNewThreadInActiveProject}
             onRunProjectScript={runProjectScript}
             onAddProjectScript={saveProjectScript}

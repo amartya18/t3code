@@ -76,6 +76,7 @@ We are (mostly) not accepting contributions yet. Small fixes may be considered. 
 Full docs live in [docs/](./docs). There's no docs site yet.
 
 - [Install and first run](./docs/user/install.md)
+- [Copy a conversation](./docs/user/conversations.md)
 - [Permission modes](./docs/user/permission-modes.md)
 - [Keyboard shortcuts](./docs/user/keybindings.md)
 - [Customize a project icon](./docs/user/project-settings.md)
