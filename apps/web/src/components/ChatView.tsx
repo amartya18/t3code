@@ -26,10 +26,7 @@ import {
   connectionStatusTitle,
   type EnvironmentConnectionPresentation,
 } from "@t3tools/client-runtime/connection";
-import {
-  buildChatTranscript,
-  canCopyChatTranscript,
-} from "@t3tools/client-runtime/conversation";
+import { buildChatTranscript, canCopyChatTranscript } from "@t3tools/client-runtime/conversation";
 import { effectiveSettled, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import {
   parseScopedThreadKey,
@@ -237,6 +234,7 @@ import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { ChatHeader } from "./chat/ChatHeader";
+import { toChatTranscriptMessages } from "./chat/chatTranscript";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
@@ -2408,15 +2406,22 @@ function ChatViewContent(props: ChatViewProps) {
     }
     return [...serverMessagesWithPreviewHandoff, ...pendingMessages];
   }, [attachmentPreviewHandoffByMessageId, displayServerMessages, optimisticUserMessages]);
+  // Stripping prompt context costs a regex per user message, so it runs on the
+  // click and not on every streamed frame. The enabled check stays a scan.
   const copyWholeChatMessagesRef = useRef(timelineMessages);
   copyWholeChatMessagesRef.current = timelineMessages;
+  const copyWholeChatTitleRef = useRef(activeThread?.title ?? null);
+  copyWholeChatTitleRef.current = activeThread?.title ?? null;
   const getWholeChatTranscript = useCallback(
-    () => buildChatTranscript(copyWholeChatMessagesRef.current),
+    () =>
+      buildChatTranscript(toChatTranscriptMessages(copyWholeChatMessagesRef.current), {
+        title: copyWholeChatTitleRef.current,
+      }),
     [],
   );
   const copyWholeChatDisabled = useMemo(
-    () => !canCopyChatTranscript(timelineMessages, activeTurnInProgress),
-    [activeTurnInProgress, timelineMessages],
+    () => !canCopyChatTranscript(timelineMessages),
+    [timelineMessages],
   );
   const timelineEntries = useMemo(
     () =>
