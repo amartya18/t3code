@@ -1616,6 +1616,85 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("workflow phases stay on every coordinator row once seen", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      // Coordinator rows only: member rows carry no phase list.
+      const progressFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.type === "task.progress" &&
+            (event.payload as { taskId?: string }).taskId === "wf-phases",
+        ),
+        Stream.take(3),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "run workflow",
+        attachments: [],
+      });
+
+      const tick = (usageTotal: number, snapshot: ReadonlyArray<unknown> | undefined) =>
+        harness.query.emit({
+          type: "system",
+          subtype: "task_progress",
+          task_id: "wf-phases",
+          description: "Phased workflow",
+          usage: { total_tokens: usageTotal, tool_uses: 1, duration_ms: 10 },
+          ...(snapshot ? { workflow_progress: snapshot } : {}),
+          uuid: `wf-phases-tick-${usageTotal}`,
+          session_id: "sdk-session",
+        } as unknown as SDKMessage);
+
+      const runningMember = {
+        type: "workflow_agent",
+        index: 0,
+        state: "running",
+        label: "member-0",
+        phaseIndex: 0,
+      };
+
+      // Tick 1: the full plan. Phase 1 has no members yet, so only the
+      // coordinator's own list can describe it.
+      tick(100, [
+        { type: "workflow_phase", index: 0, title: "Gather evidence" },
+        { type: "workflow_phase", index: 1, title: "Synthesize report" },
+        runningMember,
+      ]);
+      // Tick 2: member entries only — the SDK drops the phase entries.
+      tick(200, [{ ...runningMember, tokens: 20 }]);
+      // Tick 3: no workflow_progress at all.
+      tick(300, undefined);
+
+      const progressEvents = Array.from(yield* Fiber.join(progressFiber));
+      assert.equal(progressEvents.length, 3);
+      // Every row keeps the plan. A row without it would replace the stored
+      // one (stable activity id) and collapse the client's phase rail to the
+      // phases that already have members.
+      for (const event of progressEvents) {
+        assert.equal(event.type, "task.progress");
+        if (event.type !== "task.progress") continue;
+        assert.deepEqual(event.payload.phases, [
+          { index: 0, title: "Gather evidence" },
+          { index: 1, title: "Synthesize report" },
+        ]);
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("task.started carries model/effort; subagent snapshots refine the model", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

@@ -46,6 +46,7 @@ import {
   type RuntimeTaskUsage,
   type TaskAgentLinkage,
   type TaskRunHandles,
+  type TaskWorkflowPhase,
   ThreadId,
   TurnId,
   type UserInputQuestion,
@@ -238,6 +239,16 @@ interface ClaudeSessionContext {
    * even when nothing changed for most members.
    */
   readonly workflowMemberFingerprints: Map<string, string>;
+  /**
+   * Last non-empty phase list per workflow coordinator task. The SDK carries
+   * workflow_phase entries on some task_progress ticks only, and every tick
+   * REPLACES the coordinator's single progress activity row (stable id), so a
+   * tick without them erases the plan from the persisted row. The client then
+   * falls back to phases derived from members, which drops every phase that
+   * has no members yet — the phase rail flickered its pending phases in and
+   * out at tick rate. Re-emitting the last known list keeps the row complete.
+   */
+  readonly workflowPhases: Map<string, ReadonlyArray<TaskWorkflowPhase>>;
   /** Task ids that have started and not yet reached a terminal state. */
   readonly liveTaskIds: Set<string>;
   turnState: ClaudeTurnState | undefined;
@@ -3234,9 +3245,16 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         // separate phases-only row shared the stable ingestion activity id
         // with this full row, and the thinner upsert overwrote usage and
         // progress text (review finding).
-        const workflowPhases = parseWorkflowProgress(
+        //
+        // A tick without workflow_phase entries reuses the last known list
+        // (context.workflowPhases) so the replaced row never loses the plan.
+        const parsedPhases = parseWorkflowProgress(
           (message as unknown as Record<string, unknown>).workflow_progress,
         )?.phases;
+        if (parsedPhases && parsedPhases.length > 0) {
+          context.workflowPhases.set(message.task_id, parsedPhases);
+        }
+        const workflowPhases = context.workflowPhases.get(message.task_id);
         yield* offerRuntimeEvent({
           ...base,
           type: "task.progress",
@@ -3773,6 +3791,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const claudeTasks = new Map<string, ClaudeTaskState>();
       const taskAgents = new Map<string, ClaudeTaskAgentState>();
       const workflowMemberFingerprints = new Map<string, string>();
+      const workflowPhases = new Map<string, ReadonlyArray<TaskWorkflowPhase>>();
       const liveTaskIds = new Set<string>();
 
       const contextRef = yield* Ref.make<ClaudeSessionContext | undefined>(undefined);
@@ -4219,6 +4238,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         claudeTasks,
         taskAgents,
         workflowMemberFingerprints,
+        workflowPhases,
         liveTaskIds,
         turnState: undefined,
         lastKnownContextWindow: initialContextWindow,
