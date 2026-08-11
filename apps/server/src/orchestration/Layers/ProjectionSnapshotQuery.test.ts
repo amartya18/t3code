@@ -2734,6 +2734,8 @@ it.effect(
   "ProjectionSnapshotQuery returns complete shell projects without repository metadata when resolution exceeds the snapshot budget",
   () => {
     const layer = OrchestrationProjectionSnapshotQueryLive.pipe(
+      Layer.provide(ThreadBackgroundLiveness.layer),
+      Layer.provide(ThreadPlanProgress.layer),
       Layer.provideMerge(
         Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
           resolve: () => Effect.never,
@@ -2808,6 +2810,8 @@ it.effect(
   () => {
     let hang = false;
     const layer = OrchestrationProjectionSnapshotQueryLive.pipe(
+      Layer.provide(ThreadBackgroundLiveness.layer),
+      Layer.provide(ThreadPlanProgress.layer),
       Layer.provideMerge(
         Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
           resolve: (cwd: string) =>

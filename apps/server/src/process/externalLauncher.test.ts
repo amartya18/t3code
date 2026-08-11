@@ -835,7 +835,7 @@ it.effect("memoizes editor discovery and refreshes after the cache window", () =
 
     // Past the five-minute discovery interval, the next call serves the
     // cached snapshot and starts an out-of-band rescan.
-    yield* TestClock.adjust("4 minutes 30 seconds");
+    yield* TestClock.adjust("270 seconds");
     yield* launcher.resolveAvailableEditors();
     yield* Effect.yieldNow;
     assert.isAbove(statCalls, statCallsAfterFirstScan);

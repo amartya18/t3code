@@ -387,14 +387,14 @@ describe("EnvironmentSupervisor", () => {
       );
       expect(firstBackoff.bootGrace).toBe(true);
 
-      yield* TestClock.adjust(1_000);
+      yield* TestClock.adjust(3_000);
       const secondBackoff = yield* eventuallyState(
         supervisor.state,
         (state) => state.phase === "backoff" && state.attempt === 2,
       );
       expect(secondBackoff.bootGrace).toBe(true);
 
-      yield* TestClock.adjust(2_000);
+      yield* TestClock.adjust(4_000);
       const connected = yield* awaitState(supervisor.state, (state) => state.phase === "connected");
       expect(connected.bootGrace).toBeUndefined();
     }).pipe(Effect.provide(TestClock.layer())),
@@ -415,10 +415,10 @@ describe("EnvironmentSupervisor", () => {
       );
       expect(firstBackoff.bootGrace).toBe(true);
 
-      // Backoff delays 1+2+4+8+16+16 = 47s elapse before attempt 7, so every
-      // failure through attempt 7 lands inside the 60s window. The following
-      // 16s backoff crosses the boundary and attempt 8's failure gets no grace.
-      for (const [index, delay] of [1_000, 2_000, 4_000, 8_000, 16_000, 16_000].entries()) {
+      // Backoff delays 3+4+8+16+16 = 47s elapse before attempt 6, so every
+      // failure through attempt 6 lands inside the 60s window. The following
+      // 16s backoff crosses the boundary and attempt 7's failure gets no grace.
+      for (const [index, delay] of [3_000, 4_000, 8_000, 16_000, 16_000].entries()) {
         yield* TestClock.adjust(delay);
         const gracedBackoff = yield* eventuallyState(
           supervisor.state,
@@ -430,7 +430,7 @@ describe("EnvironmentSupervisor", () => {
       yield* TestClock.adjust(16_000);
       const afterWindow = yield* eventuallyState(
         supervisor.state,
-        (state) => state.phase === "backoff" && state.attempt === 8,
+        (state) => state.phase === "backoff" && state.attempt === 7,
       );
       expect(afterWindow.bootGrace).toBeUndefined();
     }).pipe(Effect.provide(TestClock.layer())),

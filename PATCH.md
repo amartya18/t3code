@@ -207,6 +207,13 @@ If upstream independently implements equivalent guarantees, prefer upstream's im
 adapt or retire the corresponding fork change. Record that decision in this file so future agents do
 not reintroduce duplicate timeout, caching, or grace layers.
 
+### Retired upstream-covered changes
+
+- **2026-08-11 — plan sidebar dismissal per thread:** Upstream removed the plan surface in the
+  right-panel store migration and now shows plans in the chat transcript. The right-panel store also
+  keeps its remaining surface state by thread. The fork commit that tracked plan sidebar dismissal
+  by thread and turn is obsolete. Do not reapply its `ChatView` refs or auto-open effects.
+
 ## Required verification
 
 **A rebase is not finished until these suites pass.** They are mandatory whenever the rebase

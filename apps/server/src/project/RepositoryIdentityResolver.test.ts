@@ -23,6 +23,8 @@ const successfulProcessResult = (stdout: string): ProcessRunner.ProcessRunOutput
   timedOut: false,
   stdoutTruncated: false,
   stderrTruncated: false,
+  stdoutInvalidUtf8: false,
+  stderrInvalidUtf8: false,
 });
 const failedProcessResult: ProcessRunner.ProcessRunOutput = {
   stdout: "",
@@ -31,6 +33,8 @@ const failedProcessResult: ProcessRunner.ProcessRunOutput = {
   timedOut: false,
   stdoutTruncated: false,
   stderrTruncated: false,
+  stdoutInvalidUtf8: false,
+  stderrInvalidUtf8: false,
 };
 const timedOutProcessResult: ProcessRunner.ProcessRunOutput = {
   stdout: "",
@@ -39,6 +43,8 @@ const timedOutProcessResult: ProcessRunner.ProcessRunOutput = {
   timedOut: true,
   stdoutTruncated: false,
   stderrTruncated: false,
+  stdoutInvalidUtf8: false,
+  stderrInvalidUtf8: false,
 };
 
 const git = (cwd: string, args: ReadonlyArray<string>) =>
