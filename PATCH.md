@@ -265,6 +265,11 @@ escalate under rule 4. Do not relax an assertion or delete a test to get green.
 
 ## Building and installing this fork
 
+A request to run `PATCH.md` and `BUILD.md` authorizes the complete sync, dependency refresh, build,
+app swap, launch verification, and cleanup. Recover routine problems without asking. Examples are a
+missing global `vp`, stale `node_modules`, a sandboxed command that needs its normal approval retry,
+and an unsigned local app bundle. Stop only for the blocking conditions that `BUILD.md` lists.
+
 Build a nightly-branded macOS ZIP so it targets the same product name as the installed nightly:
 
 ```bash
@@ -301,6 +306,10 @@ Before replacement:
    `/Users/amartya.kadarisman/fun/app/T3 Code (Nightly).app`.
 7. After successful launch verification, remove the temporary old-bundle backup and confirm
    `~/fun/app` contains exactly one `T3 Code*.app`.
+
+Remove the temporary extraction directory and all stray `.bak-*` bundles after verification. Keep
+only the new `release/T3-Code-*-arm64.zip`; delete older arm64 ZIPs so local build artifacts do not
+accumulate.
 
 An unsigned local build may require one explicit Finder launch or removal of quarantine from the
 single verified app bundle. Never weaken Gatekeeper globally.

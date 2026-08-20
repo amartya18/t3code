@@ -1,7 +1,16 @@
 # BUILD — sync, build, and swap the installed app
 
-Runbook for the agent. Do these steps in order, stop and ask on anything unexpected.
-Background and rationale live in [PATCH.md](PATCH.md); this file is the mechanics only.
+Runbook for the agent. Do these steps in order and finish the full build, swap, verification, and
+cleanup in one run. A request to run this file authorizes the routine actions below, including the
+fetch, rebase, dependency install, build, app quit, bundle swap, relaunch, and cleanup. Do not stop
+to ask about a missing global `vp`, stale dependencies, a sandbox retry, an unsigned local bundle,
+or files that this runbook tells you to delete. Use the repository-local `node_modules/.bin/vp`
+when `vp` is not on `PATH`.
+
+Stop only when the worktree is dirty before the sync, the conflict policy requires human judgment,
+a required check fails and cannot be fixed without weakening the contract, or the operating system
+denies an action after the normal approval retry. Background and rationale live in
+[PATCH.md](PATCH.md); this file is the mechanics only.
 
 ## 1. Sync with upstream
 
@@ -24,6 +33,14 @@ files — run PATCH.md's **Required verification** suites before building. Failu
 the conflict policy or escalated; never loosen a test to get green, and never build an unverified
 rebase. If the rebase was a no-op, go straight to the build.
 
+Refresh dependencies after a rebase changes `package.json`, `pnpm-lock.yaml`, or package metadata.
+Also refresh them if a required module is missing. This is routine recovery. Run it and continue
+without asking:
+
+```bash
+./node_modules/.bin/vp i
+```
+
 ## 2. Pick the version
 
 Format: `<core>-nightly.<YYYYMMDD>.<N>`. The `-nightly.\d{8}.\d+` suffix is what gives the build
@@ -45,11 +62,11 @@ Format: `<core>-nightly.<YYYYMMDD>.<N>`. The `-nightly.\d{8}.\d+` suffix is what
 
 ## 3. Build
 
-~6 minutes. `--target zip` is required — the artifact copier only copies files, so `--target dir`
+~6 minutes. `--target zip` is required. The artifact copier only copies files, so `--target dir`
 output is silently discarded.
 
 ```bash
-node scripts/build-desktop-artifact.ts \
+PATH="$PWD/node_modules/.bin:$PATH" node scripts/build-desktop-artifact.ts \
   --platform mac --target zip --arch arm64 \
   --build-version <version> --output-dir release
 ```
@@ -62,21 +79,28 @@ Destination is exactly `~/fun/app/T3 Code (Nightly).app` (dir is `~/fun/app`, si
 install a second copy in `~/Applications` or `/Applications`, and never patch a bundle in place.
 
 1. Quit the app: `osascript -e 'quit app "T3 Code (Nightly)"'`, then confirm no process remains.
-2. Unzip the new artifact to a temp dir and verify it before touching the installed bundle:
+2. Unzip the new artifact to a `mktemp -d` directory. Record that exact directory and remove it on
+   success or failure. Verify the app before touching the installed bundle:
    bundle id is `com.t3tools.t3code` and `CFBundleShortVersionString` matches `<version>`.
 3. Move the current bundle aside to `~/fun/app/.T3 Code (Nightly).app.bak-<short-sha>-<version>`.
    This is a transient rollback slot for the next step only — **backups are never retained**, see
    step 5.
 4. Move the new bundle into the exact destination path. If the move fails, restore the backup
    immediately.
-5. Relaunch: `open "$HOME/fun/app/T3 Code (Nightly).app"`. An unsigned local build may need one
-   explicit Finder launch or a quarantine removal on that one bundle — never weaken Gatekeeper
-   globally.
+5. Set `T3_VCS_TIMEOUT_SCALE` before launch so the new GUI process inherits it, then relaunch the
+   exact installed path:
+
+   ```bash
+   launchctl setenv T3_VCS_TIMEOUT_SCALE 3
+   open "$HOME/fun/app/T3 Code (Nightly).app"
+   ```
+
+   An unsigned local build may need one explicit Finder launch or a quarantine removal on that one
+   bundle. Never weaken Gatekeeper globally.
 
 ## 5. Verify, then clean up
 
 ```bash
-launchctl setenv T3_VCS_TIMEOUT_SCALE 3     # GUI apps only inherit env set this way
 curl -s http://127.0.0.1:3773/.well-known/t3/environment
 ```
 
@@ -85,14 +109,14 @@ curl -s http://127.0.0.1:3773/.well-known/t3/environment
 - Logs: `~/.t3/userdata/logs/server-child.log`, `server.trace.ndjson*`.
 
 Once the app is confirmed healthy, delete this run's backup. **Do not retain app-bundle backups, and
-do not ask about them** — also delete any stray `.bak-*` bundles from earlier runs in the same pass.
-They are ~735 MB each and accumulate fast. Rollback does not depend on them: the versioned artifact
-in `release/*.zip` is the recovery path, so a bad build is re-swapped by unzipping a known-good
-release, not by keeping bundles around.
+do not ask about them.** Also delete any stray `.bak-*` bundles from earlier runs in the same pass.
+They are ~735 MB each and accumulate fast. Remove the temporary extraction directory. In `release/`,
+keep the new ZIP and delete older `T3-Code-*-arm64.zip` files. The new versioned artifact is the
+recovery path, so a bad build is re-swapped from that ZIP instead of an old bundle or old artifact.
 
-Finish by confirming `~/fun/app` contains exactly one `T3 Code*.app` and no `.bak-*` bundles. Note
-that `~/fun/app` also holds unrelated apps (Ghostty, Logseq, …) — "exactly one" means one _T3 Code_
-bundle, not one app.
+Finish by confirming that `~/fun/app` contains exactly one `T3 Code*.app` and no `.bak-*` bundles,
+the temporary directory is gone, and `release/` contains only the new arm64 ZIP. `~/fun/app` also
+holds unrelated apps. "Exactly one" means one _T3 Code_ bundle, not one app.
 
 ## Report back
 
