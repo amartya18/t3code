@@ -2,10 +2,10 @@
 
 Runbook for the agent. Do these steps in order and finish the full build, swap, verification, and
 cleanup in one run. A request to run this file authorizes the routine actions below, including the
-fetch, rebase, dependency install, build, app quit, bundle swap, relaunch, and cleanup. Do not stop
-to ask about a missing global `vp`, stale dependencies, a sandbox retry, an unsigned local bundle,
-or files that this runbook tells you to delete. Use the repository-local `node_modules/.bin/vp`
-when `vp` is not on `PATH`.
+fetch, rebase, dependency install, build, app quit, bundle swap, relaunch, cleanup, commit, and fork
+push. Do not stop to ask about a missing global `vp`, stale dependencies, a sandbox retry, an
+unsigned local bundle, a lease-protected force push, or files that this runbook tells you to delete.
+Use the repository-local `node_modules/.bin/vp` when `vp` is not on `PATH`.
 
 Stop only when the worktree is dirty before the sync, the conflict policy requires human judgment,
 a required check fails and cannot be fixed without weakening the contract, or the operating system
@@ -118,7 +118,29 @@ Finish by confirming that `~/fun/app` contains exactly one `T3 Code*.app` and no
 the temporary directory is gone, and `release/` contains only the new arm64 ZIP. `~/fun/app` also
 holds unrelated apps. "Exactly one" means one _T3 Code_ bundle, not one app.
 
+## 6. Update the fork
+
+Publish the verified local `main` to the fork as the last step. A rebase changes commit IDs, so a
+plain push will fail. Never use `--force`; use `--force-with-lease` so Git rejects the push when
+`origin/main` changes after the fetch.
+
+The worktree must have no unexpected changes. Do not commit release artifacts, T3 home data,
+secrets, logs, or temporary files. If this run made an intentional tracked documentation change,
+format it and commit it with a conventional commit title before the push.
+
+```bash
+git fetch origin
+git push --force-with-lease origin main
+git status --short --branch
+test "$(git rev-parse main)" = "$(git rev-parse origin/main)"
+```
+
+If the lease rejects the push, fetch again and inspect the new fork commits. Continue without asking
+when they are already present in the rebased local history. Stop when the fork has a new independent
+commit that the rebase did not include, because overwriting that work needs human judgment.
+
 ## Report back
 
 The version built; what the rebase pulled in and whether it conflicted; the test results if the
-suites ran; and the post-launch verification result. Say plainly if any step was skipped.
+suites ran; the post-launch verification result; the commit pushed; and confirmation that local
+`main` matches `origin/main`. Say plainly if any step was skipped.

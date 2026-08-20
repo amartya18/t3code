@@ -266,9 +266,11 @@ escalate under rule 4. Do not relax an assertion or delete a test to get green.
 ## Building and installing this fork
 
 A request to run `PATCH.md` and `BUILD.md` authorizes the complete sync, dependency refresh, build,
-app swap, launch verification, and cleanup. Recover routine problems without asking. Examples are a
-missing global `vp`, stale `node_modules`, a sandboxed command that needs its normal approval retry,
-and an unsigned local app bundle. Stop only for the blocking conditions that `BUILD.md` lists.
+app swap, launch verification, cleanup, commit, and push to the fork's `main` branch. Recover routine
+problems without asking. Examples are a missing global `vp`, stale `node_modules`, a sandboxed
+command that needs its normal approval retry, an unsigned local app bundle, and the expected
+lease-protected force push after a rebase. Stop only for the blocking conditions that `BUILD.md`
+lists.
 
 Build a nightly-branded macOS ZIP so it targets the same product name as the installed nightly:
 
@@ -310,6 +312,10 @@ Before replacement:
 Remove the temporary extraction directory and all stray `.bak-*` bundles after verification. Keep
 only the new `release/T3-Code-*-arm64.zip`; delete older arm64 ZIPs so local build artifacts do not
 accumulate.
+
+After the installed app passes verification and cleanup is complete, update `origin/main` as
+`BUILD.md` describes. Fetch `origin`, then push with `git push --force-with-lease origin main`.
+Confirm that local `main` and `origin/main` name the same commit. Never use an unprotected force push.
 
 An unsigned local build may require one explicit Finder launch or removal of quarantine from the
 single verified app bundle. Never weaken Gatekeeper globally.
