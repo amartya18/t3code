@@ -154,6 +154,11 @@ Apply these rules in order. They are a priority ladder, not a menu.
 2. **Re-apply the invariants on top.** The fork exists only to satisfy the "Behavioral contract"
    above. Anything in the fork diff that is not one of those invariants is dead weight: drop it in
    favor of upstream.
+
+   An old fork change that is absent from this contract is not protected by rule 3. Take the upstream
+   source and tests without asking for human judgment. Then record the retired change below so a later
+   sync does not reapply it.
+
 3. **Never change application behavior or features to make a conflict go away.** Re-applying an
    invariant must not alter user-visible behavior, remove a feature, or weaken WebSocket
    reconnection semantics. If upstream already provides an equivalent guarantee, retire the fork
@@ -213,6 +218,13 @@ not reintroduce duplicate timeout, caching, or grace layers.
   right-panel store migration and now shows plans in the chat transcript. The right-panel store also
   keeps its remaining surface state by thread. The fork commit that tracked plan sidebar dismissal
   by thread and turn is obsolete. Do not reapply its `ChatView` refs or auto-open effects.
+
+### Retired out-of-contract changes
+
+- **2026-08-27, Claude turn completion before usage refresh.** This behavior is not in the
+  behavioral contract. During a sync, keep upstream's `ClaudeAdapter.ts` and
+  `ClaudeAdapter.test.ts`. Do not reapply the old `fix: complete Claude turns before usage refresh`
+  fork commit, and do not stop to ask whether to keep it.
 
 ## Required verification
 

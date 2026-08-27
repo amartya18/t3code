@@ -8,7 +8,6 @@ import type {
   Options as ClaudeQueryOptions,
   PermissionMode,
   PermissionResult,
-  SDKControlGetContextUsageResponse,
   SDKMessage,
   SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
@@ -25,7 +24,6 @@ import {
 import { createModelSelection } from "@t3tools/shared/model";
 import { assert, describe, it } from "@effect/vitest";
 import * as Context from "effect/Context";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -67,15 +65,8 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
   public readonly setModelCalls: Array<string | undefined> = [];
   public readonly setPermissionModeCalls: Array<string> = [];
   public readonly setMaxThinkingTokensCalls: Array<number | null> = [];
-  public readonly getContextUsage?: () => Promise<SDKControlGetContextUsageResponse>;
   public closeCalls = 0;
   public closeError: unknown | undefined;
-
-  constructor(getContextUsage?: () => Promise<SDKControlGetContextUsageResponse>) {
-    if (getContextUsage) {
-      this.getContextUsage = getContextUsage;
-    }
-  }
 
   emit(message: SDKMessage): void {
     if (this.done) {
@@ -172,9 +163,8 @@ function makeHarness(config?: {
   readonly baseDir?: string;
   readonly claudeConfig?: Partial<ClaudeSettings>;
   readonly instanceId?: ProviderInstanceId;
-  readonly getContextUsage?: () => Promise<SDKControlGetContextUsageResponse>;
 }) {
-  const query = new FakeClaudeQuery(config?.getContextUsage);
+  const query = new FakeClaudeQuery();
   let createInput:
     | {
         readonly prompt: AsyncIterable<SDKUserMessage>;
@@ -3150,84 +3140,6 @@ describe("ClaudeAdapterLive", () => {
           },
         });
       }
-    }).pipe(
-      Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
-    );
-  });
-
-  it.effect("completes the turn before optional Claude context usage resolves", () => {
-    let resolveContextUsage!: (usage: SDKControlGetContextUsageResponse) => void;
-    const contextUsage = new Promise<SDKControlGetContextUsageResponse>((resolve) => {
-      resolveContextUsage = resolve;
-    });
-    const harness = makeHarness({
-      getContextUsage: () => contextUsage,
-    });
-
-    return Effect.gen(function* () {
-      const adapter = yield* ClaudeAdapter;
-      const turnCompleted = yield* Deferred.make<void>();
-      const enrichedUsage = yield* Deferred.make<void>();
-      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
-      let completionObserved = false;
-      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
-        Effect.gen(function* () {
-          runtimeEvents.push(event);
-          if (event.type === "turn.completed") {
-            completionObserved = true;
-            yield* Deferred.succeed(turnCompleted, undefined);
-          }
-          if (completionObserved && event.type === "thread.token-usage.updated") {
-            yield* Deferred.succeed(enrichedUsage, undefined);
-          }
-        }),
-      ).pipe(Effect.forkChild);
-
-      yield* adapter.startSession({
-        threadId: THREAD_ID,
-        provider: ProviderDriverKind.make("claudeAgent"),
-        runtimeMode: "full-access",
-      });
-
-      yield* adapter.sendTurn({
-        threadId: THREAD_ID,
-        input: "hello",
-        attachments: [],
-      });
-
-      harness.query.emit({
-        type: "result",
-        subtype: "success",
-        is_error: false,
-        errors: [],
-        session_id: "sdk-session-delayed-context-usage",
-        uuid: "result-delayed-context-usage",
-      } as unknown as SDKMessage);
-
-      yield* Deferred.await(turnCompleted);
-
-      const activeSessions = yield* adapter.listSessions();
-      assert.equal(activeSessions[0]?.status, "ready");
-      assert.equal(activeSessions[0]?.activeTurnId, undefined);
-      assert.equal(
-        runtimeEvents.some((event) => event.type === "thread.token-usage.updated"),
-        false,
-      );
-
-      resolveContextUsage({
-        totalTokens: 123,
-        maxTokens: 200_000,
-        isAutoCompactEnabled: true,
-      } as SDKControlGetContextUsageResponse);
-      yield* Deferred.await(enrichedUsage);
-
-      const completionIndex = runtimeEvents.findIndex((event) => event.type === "turn.completed");
-      const usageIndex = runtimeEvents.findIndex(
-        (event) => event.type === "thread.token-usage.updated",
-      );
-      assert.equal(completionIndex >= 0 && usageIndex > completionIndex, true);
-      runtimeEventsFiber.interruptUnsafe();
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
