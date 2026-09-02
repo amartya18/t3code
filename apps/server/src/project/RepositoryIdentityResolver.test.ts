@@ -9,7 +9,6 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import { TestClock } from "effect/testing";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import * as ProcessRunner from "../processRunner.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
@@ -434,7 +433,7 @@ it.effect("caches negative results for non-Git workspace directories", () => {
     expect(yield* resolver.resolve("/not-a-repository")).toBeNull();
 
     expect(inputs.filter((input) => input.args.includes("rev-parse"))).toHaveLength(1);
-    expect(inputs.filter((input) => input.args.includes("remote"))).toHaveLength(1);
+    expect(inputs.filter((input) => input.args.includes("remote"))).toHaveLength(0);
   }).pipe(Effect.provide(makeMockRepositoryIdentityResolverTestLayer(run)));
 });
 

@@ -16,6 +16,7 @@ const DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY = 512;
 const DEFAULT_POSITIVE_CACHE_TTL = Duration.hours(6);
 const DEFAULT_NEGATIVE_CACHE_TTL = Duration.minutes(1);
 const REPOSITORY_IDENTITY_PROCESS_TIMEOUT = Duration.seconds(5);
+const REPOSITORY_IDENTITY_LOOKUP_FAILED = Symbol("RepositoryIdentityLookupFailed");
 
 export interface RepositoryIdentityResolverOptions {
   readonly cacheCapacity?: number;
@@ -102,8 +103,14 @@ const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.
         timeoutBehavior: "timedOutResult",
       })
       .pipe(Effect.option);
-    if (topLevelResult._tag === "None" || topLevelResult.value.code !== 0) {
+    if (topLevelResult._tag === "None") {
+      return yield* Effect.fail(REPOSITORY_IDENTITY_LOOKUP_FAILED);
+    }
+    if (topLevelResult.value.timedOut || topLevelResult.value.code === 128) {
       return null;
+    }
+    if (topLevelResult.value.code !== 0) {
+      return yield* Effect.fail(REPOSITORY_IDENTITY_LOOKUP_FAILED);
     }
 
     const candidate = topLevelResult.value.stdout.trim();
@@ -115,7 +122,11 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
   "RepositoryIdentityResolver.resolveFromCacheKey",
 )(function* (
   cacheKey: string,
-): Effect.fn.Return<RepositoryIdentity | null, never, ProcessRunner.ProcessRunner> {
+): Effect.fn.Return<
+  RepositoryIdentity | null,
+  typeof REPOSITORY_IDENTITY_LOOKUP_FAILED,
+  ProcessRunner.ProcessRunner
+> {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const remoteResult = yield* processRunner
     .run({
@@ -125,8 +136,14 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
       timeoutBehavior: "timedOutResult",
     })
     .pipe(Effect.option);
-  if (remoteResult._tag === "None" || remoteResult.value.code !== 0) {
+  if (remoteResult._tag === "None") {
+    return yield* Effect.fail(REPOSITORY_IDENTITY_LOOKUP_FAILED);
+  }
+  if (remoteResult.value.timedOut) {
     return null;
+  }
+  if (remoteResult.value.code !== 0) {
+    return yield* Effect.fail(REPOSITORY_IDENTITY_LOOKUP_FAILED);
   }
 
   const remote = pickPrimaryRemote(parseRemoteFetchUrls(remoteResult.value.stdout));
@@ -139,10 +156,18 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const cacheCapacity = options.cacheCapacity ?? DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY;
 
-  const repositoryIdentityCache = yield* Cache.makeWith<string, RepositoryIdentity | null>(
+  const repositoryIdentityCache = yield* Cache.makeWith<
+    string,
+    RepositoryIdentity | null,
+    typeof REPOSITORY_IDENTITY_LOOKUP_FAILED
+  >(
     (cwd) =>
       resolveRepositoryIdentityCacheKey(cwd).pipe(
-        Effect.flatMap(resolveRepositoryIdentityFromCacheKey),
+        Effect.flatMap((cacheKey) =>
+          cacheKey === null
+            ? Effect.succeed(null)
+            : resolveRepositoryIdentityFromCacheKey(cacheKey),
+        ),
         Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
       ),
     {
@@ -160,7 +185,7 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
   const resolve: RepositoryIdentityResolver["Service"]["resolve"] = Effect.fn(
     "RepositoryIdentityResolver.resolve",
   )(function* (cwd) {
-    return yield* Cache.get(repositoryIdentityCache, cwd);
+    return yield* Cache.get(repositoryIdentityCache, cwd).pipe(Effect.orElseSucceed(() => null));
   });
 
   return RepositoryIdentityResolver.of({ resolve });
