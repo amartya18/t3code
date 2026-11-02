@@ -63,10 +63,19 @@ import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
 import {
   CheckIcon,
   ChevronDownIcon,
+  CircleAlertIcon,
+  CircleCheckIcon,
+  CircleDashedIcon,
+  CircleDotDashedIcon,
   FolderIcon,
+  HouseIcon,
   ListFilterIcon,
+  type LucideIcon,
+  MessageCircleQuestionIcon,
   PlusIcon,
   SettingsIcon,
+  ShieldQuestionIcon,
+  UserRoundIcon,
 } from "lucide-react";
 import {
   useEffect,
@@ -148,9 +157,14 @@ import {
   useProjects,
   useServerConfigs,
   useQuietThreadShells,
+  useThreadShell,
 } from "../state/entities";
 import { environmentPresentations } from "../state/presentation";
-import { primaryServerKeybindingsAtom } from "../state/server";
+import {
+  primaryServerConfigAtom,
+  primaryServerKeybindingsAtom,
+  primaryServerSettingsAtom,
+} from "../state/server";
 import { environmentProjects } from "../state/projects";
 import { threadEnvironment } from "../state/threads";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../state/olderSettledShelf";
@@ -166,7 +180,7 @@ import {
   resolveThreadRouteTarget,
 } from "../threadRoutes";
 import type { SidebarThreadSummary } from "../types";
-import { isScratchProject } from "@t3tools/client-runtime/state/projects";
+import { isHomeProject, isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { cn } from "~/lib/utils";
 import { ProjectEnvironmentBadge } from "./ProjectEnvironmentBadge";
 import {
@@ -184,6 +198,7 @@ import {
   deleteSelectedThreadEntries,
   filterSidebarProjectScopeItems,
   firstValidTimestampMs,
+  hasUnseenCompletion,
   isSidebarNestedLinkClick,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
@@ -194,7 +209,10 @@ import {
   resolveSidebarDropTarget,
   resolveSidebarDropVerb,
   resolveSidebarThreadSection,
+  resolveSidebarThreadStatus,
   resolveSidebarReorderableThreadKeys,
+  resolveThreadLastVisitedAt,
+  type SidebarThreadStatus,
   searchSidebarThreads,
   shouldCreateNewThreadInCurrentProject,
   shouldNavigateAfterThreadPark,
@@ -345,6 +363,8 @@ interface SidebarThreadPartitionInput {
   readonly scopedProjectKeys: ReadonlySet<string> | null;
   /** Tasks linked environments run for a listed thread; they show under it. */
   readonly delegatedUnderParent: ReadonlySet<string>;
+  /** The current Home thread, which has its own fixed row. */
+  readonly homeThreadRef: ScopedThreadRef | null;
   readonly serverConfigs: ReadonlyMap<EnvironmentId, EnvironmentServerConfig>;
   readonly connectedEnvironmentIds: readonly EnvironmentId[];
   readonly optimisticDrop: SidebarOptimisticDrop | null;
@@ -411,6 +431,7 @@ function useSidebarThreads(input: {
   readonly optimisticDrop: SidebarOptimisticDrop | null;
   readonly threads: readonly EnvironmentThreadShell[];
   readonly delegatedUnderParent: ReadonlySet<string>;
+  readonly homeThreadRef: ScopedThreadRef | null;
   readonly routeRowThreadKey: string | null;
   // Set in boring mode: the project groups to fold active threads into, in order.
   readonly folderGroups: readonly SidebarProjectSnapshot[] | null;
@@ -425,6 +446,7 @@ function useSidebarThreads(input: {
     optimisticDrop,
     threads,
     delegatedUnderParent,
+    homeThreadRef,
     routeRowThreadKey,
     folderGroups,
     keepEmptyFolders: keepEmpty,
@@ -471,6 +493,7 @@ function useSidebarThreads(input: {
     threads,
     scopedProjectKeys,
     delegatedUnderParent,
+    homeThreadRef,
     serverConfigs,
     connectedEnvironmentIds,
     optimisticDrop,
@@ -607,13 +630,19 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
     threads,
     scopedProjectKeys,
     delegatedUnderParent,
+    homeThreadRef,
     serverConfigs,
     optimisticDrop,
     workingShelfEnabled,
     sortActiveBySend,
   } = input;
   const preciseNow = new Date().toISOString();
-  const visible = filterSidebarV2VisibleThreads(threads, scopedProjectKeys, delegatedUnderParent);
+  const visible = filterSidebarV2VisibleThreads(
+    threads,
+    scopedProjectKeys,
+    delegatedUnderParent,
+    homeThreadRef,
+  );
   const inboxObservation = inboxReturns.observe(workingShelfEnabled ? threads : null);
   const pinned: EnvironmentThreadShell[] = [];
   const active: EnvironmentThreadShell[] = [];
@@ -815,12 +844,28 @@ function useSidebarLookups() {
   const projectGroupByScopeKey = new Map(
     projectGroups.map((project) => [project.projectKey, project] as const),
   );
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const homeWorkspaceRoot = useAtomValue(
+    primaryServerConfigAtom,
+    (config) => config?.homeWorkspaceRoot ?? null,
+  );
   const projectScopeItems = [
     { value: "all", label: "All projects" },
-    ...pickableProjectGroups(projectGroups).map((project) => ({
-      value: project.projectKey,
-      label: project.displayName,
-    })),
+    // Home's folder is not a project to scope to.
+    ...pickableProjectGroups(projectGroups)
+      .filter(
+        (project) =>
+          homeWorkspaceRoot === null ||
+          !project.memberProjects.some(
+            (member) =>
+              member.environmentId === primaryEnvironmentId &&
+              isHomeProject(member, homeWorkspaceRoot),
+          ),
+      )
+      .map((project) => ({
+        value: project.projectKey,
+        label: project.displayName,
+      })),
   ];
   return {
     projects,
@@ -833,6 +878,88 @@ function useSidebarLookups() {
     projectGroupByScopeKey,
     projectScopeItems,
   };
+}
+
+const HOME_ROW_STATUS: Record<
+  Exclude<SidebarThreadStatus, "ready"> | "done",
+  { readonly label: string; readonly Icon: LucideIcon; readonly className: string }
+> = {
+  working: { label: "Working", Icon: CircleDashedIcon, className: "text-info-foreground" },
+  waiting: { label: "Waiting", Icon: CircleDotDashedIcon, className: "text-muted-foreground" },
+  approval: { label: "Approval", Icon: ShieldQuestionIcon, className: "text-warning-foreground" },
+  input: {
+    label: "Input",
+    Icon: MessageCircleQuestionIcon,
+    className: "text-indigo-600 dark:text-indigo-300",
+  },
+  request: { label: "Request", Icon: UserRoundIcon, className: "text-guest-foreground" },
+  limited: { label: "Limited", Icon: CircleAlertIcon, className: "text-warning-foreground" },
+  failed: { label: "Failed", Icon: CircleAlertIcon, className: "text-error-foreground" },
+  done: { label: "Done", Icon: CircleCheckIcon, className: "text-success-foreground" },
+};
+
+/**
+ * The fixed row for the current Home thread, above every other row. Home has
+ * no project, settle, or pin affordances, so it only shows its status.
+ */
+function SidebarHomeRow(props: {
+  threadRef: ScopedThreadRef;
+  isActive: boolean;
+  onActivate: (threadRef: ScopedThreadRef) => void;
+}) {
+  const { isActive, onActivate, threadRef } = props;
+  const thread = useThreadShell(threadRef);
+  const localLastVisitedAt = useUiStateStore(
+    (state) => state.threadLastVisitedAtById[scopedThreadKey(threadRef)],
+  );
+  const status = thread === null ? "ready" : resolveSidebarThreadStatus(thread);
+  const isUnread =
+    thread !== null &&
+    hasUnseenCompletion({
+      ...thread,
+      lastVisitedAt: resolveThreadLastVisitedAt(thread.lastVisitedAt, localLastVisitedAt),
+    });
+  const topStatus =
+    status !== "ready" ? HOME_ROW_STATUS[status] : isUnread ? HOME_ROW_STATUS.done : null;
+  const activate = () => onActivate(threadRef);
+  return (
+    <li className="list-none">
+      <div
+        role="treeitem"
+        tabIndex={-1}
+        data-sidebar-row="home"
+        aria-label={topStatus ? `Home, ${topStatus.label}` : "Home"}
+        aria-current={isActive ? "page" : undefined}
+        data-testid="sidebar-home-row"
+        className={cn(
+          "flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm font-medium outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+          isActive
+            ? "bg-sidebar-row-active text-sidebar-foreground"
+            : "text-sidebar-foreground hover:bg-sidebar-row-hover",
+        )}
+        onClick={activate}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          activate();
+        }}
+      >
+        <HouseIcon aria-hidden className="size-4 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">Home</span>
+        {topStatus ? (
+          <span
+            className={cn(
+              "inline-flex shrink-0 items-center gap-1 text-xs font-medium",
+              topStatus.className,
+            )}
+          >
+            <topStatus.Icon aria-hidden className="size-4 shrink-0" />
+            <span role="status">{topStatus.label}</span>
+          </span>
+        ) : null}
+      </div>
+    </li>
+  );
 }
 
 function ProjectScopeRowIcon(props: { isSelected: boolean; children: ReactNode }) {
@@ -985,6 +1112,16 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   // Row callbacks capture only the handler; the rest of the context changes with the route.
   const { handleNewThread } = newThreadContext;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const homeThreadId = useAtomValue(
+    primaryServerSettingsAtom,
+    (settings) => settings.home.threadId,
+  );
+  // The current Home thread lives on the primary environment and gets its own
+  // fixed row; older Home threads stay in the normal lists.
+  const homeThreadRef =
+    primaryEnvironmentId !== null && homeThreadId !== null
+      ? scopeThreadRef(primaryEnvironmentId, homeThreadId)
+      : null;
   const clearSelection = useThreadSelectionStore((s) => s.clearSelection);
   const setSelectionAnchor = useThreadSelectionStore((s) => s.setAnchor);
   const toggleThreadSelection = useThreadSelectionStore((s) => s.toggleThread);
@@ -1109,7 +1246,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   // already lists the row; the active row's ref callback scrolls to it.
   const { widensScope: revealWidensScope } = resolveSidebarRouteReveal({
     reveal: routeReveal,
-    routeKey: routeRowThreadKey,
+    // Home's fixed row is always shown, so opening Home never widens the scope.
+    routeKey:
+      homeThreadRef !== null && routeRowThreadKey === scopedThreadKey(homeThreadRef)
+        ? null
+        : routeRowThreadKey,
     isSearching: isSearchingThreads,
     scopedProjectKeys: chosenScopeProjectKeys,
     delegatedUnderParent,
@@ -1321,6 +1462,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     optimisticDrop,
     threads,
     delegatedUnderParent,
+    homeThreadRef,
     routeRowThreadKey,
     folderGroups: boringSidebarEnabled
       ? scopedProjectGroups.length === 0
@@ -3384,6 +3526,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                       };
                       const from = isContextDrag ? null : (dragState?.activeSection ?? null);
                       const items: ReactNode[] = [
+                        homeThreadRef === null ? null : (
+                          <SidebarHomeRow
+                            key="home"
+                            threadRef={homeThreadRef}
+                            isActive={routeThreadKey === scopedThreadKey(homeThreadRef)}
+                            onActivate={navigateToThread}
+                          />
+                        ),
                         <SidebarDraftBlock
                           key="draft-sessions"
                           projectByKey={projectByKey}

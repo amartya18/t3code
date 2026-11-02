@@ -157,4 +157,28 @@ describe("thread links", () => {
     );
     expect(formatThreadLink(ref("e", "t1"), " ] ")).toBe("<t3-thread://v2/e/t1>");
   });
+
+  it("formats a titled Home thread as a labeled v2 link", () => {
+    const link = formatThreadLink({
+      environmentId: "env-1",
+      threadId: "home-launched:mcp:1/2",
+      title: "Fix [the] build\nnow",
+    });
+    expect(link).toBe("[Fix the build now](t3-thread://v2/env-1/home-launched:mcp:1/2)");
+    expect(parseThreadLinkHref("t3-thread://v2/env-1/home-launched:mcp:1/2")).toEqual(
+      ref("env-1", "home-launched:mcp:1/2"),
+    );
+  });
+
+  it("uses Untitled thread when a Home title sanitizes away", () => {
+    expect(formatThreadLink({ environmentId: "e", threadId: "t1", title: " ] " })).toBe(
+      "[Untitled thread](t3-thread://v2/e/t1)",
+    );
+  });
+
+  it("keeps an explicit label when the thread also has a title", () => {
+    expect(formatThreadLink({ ...ref("e", "t1"), title: "Ignored" }, "Shown")).toBe(
+      "[Shown](t3-thread://v2/e/t1)",
+    );
+  });
 });

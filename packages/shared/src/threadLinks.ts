@@ -72,18 +72,42 @@ export function guessThreadLinkRef(
   return null;
 }
 
-function threadLinkHref(link: ThreadLink): string {
+const LINK_LABEL_MAX_CHARS = 120;
+
+function threadLinkHref(link: {
+  readonly environmentId: string | null;
+  readonly threadId: string;
+}): string {
   return link.environmentId === null
     ? `${V1_PREFIX}${link.threadId}`
     : `${V2_PREFIX}${link.environmentId}/${link.threadId}`;
 }
 
-/** Without a label, an autolink: clients show the thread's current title. */
-export function formatThreadLink(ref: ThreadLink, label?: string): string {
-  const cleaned = label
-    ?.replace(/[[\]\\\r\n]/g, " ")
+function cleanLinkLabel(text: string): string {
+  return text
+    .replace(/[[\]\\\r\n]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+/**
+ * Without a label, an autolink: clients show the thread's current title.
+ * Home MCP tools pass `{ title }` on a single object so the agent sees a
+ * labeled chip instead of a raw href.
+ */
+export function formatThreadLink(
+  ref: {
+    readonly environmentId: string | null;
+    readonly threadId: string;
+    readonly title?: string;
+  },
+  label?: string,
+): string {
+  if (label === undefined && ref.title !== undefined) {
+    const cleaned = cleanLinkLabel(ref.title).slice(0, LINK_LABEL_MAX_CHARS) || "Untitled thread";
+    return `[${cleaned}](${threadLinkHref(ref)})`;
+  }
+  const cleaned = label === undefined ? undefined : cleanLinkLabel(label);
   return cleaned ? `[${cleaned}](${threadLinkHref(ref)})` : `<${threadLinkHref(ref)}>`;
 }
 

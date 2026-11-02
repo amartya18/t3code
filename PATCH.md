@@ -19,6 +19,12 @@ See [FORK.md](FORK.md) for install, adding patches, conflicts, and rollback.
 6. Two v0.1.6 tests are adjusted so GitHub-hosted CI can go green: storage cleanup accepts Git 2.56's gitfile fatal instead of treating a missing gitdir as a branch change, and the usage "windows it reaches" fixture stays inside the 92-day cache retention window via `Clock.currentTimeMillis` (not `Date.now()`, which lint forbids in tests).
 7. The workspace PDF scroll/zoom browser test waits up to 30s for `1 / 3 pages` and has a 60s test budget. GitHub-hosted `ubuntu-24.04` (4 vCPU) is slower than Blacksmith 8vcpu; the 15s default cuts off first paint.
 
+### Home agent (from pingdotgg/t3code#15975)
+
+8. Desktop hub can run one Home thread that acts across projects and connected environments via `fleet.invoke` / `fleetConnect`.
+9. Settings → Home turns it on and off. The Home folder is not the default new-thread project. macOS hide-on-close stays alive while Home is on.
+10. Ordinary MCP tools keep v0.1.6 schemas. Home routing (`callerIsHome`, `routeHome`, `runAsHome`) is added so Home can list/launch/organize/respond across the fleet.
+
 ## Maintained files
 
 - `scripts/build-desktop-artifact.ts` (+ `.test.ts`)
@@ -27,9 +33,22 @@ See [FORK.md](FORK.md) for install, adding patches, conflicts, and rollback.
 - `apps/server/src/storageCleanup.test.ts`
 - `apps/server/src/usage/UsageService.test.ts`
 - `apps/web/src/components/files/AttachmentFilePreview.browser.test.tsx`
+- `apps/server/src/home/*`, `apps/server/src/mcp/homeRouting.ts`, `apps/server/src/mcp/toolkits/home/*`
+- `packages/contracts/src/home.ts`
+- `apps/web/src/components/home/*`, `apps/web/src/routes/_chat.settings.home.tsx`
 
 ## Dropped from upstream signing
 
 - Notarization (no Apple notary credentials)
 - Associated-domain / passkey entitlements (no Apple team provisioning profile)
 - Clerk desktop passkeys on this fork
+
+## Dropped from Home PR 15975
+
+- Preview-automation RPCs (v0.1.6 already removed them).
+- MCP tool splits (`t3_queue_*`, split pending-request tools, split thread transfer tools). v0.1.6 combined tools stay, with Home routing inside.
+- Home's older `t3-thread://v1/<env>/<thread>` hrefs. New Home links use v0.1.6 v2.
+- Mobile ThreadFeed hunks (no Home behavior; v0.1.6 already has thread links).
+- "Watch report from T3 Code" / "Sent by Home" timeline labels (that code moved to `TimelineUserMessageRow.tsx` on v0.1.6 and was not re-wired).
+- Global `home.open` (mod+shift+0) command-palette handler (shortcut is shown; the v0.1.6 dispatcher was not extended).
+- Cross-environment "open related thread" from ChatView (that logic lives in `useThreadLifecycle.tsx` on v0.1.6).

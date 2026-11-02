@@ -1,5 +1,8 @@
 import {
+  FleetRequestReadResult,
+  FleetRequestsListResult,
   OrchestratorMcpEnvironmentTarget,
+  ProviderApprovalDecision,
   ScheduledTaskId,
   ScheduledTask,
   OrchestrationSearchThreadsInput,
@@ -27,11 +30,12 @@ import { Tool, Toolkit } from "effect/ai";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
+import { homeRoutingDependencies } from "../../homeRouting.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
   description:
-    "Pin, snooze, settle, archive, or mark a thread unread. Omit `threadId` for this thread. `snooze` needs `snoozedUntil`. Settling this thread applies at turn end. A failed turn or queued message leaves it active.",
+    "Pin, snooze, settle, archive, or mark a thread unread. Omit `threadId` for this thread. `snooze` needs `snoozedUntil`. Settling this thread applies at turn end. A failed turn or queued message leaves it active. Home can organize any thread.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     threadId: Schema.optional(ThreadId),
@@ -58,6 +62,7 @@ const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
     McpInvocationContext.McpInvocationContext,
     ThreadManagementService.ThreadManagementService,
     Crypto.Crypto,
+    ...homeRoutingDependencies,
   ],
 })
   .annotate(Tool.Title, "Organize a thread")
@@ -126,19 +131,27 @@ const question = Schema.Struct({
 });
 const PendingRequestTool = Tool.make("t3_pending_request", {
   ...commandTool,
+  dependencies: [...commandTool.dependencies, ...homeRoutingDependencies],
   description:
-    "Pending user questions in a thread. Omit `threadId` for this thread. list: their ids; approvals are not listed. read: one by `requestId`. respond: answer one with `answers`; this cannot approve a permission request.",
+    "Pending user questions in a thread. Omit `threadId` for this thread. list: their ids; approvals are not listed. read: one by `requestId`. respond: answer one with `answers`; this cannot approve a permission request. Home also lists and reads approvals, and answers one with `decision`.",
   parameters: Schema.Struct({
     action: Schema.Literals(["list", "read", "respond"]),
     environmentId: OrchestratorMcpEnvironmentTarget,
     threadId: Schema.optional(ThreadId),
     requestId: Schema.optional(RuntimeRequestId),
     answers: Schema.optional(ProviderUserInputAnswers),
+    decision: Schema.optional(
+      ProviderApprovalDecision.annotate({
+        description: "Home only: the decision for a pending approval.",
+      }),
+    ),
   }),
   success: Schema.Union([
     Schema.Struct({ requestIds: Schema.Array(RuntimeRequestId) }),
     Schema.Struct({ requestId: RuntimeRequestId, questions: Schema.Array(question) }),
     OrchestrationV2DispatchCommandResult,
+    FleetRequestsListResult,
+    FleetRequestReadResult,
   ]),
 })
   .annotate(Tool.Destructive, true)
@@ -192,7 +205,7 @@ const ThreadTransferTool = Tool.make("t3_thread_transfer", {
 const ThreadSearchTool = Tool.make("t3_thread_search", {
   ...commandTool,
   description:
-    "Search active threads by title, branch, PR, project, then message text. Skips subagent threads. `projectId`: one project, else yours, else all outside a thread. Not exhaustive.",
+    "Search active threads by title, branch, PR, project, then message text. Skips subagent threads. `projectId`: one project, else yours, else all outside a thread or for Home. Not exhaustive.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     ...OrchestrationSearchThreadsInput.fields,
@@ -211,7 +224,11 @@ const ThreadSearchTool = Tool.make("t3_thread_search", {
       }),
     ),
   }),
-  dependencies: [...commandTool.dependencies, ThreadSearch.ThreadSearch],
+  dependencies: [
+    ...commandTool.dependencies,
+    ThreadSearch.ThreadSearch,
+    ...homeRoutingDependencies,
+  ],
 })
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);

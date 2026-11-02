@@ -1025,6 +1025,8 @@ export interface DesktopBridge {
    * only the main process can spend a notification click's activation token.
    */
   revealWindow: () => Promise<void>;
+  /** While Home is on, macOS hides the window on close instead of destroying the renderer. */
+  setKeepAliveOnClose: (keepAlive: boolean) => Promise<void>;
   /**
    * The OS locale as a BCP-47 tag, which the renderer cannot read for itself:
    * the packaged app ships only the `en-US` Chromium locale pak, so

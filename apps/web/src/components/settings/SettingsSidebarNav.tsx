@@ -17,6 +17,7 @@ import {
   FolderTreeIcon,
   GitBranchIcon,
   GlobeIcon,
+  HouseIcon,
   InfoIcon,
   MessageSquareTextIcon,
   MessagesSquareIcon,
@@ -33,8 +34,11 @@ import {
   XIcon,
 } from "lucide-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
+import { useAtomValue } from "@effect/atom-react";
 
+import { isElectron } from "../../env";
 import { cn } from "../../lib/utils";
+import { primaryServerConfigAtom } from "../../state/server";
 import { Button } from "../ui/button";
 import { Kbd } from "../ui/kbd";
 import {
@@ -87,6 +91,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   Record<SettingsPath, ComponentType<{ className?: string }>>
 > = {
   "/settings/general": Settings2Icon,
+  "/settings/home": HouseIcon,
   "/settings/diagnostics": WrenchIcon,
   "/settings/appearance": PaletteIcon,
   "/settings/chat": MessageSquareTextIcon,
@@ -133,7 +138,16 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const currentSearch = useLocation({ select: (location) => location.search });
   const scopeSearch = validateSettingsScopeSearch(currentSearch);
   const activePath = SETTINGS_DETAIL_PAGE_PARENTS[pathname] ?? pathname;
-  const navPaths = SETTINGS_NAV_GROUPS.flatMap((group) => group.paths);
+  // Only a desktop app's own server can run Home.
+  const canRunHome = useAtomValue(
+    primaryServerConfigAtom,
+    (config) => isElectron && config?.homeWorkspaceRoot != null,
+  );
+  const navGroups = SETTINGS_NAV_GROUPS.map((group) => ({
+    ...group,
+    paths: group.paths.filter((to) => to !== "/settings/home" || canRunHome),
+  }));
+  const navPaths = navGroups.flatMap((group) => group.paths);
   const sectionNavigation = useSettingsSectionNavigation(
     navPaths.find((to) => activePath === to || activePath.startsWith(`${to}/`)) ??
       navPaths[0] ??
@@ -380,7 +394,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                   aria-label="Settings sections"
                   className="flex flex-col gap-4"
                 >
-                  {SETTINGS_NAV_GROUPS.map((group, index) => (
+                  {navGroups.map((group, index) => (
                     <div
                       key={group.heading ?? index}
                       role="group"
