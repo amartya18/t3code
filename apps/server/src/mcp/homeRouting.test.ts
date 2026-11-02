@@ -16,6 +16,8 @@ import * as HomeService from "../home/HomeService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import { routeHome } from "./homeRouting.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
+import * as McpToolAccess from "./McpToolAccess.ts";
+import { HomeHandlersLive } from "./toolkits/home/handlers.ts";
 
 const hub = EnvironmentId.make("hub");
 const studio = EnvironmentId.make("studio");
@@ -108,4 +110,8 @@ it.effect("lets Home read but not change anything outside full-access/default mo
     expect(local).toHaveLength(1);
     expect(remote).toHaveLength(0);
   }).pipe(Effect.provide(layer));
+});
+
+it("registers Home MCP handlers as an McpToolAccess layer", () => {
+  expect(() => McpToolAccess.HandlersLayer.layer(HomeHandlersLive)).not.toThrow();
 });

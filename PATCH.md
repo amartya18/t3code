@@ -23,7 +23,7 @@ See [FORK.md](FORK.md) for install, adding patches, conflicts, and rollback.
 
 8. Desktop hub can run one Home thread that acts across projects and connected environments via `fleet.invoke` / `fleetConnect`.
 9. Settings → Home turns it on and off. The Home folder is not the default new-thread project. macOS hide-on-close stays alive while Home is on.
-10. Ordinary MCP tools keep v0.1.6 schemas. Home routing (`callerIsHome`, `routeHome`, `runAsHome`) is added so Home can list/launch/organize/respond across the fleet.
+10. Ordinary MCP tools keep v0.1.6 schemas. Home routing (`callerIsHome`, `routeHome`, `runAsHome`) is added so Home can list/launch/organize/respond across the fleet. Home's own tools register through `McpToolAccess.toLayer`, not `Toolkit.toLayer`.
 
 ## Maintained files
 

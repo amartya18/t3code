@@ -1,11 +1,6 @@
 /**
- * Home: one agent thread per desktop install that can act across every
- * project and environment the user has connected.
- *
- * The desktop's local server (the hub) runs Home and owns its state. Calls
- * that target another environment go through the desktop renderer, which
- * already holds a live connection to each one, and land on that
- * environment's `fleet.invoke`. See docs/internals/home.md.
+ * One Home thread per desktop install, acting across connected environments.
+ * Hub owns state; other environments go through fleet.invoke.
  */
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -101,9 +96,6 @@ export const isHomeLaunchedThreadId = (threadId: string): boolean =>
 /** Watch reports T3 Code sends into Home's thread have message ids that start with this. */
 export const HOME_REPORT_MESSAGE_ID_PREFIX = "home-report:";
 
-export const isHomeReportMessageId = (messageId: string): boolean =>
-  messageId.startsWith(HOME_REPORT_MESSAGE_ID_PREFIX);
-
 export const HomeEnableInput = Schema.Struct({ modelSelection: ModelSelection });
 export type HomeEnableInput = typeof HomeEnableInput.Type;
 
@@ -114,10 +106,6 @@ export class HomeUnavailableError extends Schema.TaggedError<HomeUnavailableErro
   "HomeUnavailableError",
   { message: Schema.String },
 ) {}
-
-// ---------------------------------------------------------------------------
-// Fleet operations: what Home can do in any environment.
-// ---------------------------------------------------------------------------
 
 /** The Home thread that asked, recorded as the sender of messages it causes. */
 export const FleetActor = Schema.Struct({
@@ -327,10 +315,6 @@ export type FleetInput<Op extends FleetOperation> = Extract<FleetRequest, { op: 
 /** Runs one fleet operation on the environment that receives it. */
 export const FleetInvokeInput = Schema.Struct({ actor: FleetActor, request: FleetRequest });
 export type FleetInvokeInput = typeof FleetInvokeInput.Type;
-
-// ---------------------------------------------------------------------------
-// Hub <-> desktop renderer relay.
-// ---------------------------------------------------------------------------
 
 export const FleetEnvironment = Schema.Struct({
   environmentId: EnvironmentId,
