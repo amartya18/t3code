@@ -2612,7 +2612,7 @@ describe("UsageService", () => {
       // Cache retention is 92 days. Hard-coded 2026-08-01 dates fall out of
       // that window once "now" is early November 2026, so the file mtime and
       // the windows under test stay 10 days behind the live clock.
-      const fileMs = Date.now() - 10 * 24 * 60 * 60 * 1000;
+      const fileMs = (yield* Clock.currentTimeMillis) - 10 * 24 * 60 * 60 * 1000;
       const utcDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
       const fileDay = utcDay(fileMs);
       const window = {

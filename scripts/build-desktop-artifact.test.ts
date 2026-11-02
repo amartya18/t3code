@@ -38,6 +38,7 @@ import {
   packWindowsServerAsar,
   preflightWindowsDesktopBuild,
   renderMacPasskeyEntitlements,
+  renderMacSelfSignedEntitlements,
   resolveMacWebAuthnEntitlements,
   resolveMacPasskeySigningConfiguration,
   shouldResolveMacPasskeySigning,
@@ -551,20 +552,15 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     "signed macOS builds without a passkey profile skip notarization and provisioning",
     () =>
       Effect.gen(function* () {
-        const signedSelf = yield* createBuildConfig(
-          "mac",
-          "dmg",
-          "0.1.6",
-          true,
-          false,
-          undefined,
-          undefined,
-        );
+        const signedSelf = yield* createBuildConfig("mac", "dmg", "0.1.6", true, false, undefined, {
+          entitlementsPath: "/tmp/entitlements.mac.plist",
+        });
         const mac = signedSelf.mac as Record<string, unknown>;
         assert.equal(mac.notarize, false);
+        assert.equal(mac.forceCodeSigning, true);
         assert.match(String(mac.sign), /scripts[\\/]sign-macos\.ts$/);
         assert.notProperty(mac, "provisioningProfile");
-        assert.notProperty(mac, "entitlements");
+        assert.equal(mac.entitlements, "/tmp/entitlements.mac.plist");
 
         const signedPasskeys = yield* createBuildConfig(
           "mac",
@@ -580,6 +576,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         );
         const passkeyMac = signedPasskeys.mac as Record<string, unknown>;
         assert.notProperty(passkeyMac, "notarize");
+        assert.equal(passkeyMac.forceCodeSigning, true);
         assert.equal(passkeyMac.provisioningProfile, "/tmp/t3code.provisionprofile");
         assert.equal(passkeyMac.entitlements, "/tmp/entitlements.mac.plist");
       }).pipe(
@@ -1563,6 +1560,21 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       entitlements,
       /<key>com\.apple\.developer\.web-browser\.public-key-credential<\/key>\s*<true\/>/u,
     );
+  });
+
+  it("self-signed mac entitlements keep camera, mic, and JIT without Apple team claims", () => {
+    const entitlements = renderMacSelfSignedEntitlements();
+    assert.match(entitlements, /<key>com\.apple\.security\.cs\.allow-jit<\/key>\s*<true\/>/u);
+    assert.match(
+      entitlements,
+      /<key>com\.apple\.security\.cs\.disable-library-validation<\/key>\s*<true\/>/u,
+    );
+    assert.match(entitlements, /<key>com\.apple\.security\.device\.camera<\/key>\s*<true\/>/u);
+    assert.match(entitlements, /<key>com\.apple\.security\.device\.audio-input<\/key>\s*<true\/>/u);
+    assert.notInclude(entitlements, "com.apple.application-identifier");
+    assert.notInclude(entitlements, "com.apple.developer.team-identifier");
+    assert.notInclude(entitlements, "com.apple.developer.associated-domains");
+    assert.notInclude(entitlements, "webcredentials:");
   });
 
   it("skips passkey resolution when Apple team id and provisioning profile are both absent", () => {
