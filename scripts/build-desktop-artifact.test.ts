@@ -547,38 +547,48 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
-  it.effect("signed macOS builds without a passkey profile skip notarization and provisioning", () =>
-    Effect.gen(function* () {
-      const signedSelf = yield* createBuildConfig(
-        "mac",
-        "dmg",
-        "0.1.6",
-        true,
-        false,
-        undefined,
-        undefined,
-      );
-      const mac = signedSelf.mac as Record<string, unknown>;
-      assert.equal(mac.notarize, false);
-      assert.match(String(mac.sign), /scripts[\\/]sign-macos\.ts$/);
-      assert.notProperty(mac, "provisioningProfile");
-      assert.notProperty(mac, "entitlements");
+  it.effect(
+    "signed macOS builds without a passkey profile skip notarization and provisioning",
+    () =>
+      Effect.gen(function* () {
+        const signedSelf = yield* createBuildConfig(
+          "mac",
+          "dmg",
+          "0.1.6",
+          true,
+          false,
+          undefined,
+          undefined,
+        );
+        const mac = signedSelf.mac as Record<string, unknown>;
+        assert.equal(mac.notarize, false);
+        assert.match(String(mac.sign), /scripts[\\/]sign-macos\.ts$/);
+        assert.notProperty(mac, "provisioningProfile");
+        assert.notProperty(mac, "entitlements");
 
-      const signedPasskeys = yield* createBuildConfig("mac", "dmg", "0.1.6", true, false, undefined, {
-        entitlementsPath: "/tmp/entitlements.mac.plist",
-        provisioningProfilePath: "/tmp/t3code.provisionprofile",
-      });
-      const passkeyMac = signedPasskeys.mac as Record<string, unknown>;
-      assert.notProperty(passkeyMac, "notarize");
-      assert.equal(passkeyMac.provisioningProfile, "/tmp/t3code.provisionprofile");
-      assert.equal(passkeyMac.entitlements, "/tmp/entitlements.mac.plist");
-    }).pipe(
-      Effect.provide(
-        ConfigProvider.layer(
-          ConfigProvider.fromEnv({ env: { GITHUB_REPOSITORY: "amartya18/t3code" } }),
+        const signedPasskeys = yield* createBuildConfig(
+          "mac",
+          "dmg",
+          "0.1.6",
+          true,
+          false,
+          undefined,
+          {
+            entitlementsPath: "/tmp/entitlements.mac.plist",
+            provisioningProfilePath: "/tmp/t3code.provisionprofile",
+          },
+        );
+        const passkeyMac = signedPasskeys.mac as Record<string, unknown>;
+        assert.notProperty(passkeyMac, "notarize");
+        assert.equal(passkeyMac.provisioningProfile, "/tmp/t3code.provisionprofile");
+        assert.equal(passkeyMac.entitlements, "/tmp/entitlements.mac.plist");
+      }).pipe(
+        Effect.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromEnv({ env: { GITHUB_REPOSITORY: "amartya18/t3code" } }),
+          ),
         ),
       ),
-    ),
   );
 
   it.effect("resolves the GitHub update feed from T3CODE_DESKTOP_UPDATE_REPOSITORY", () =>
@@ -1564,10 +1574,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       }),
       false,
     );
-    assert.equal(
-      shouldResolveMacPasskeySigning({ T3CODE_APPLE_TEAM_ID: "ABC1234567" }),
-      true,
-    );
+    assert.equal(shouldResolveMacPasskeySigning({ T3CODE_APPLE_TEAM_ID: "ABC1234567" }), true);
     assert.equal(
       shouldResolveMacPasskeySigning({
         T3CODE_MACOS_PROVISIONING_PROFILE: "/tmp/t3code.provisionprofile",

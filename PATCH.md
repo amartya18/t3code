@@ -15,7 +15,7 @@ See [FORK.md](FORK.md) for install, adding patches, conflicts, and rollback.
 
 ### GitHub-hosted CI on this fork
 
-5. `ci.yml` and `mobile-fingerprint-check.yml` use GitHub-hosted runners when `github.repository_owner != pingdotgg`. pingdotgg keeps Blacksmith.
+5. `ci.yml` and `mobile-fingerprint-check.yml` use GitHub-hosted `ubuntu-24.04` / `macos-latest` when `github.repository_owner != pingdotgg`. pingdotgg keeps Blacksmith. `ubuntu-latest` is Ubuntu 26, which Playwright 1.60 cannot install Chromium on.
 
 ## Maintained files
 
