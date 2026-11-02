@@ -21,10 +21,10 @@ See [FORK.md](FORK.md) for install, adding patches, conflicts, and rollback.
 
 ### Daily stable sync
 
-7. `.github/workflows/fork-stable-release.yml` runs on a daily cron and on `workflow_dispatch`. It publishes only a plain `vX.Y.Z` upstream stable tag, never a nightly.
-8. A day with no new stable tag, or a tag this fork already released, exits 0 and publishes nothing.
-9. Otherwise it checks out that upstream tag, cherry-picks `merge-base(patches_ref, tag)..patches_ref` with `--empty=drop` (default `patches_ref` is `patches`), refuses merge commits, runs `update-release-package-versions.ts` so server/desktop match the tag, builds macOS arm64 with `--signed`, and publishes a GitHub Release whose version equals the upstream tag. `app-update.yml` must name `amartya18/t3code` or the job fails before publish. `codesign -dvvv` must show a non-ad-hoc Authority. The GitHub Release is created as a draft and only undrafted after zip, dmg, and `latest-mac.yml` are on it.
-10. A cherry-pick conflict, a merge commit on the patch stack, a missing `CSC_LINK`, an ad-hoc signature, or a build failure opens a GitHub issue and publishes nothing (a leftover draft is not latest).
+8. `.github/workflows/fork-stable-release.yml` runs on a daily cron and on `workflow_dispatch`. It publishes only a plain `vX.Y.Z` upstream stable tag, never a nightly.
+9. A day with no new stable tag, or a tag this fork already released, exits 0 and publishes nothing.
+10. Otherwise it checks out that upstream tag, cherry-picks `merge-base(patches_ref, tag)..patches_ref` with `--empty=drop` (default `patches_ref` is `patches`), refuses merge commits, runs `update-release-package-versions.ts` so server/desktop match the tag, builds macOS arm64 with `--signed`, and publishes a GitHub Release whose version equals the upstream tag. `app-update.yml` must name `amartya18/t3code` or the job fails before publish. `codesign -dvvv` must show a non-ad-hoc Authority. The GitHub Release is created as a draft and only undrafted after zip, dmg, and `latest-mac.yml` are on it.
+11. A cherry-pick conflict, a merge commit on the patch stack, a missing `CSC_LINK`, an ad-hoc signature, or a build failure opens a GitHub issue and publishes nothing (a leftover draft is not latest).
 
 ## Maintained files
 
