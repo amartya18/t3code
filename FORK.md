@@ -23,7 +23,11 @@ The contract for those patches is [PATCH.md](PATCH.md).
 
 The daily workflow cherry-picks `patches` onto the newest upstream stable tag. If git cannot apply a patch, it opens a GitHub issue and publishes nothing. Rebase `patches` onto the new tag, restore the PATCH.md invariants, and re-run the workflow.
 
+Keep `patches` a linear rebase/squash stack. Merge commits on `patches` fail the job (`git cherry-pick` needs `-m` and we will not guess a mainline). Empty commits are dropped.
+
 Prefer upstream on conflicted hunks, then re-apply only the contract in PATCH.md. If the invariant cannot be re-expressed without changing behavior, leave the conflict and say which invariant is at risk.
+
+Fork patches ride the next upstream **stable** tag, not nightly, and not a random main SHA.
 
 ## Owner setup (once)
 
@@ -61,6 +65,12 @@ Repo Settings → Secrets and variables → Actions → New repository secret:
 Keep the p12 somewhere durable outside git. The same identity must sign every later release.
 
 Actions → Fork stable release → Enable workflow. Then run it once with tag `v0.1.6` (and `patches_ref` set to this branch if `patches` does not yet include the stack).
+
+## What this fork does not change
+
+- Home is local-only. Remote CLI archives and T3 Connect public config stay pingdotgg; this stack does not bake a fork Connect host.
+- The update feed in the packaged app is `amartya18/t3code`. Official pingdotgg builds will not consume it, and this build will not consume theirs.
+- Notarization and Clerk desktop passkeys stay off until an Apple team id and provisioning profile are present.
 
 ## Rollback
 

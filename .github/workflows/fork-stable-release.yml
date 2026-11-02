@@ -121,8 +121,17 @@ jobs:
           range="$(git merge-base fork-patches HEAD)..fork-patches"
           count="$(git rev-list --count "$range")"
           echo "Cherry-pick $range ($count commits) onto $TAG"
+          if git rev-list --merges "$range" | grep -q .; then
+            {
+              echo "The patch stack contains merge commits. Rebase or squash onto patches;"
+              echo "cherry-pick cannot apply merges without -m and must not guess a mainline."
+              echo
+              git log --oneline --merges "$range"
+            } | tee "$RUNNER_TEMP/fork-stable-failure.txt"
+            exit 2
+          fi
           if [[ "$count" != "0" ]]; then
-            if ! git cherry-pick "$range"; then
+            if ! git cherry-pick --empty=drop "$range"; then
               {
                 echo "Cherry-pick of ${PATCHES_REF} onto ${TAG} failed."
                 echo
@@ -157,6 +166,9 @@ jobs:
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Align package versions with the upstream tag
+        run: node scripts/update-release-package-versions.ts "${{ needs.plan.outputs.version }}"
 
       - name: Build signed macOS arm64
         env:
@@ -203,6 +215,45 @@ jobs:
               sys.exit(1)
           PY
 
+      - name: Refuse an ad-hoc or unsigned app
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          zips=(release/*.zip)
+          if [[ ${#zips[@]} -eq 0 ]]; then
+            echo "no mac zip in release/" | tee "$RUNNER_TEMP/fork-stable-failure.txt"
+            exit 1
+          fi
+          inspect="$RUNNER_TEMP/codesign-app"
+          rm -rf "$inspect"
+          mkdir -p "$inspect"
+          ditto -x -k "${zips[0]}" "$inspect"
+          app="$(find "$inspect" -name "*.app" -maxdepth 3 -print -quit)"
+          if [[ -z "$app" ]]; then
+            echo "zip has no .app" | tee "$RUNNER_TEMP/fork-stable-failure.txt"
+            exit 1
+          fi
+          codesign -dvvv "$app" 2> "$RUNNER_TEMP/codesign.txt" || {
+            echo "codesign -dvvv failed; the app is unsigned" | tee "$RUNNER_TEMP/fork-stable-failure.txt"
+            cat "$RUNNER_TEMP/codesign.txt" || true
+            exit 1
+          }
+          cat "$RUNNER_TEMP/codesign.txt"
+          if grep -Eiq 'Signature=(adhoc|unsigned)' "$RUNNER_TEMP/codesign.txt"; then
+            echo "ad-hoc or unsigned; Squirrel.Mac will reject later updates" | tee "$RUNNER_TEMP/fork-stable-failure.txt"
+            exit 1
+          fi
+          if ! grep -q '^Authority=' "$RUNNER_TEMP/codesign.txt"; then
+            echo "codesign reported no Authority; identity is untrusted or signing was skipped" | tee "$RUNNER_TEMP/fork-stable-failure.txt"
+            exit 1
+          fi
+          codesign -d -r- "$app" 2>> "$RUNNER_TEMP/codesign.txt" || true
+          if grep -Eiq 'designated => cdhash' "$RUNNER_TEMP/codesign.txt" && ! grep -Eiq 'designated => .*certificate|designated => .*identifier' "$RUNNER_TEMP/codesign.txt"; then
+            echo "designated requirement is ad-hoc (cdhash only)" | tee "$RUNNER_TEMP/fork-stable-failure.txt"
+            exit 1
+          fi
+
       - name: Collect assets
         id: assets
         shell: bash
@@ -232,7 +283,7 @@ jobs:
             git push origin "HEAD:refs/tags/${TAG}"
           fi
 
-      - name: Publish GitHub Release
+      - name: Publish GitHub Release draft
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.plan.outputs.tag }}
@@ -242,11 +293,26 @@ jobs:
             Personal fork build of upstream ${{ needs.plan.outputs.tag }} with the `patches` stack applied.
 
             Self-signed. Not notarized. macOS arm64 only. Update feed is amartya18/t3code on the stable channel.
+          draft: true
           prerelease: false
-          make_latest: true
+          make_latest: false
           files: release-publish/*
           fail_on_unmatched_files: true
           token: ${{ github.token }}
+
+      - name: Verify release assets then publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.plan.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          assets="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
+          echo "$assets"
+          echo "$assets" | grep -q '\.zip$'
+          echo "$assets" | grep -q '\.dmg$'
+          echo "$assets" | grep -q 'latest-mac.yml'
+          gh release edit "$TAG" --draft=false --latest
 
       - name: Open an issue on failure
         if: failure()
