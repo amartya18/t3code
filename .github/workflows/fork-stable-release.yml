@@ -1,0 +1,276 @@
+name: Fork stable release
+
+# Cron only runs from the repository default branch. This workflow lives on
+# `patches`; set that as the default branch so the daily job fires. `main` stays
+# a 1:1 mirror of pingdotgg/t3code and must not gain this file.
+
+on:
+  schedule:
+    - cron: "17 8 * * *"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Stable tag to build (v0.1.6). Empty uses the newest upstream stable tag."
+        required: false
+        type: string
+      patches_ref:
+        description: "Git ref whose commits after merge-base(tag) are cherry-picked. Defaults to patches."
+        required: false
+        type: string
+        default: patches
+
+concurrency:
+  group: fork-stable-release-${{ github.repository }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: write
+
+env:
+  T3CODE_DESKTOP_UPDATE_REPOSITORY: amartya18/t3code
+
+jobs:
+  plan:
+    name: Detect stable tag
+    if: github.repository_owner != 'pingdotgg'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      decision: ${{ steps.plan.outputs.decision }}
+      reason: ${{ steps.plan.outputs.reason }}
+      tag: ${{ steps.plan.outputs.tag }}
+      version: ${{ steps.plan.outputs.version }}
+      patches_ref: ${{ steps.refs.outputs.patches_ref }}
+    steps:
+      - name: Checkout scripts
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            scripts/fork-stable-sync.ts
+            scripts/lib/fork-stable-sync.ts
+            package.json
+          sparse-checkout-cone-mode: false
+
+      - name: Resolve patches ref
+        id: refs
+        shell: bash
+        run: |
+          ref="${{ github.event_name == 'workflow_dispatch' && inputs.patches_ref || 'patches' }}"
+          if [[ -z "$ref" ]]; then
+            ref=patches
+          fi
+          echo "patches_ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch release lists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh api --paginate repos/pingdotgg/t3code/releases > "$RUNNER_TEMP/upstream-releases.json"
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/releases" > "$RUNNER_TEMP/fork-releases.json"
+
+      - name: Plan
+        id: plan
+        shell: bash
+        env:
+          REQUESTED: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || '' }}
+        run: |
+          args=(
+            --upstream "$RUNNER_TEMP/upstream-releases.json"
+            --fork "$RUNNER_TEMP/fork-releases.json"
+            --github-output
+          )
+          if [[ -n "$REQUESTED" ]]; then
+            args+=(--requested "$REQUESTED")
+          fi
+          node scripts/fork-stable-sync.ts "${args[@]}"
+
+  build:
+    name: Apply patches, sign, publish
+    needs: plan
+    if: needs.plan.outputs.decision == 'build'
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout patches history
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Apply patch stack onto the upstream tag
+        id: apply
+        shell: bash
+        env:
+          TAG: ${{ needs.plan.outputs.tag }}
+          PATCHES_REF: ${{ needs.plan.outputs.patches_ref }}
+        run: |
+          set -euo pipefail
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+
+          git fetch --no-tags origin "${PATCHES_REF}:refs/heads/fork-patches"
+          git fetch --no-tags https://github.com/pingdotgg/t3code.git "refs/tags/${TAG}:refs/tags/upstream/${TAG}"
+          git checkout --detach "refs/tags/upstream/${TAG}"
+
+          range="$(git merge-base fork-patches HEAD)..fork-patches"
+          count="$(git rev-list --count "$range")"
+          echo "Cherry-pick $range ($count commits) onto $TAG"
+          if [[ "$count" != "0" ]]; then
+            if ! git cherry-pick "$range"; then
+              {
+                echo "Cherry-pick of ${PATCHES_REF} onto ${TAG} failed."
+                echo
+                echo "Unmerged files:"
+                git diff --name-only --diff-filter=U || true
+              } | tee "$RUNNER_TEMP/fork-stable-failure.txt"
+              exit 2
+            fi
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Require signing secrets
+        shell: bash
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+        run: |
+          if [[ -z "$CSC_LINK" || -z "$CSC_KEY_PASSWORD" ]]; then
+            echo "CSC_LINK and CSC_KEY_PASSWORD must be set. Ad-hoc signing would break Squirrel.Mac updates." | tee "$RUNNER_TEMP/fork-stable-failure.txt"
+            exit 1
+          fi
+
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          install-args: --filter=t3... --filter=@t3tools/web... --filter=@t3tools/desktop... --filter=@t3tools/scripts...
+        env:
+          pnpm_config_cache_dir: ${{ runner.temp }}/pnpm-metadata
+
+      - name: Install Rust
+        shell: bash
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Build signed macOS arm64
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          T3CODE_DESKTOP_UPDATE_REPOSITORY: amartya18/t3code
+          T3CODE_TELEMETRY_CHANNEL: dev
+        run: |
+          node scripts/build-desktop-artifact.ts \
+            --platform mac \
+            --target dmg \
+            --arch arm64 \
+            --build-version "${{ needs.plan.outputs.version }}" \
+            --signed \
+            --verbose
+
+      - name: Refuse a pingdotgg update feed
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob, sys, zipfile
+          zips = glob.glob("release/*.zip")
+          if not zips:
+              print("no mac zip in release/", file=sys.stderr)
+              sys.exit(1)
+          needle_ok = False
+          needle_bad = False
+          with zipfile.ZipFile(zips[0]) as zf:
+              names = [n for n in zf.namelist() if n.endswith("app-update.yml")]
+              if not names:
+                  print("zip has no app-update.yml", file=sys.stderr)
+                  sys.exit(1)
+              body = zf.read(names[0]).decode()
+              print(body)
+              needle_ok = "owner: amartya18" in body and "repo: t3code" in body
+              needle_bad = "pingdotgg" in body
+          if needle_bad or not needle_ok:
+              print("app-update.yml is not amartya18/t3code", file=sys.stderr)
+              sys.exit(1)
+          yml = glob.glob("release/latest-mac.yml")
+          if not yml:
+              print("missing release/latest-mac.yml", file=sys.stderr)
+              sys.exit(1)
+          PY
+
+      - name: Collect assets
+        id: assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-publish
+          shopt -s nullglob
+          for file in release/*.dmg release/*.zip release/*.blockmap release/*.yml; do
+            [[ "$(basename "$file")" == builder-debug.yml ]] && continue
+            cp "$file" release-publish/
+          done
+          ls -la release-publish
+          echo "dir=release-publish" >> "$GITHUB_OUTPUT"
+
+      - name: Push the release tag
+        env:
+          TAG: ${{ needs.plan.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The cherry-picked commit is not on a branch. GitHub can only tag a SHA
+          # that exists on the remote, so push the tag first. Move a leftover tag
+          # from a failed earlier run; planPublish already confirmed there is no release.
+          if git ls-remote --tags origin "refs/tags/${TAG}" | grep -q .; then
+            git push --force origin "HEAD:refs/tags/${TAG}"
+          else
+            git push origin "HEAD:refs/tags/${TAG}"
+          fi
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.plan.outputs.tag }}
+          target_commitish: ${{ steps.apply.outputs.sha }}
+          name: T3 Code ${{ needs.plan.outputs.tag }} (fork)
+          body: |
+            Personal fork build of upstream ${{ needs.plan.outputs.tag }} with the `patches` stack applied.
+
+            Self-signed. Not notarized. macOS arm64 only. Update feed is amartya18/t3code on the stable channel.
+          prerelease: false
+          make_latest: true
+          files: release-publish/*
+          fail_on_unmatched_files: true
+          token: ${{ github.token }}
+
+      - name: Open an issue on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.plan.outputs.tag }}
+        shell: bash
+        run: |
+          report="$RUNNER_TEMP/fork-stable-failure.txt"
+          body_file="$RUNNER_TEMP/fork-stable-issue.md"
+          {
+            echo "Fork stable release failed for \`${TAG}\`."
+            echo
+            echo "Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo
+            if [[ -f "$report" ]]; then
+              echo '```'
+              cat "$report"
+              echo '```'
+            else
+              echo "See the workflow log. Nothing was published."
+            fi
+          } > "$body_file"
+          gh issue create \
+            --title "fork stable release failed for ${TAG}" \
+            --body-file "$body_file" \
+            || echo "::error::Could not open an issue. Enable Issues on this repository."

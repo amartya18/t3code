@@ -25,6 +25,43 @@ The daily workflow cherry-picks `patches` onto the newest upstream stable tag. I
 
 Prefer upstream on conflicted hunks, then re-apply only the contract in PATCH.md. If the invariant cannot be re-expressed without changing behavior, leave the conflict and say which invariant is at risk.
 
+## Owner setup (once)
+
+GitHub Actions cron only runs from the default branch. Set the default branch to `patches` (Settings → General → Default branch). Leave `main` as the upstream mirror.
+
+Enable Issues (Settings → General → Features → Issues) so a failed sync can open a ticket instead of staying a red X.
+
+Create a **stable** self-signed code-signing identity. Ad-hoc signing gives every build a new designated requirement, and Squirrel.Mac will reject the next zip. On a Mac:
+
+```bash
+cat > /tmp/t3-fork-codesign.cnf <<'EOF'
+[req]
+distinguished_name = req_distinguished_name
+prompt = no
+x509_extensions = v3_codesign
+[req_distinguished_name]
+CN = T3 Code Fork Signing
+[v3_codesign]
+keyUsage = critical, digitalSignature
+extendedKeyUsage = critical, codeSigning
+basicConstraints = critical,CA:false
+EOF
+openssl req -x509 -newkey rsa:2048 -keyout /tmp/t3-fork.key -out /tmp/t3-fork.crt \
+  -days 3650 -nodes -config /tmp/t3-fork-codesign.cnf
+openssl pkcs12 -export -out /tmp/t3-fork.p12 -inkey /tmp/t3-fork.key -in /tmp/t3-fork.crt
+# choose a password when prompted, then:
+base64 -i /tmp/t3-fork.p12 | pbcopy
+```
+
+Repo Settings → Secrets and variables → Actions → New repository secret:
+
+- `CSC_LINK` = the base64 p12 (clipboard)
+- `CSC_KEY_PASSWORD` = the p12 password
+
+Keep the p12 somewhere durable outside git. The same identity must sign every later release.
+
+Actions → Fork stable release → Enable workflow. Then run it once with tag `v0.1.6` (and `patches_ref` set to this branch if `patches` does not yet include the stack).
+
 ## Rollback
 
 - App: download an older fork release zip and replace the `.app`. Same signing identity, so this is a downgrade the updater will try to replace on the next check.
