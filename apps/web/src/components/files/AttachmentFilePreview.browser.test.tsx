@@ -2520,7 +2520,11 @@ it("keeps workspace PDF scroll and zoom after reloads", async () => {
   using fixture = await workspacePdfPreview();
   const { preview, urls } = fixture;
   await using screen = await render(preview(urls.original, "one"));
-  await expect.element(screen.getByText("1 / 3 pages", { exact: true })).toBeVisible();
+  // GitHub-hosted ubuntu-24.04 paints this PDF slower than Blacksmith 8vcpu; 15s cuts off page 1.
+  await expect
+    .element(screen.getByText("1 / 3 pages", { exact: true }), { timeout: 30_000 })
+    .toBeVisible();
+
   await screen.getByRole("button", { name: "Next page", exact: true }).click();
   await vi.waitFor(() => expect(screen.container.textContent).toContain("2 / 3 pages"));
   await screen.getByRole("button", { name: "Next page", exact: true }).click();
@@ -2575,7 +2579,7 @@ it("keeps workspace PDF scroll and zoom after reloads", async () => {
     expect(region().scrollTop).toBe(0);
     expect(region().scrollLeft).toBe(0);
   });
-});
+}, 60_000);
 
 it("clamps workspace PDF scroll when pages shrink or disappear", async () => {
   using fixture = await workspacePdfPreview();
