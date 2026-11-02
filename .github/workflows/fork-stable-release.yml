@@ -34,7 +34,7 @@ jobs:
   plan:
     name: Detect stable tag
     if: github.repository_owner != 'pingdotgg'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
       decision: ${{ steps.plan.outputs.decision }}

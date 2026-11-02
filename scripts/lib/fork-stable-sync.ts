@@ -5,7 +5,11 @@ export type GithubRelease = {
 };
 
 export type PublishPlan =
-  | { readonly _tag: "Skip"; readonly reason: "no-stable" | "already-published"; readonly tag?: string }
+  | {
+      readonly _tag: "Skip";
+      readonly reason: "no-stable" | "already-published";
+      readonly tag?: string;
+    }
   | { readonly _tag: "Build"; readonly tag: string; readonly version: string };
 
 const STABLE_TAG = /^v([0-9]+\.[0-9]+\.[0-9]+)$/;
@@ -62,11 +66,7 @@ export function planPublish(input: {
 
 export function formatGithubOutput(plan: PublishPlan): string {
   if (plan._tag === "Skip") {
-    return [
-      `decision=skip`,
-      `reason=${plan.reason}`,
-      plan.tag ? `tag=${plan.tag}` : undefined,
-    ]
+    return [`decision=skip`, `reason=${plan.reason}`, plan.tag ? `tag=${plan.tag}` : undefined]
       .filter((line): line is string => line !== undefined)
       .join("\n");
   }
@@ -103,7 +103,10 @@ export function parseGithubReleasesJson(raw: string): GithubRelease[] {
     }
     return parsed.map(asRelease);
   }
-  return trimmed.split("\n").filter((line) => line.trim().length > 0).map((line) => asRelease(JSON.parse(line)));
+  return trimmed
+    .split("\n")
+    .filter((line) => line.trim().length > 0)
+    .map((line) => asRelease(JSON.parse(line)));
 }
 
 export function patchCommitRange(mergeBase: string): string {

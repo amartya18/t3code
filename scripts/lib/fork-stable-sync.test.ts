@@ -32,7 +32,10 @@ describe("fork-stable-sync", () => {
 
   it("picks the newest non-prerelease stable tag from a GitHub listing", () => {
     assert.equal(selectNewestStableTag(upstream), "v0.1.6");
-    assert.equal(selectNewestStableTag([{ tag_name: "v0.1.7-nightly.1", prerelease: true, draft: false }]), undefined);
+    assert.equal(
+      selectNewestStableTag([{ tag_name: "v0.1.7-nightly.1", prerelease: true, draft: false }]),
+      undefined,
+    );
   });
 
   it("skips a day when the fork already published that tag", () => {
@@ -94,7 +97,10 @@ describe("fork-stable-sync", () => {
     const forkPath = join(dir, "fork.json");
     const outputPath = join(dir, "github-output");
     writeFileSync(upstreamPath, JSON.stringify(upstream));
-    writeFileSync(forkPath, JSON.stringify([{ tag_name: "v0.1.5", prerelease: false, draft: false }]));
+    writeFileSync(
+      forkPath,
+      JSON.stringify([{ tag_name: "v0.1.5", prerelease: false, draft: false }]),
+    );
     const result = spawnSync(
       process.execPath,
       [
