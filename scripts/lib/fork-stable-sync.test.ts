@@ -1,7 +1,8 @@
-import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+// @effect-diagnostics nodeBuiltinImport:off - CLI spawn and temp files sit outside the Effect runtime.
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
 import { assert, describe, it } from "@effect/vitest";
 
@@ -92,19 +93,19 @@ describe("fork-stable-sync", () => {
   });
 
   it("CLI writes GITHUB_OUTPUT for a build plan", () => {
-    const dir = mkdtempSync(join(tmpdir(), "fork-stable-sync-"));
-    const upstreamPath = join(dir, "upstream.json");
-    const forkPath = join(dir, "fork.json");
-    const outputPath = join(dir, "github-output");
-    writeFileSync(upstreamPath, JSON.stringify(upstream));
-    writeFileSync(
+    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "fork-stable-sync-"));
+    const upstreamPath = NodePath.join(dir, "upstream.json");
+    const forkPath = NodePath.join(dir, "fork.json");
+    const outputPath = NodePath.join(dir, "github-output");
+    NodeFS.writeFileSync(upstreamPath, JSON.stringify(upstream));
+    NodeFS.writeFileSync(
       forkPath,
       JSON.stringify([{ tag_name: "v0.1.5", prerelease: false, draft: false }]),
     );
-    const result = spawnSync(
+    const result = NodeChildProcess.spawnSync(
       process.execPath,
       [
-        join(import.meta.dirname, "../fork-stable-sync.ts"),
+        NodePath.join(import.meta.dirname, "../fork-stable-sync.ts"),
         "--upstream",
         upstreamPath,
         "--fork",
@@ -118,7 +119,7 @@ describe("fork-stable-sync", () => {
     );
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /decision=build/);
-    assert.match(readFileSync(outputPath, "utf8"), /tag=v0\.1\.6/);
+    assert.match(NodeFS.readFileSync(outputPath, "utf8"), /tag=v0\.1\.6/);
   });
 
   it("parses a GitHub releases JSON array and NDJSON", () => {

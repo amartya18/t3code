@@ -1,6 +1,7 @@
 #!/usr/bin/env node
+// @effect-diagnostics nodeBuiltinImport:off globalConsole:off - GitHub Actions CLI; no Effect runtime.
 
-import * as fs from "node:fs";
+import * as NodeFS from "node:fs";
 
 import {
   formatGithubOutput,
@@ -29,10 +30,13 @@ if (import.meta.main) {
     process.exit(2);
   }
 
+  const requestedTag = readFlag(argv, "requested");
   const plan = planPublish({
-    upstreamReleases: parseGithubReleasesJson(fs.readFileSync(upstreamPath, "utf8")),
-    forkTags: publishedTagsFromReleases(parseGithubReleasesJson(fs.readFileSync(forkPath, "utf8"))),
-    requestedTag: readFlag(argv, "requested"),
+    upstreamReleases: parseGithubReleasesJson(NodeFS.readFileSync(upstreamPath, "utf8")),
+    forkTags: publishedTagsFromReleases(
+      parseGithubReleasesJson(NodeFS.readFileSync(forkPath, "utf8")),
+    ),
+    ...(requestedTag === undefined ? {} : { requestedTag }),
   });
   const output = formatGithubOutput(plan);
   process.stdout.write(`${output}\n`);
@@ -42,6 +46,6 @@ if (import.meta.main) {
       console.error("GITHUB_OUTPUT is not set");
       process.exit(2);
     }
-    fs.appendFileSync(githubOutput, `${output}\n`);
+    NodeFS.appendFileSync(githubOutput, `${output}\n`);
   }
 }
