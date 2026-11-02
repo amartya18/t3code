@@ -26,7 +26,6 @@ import * as Stream from "effect/Stream";
 import type * as Tool from "effect/ai/Tool";
 
 import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
-import { ProjectToolkit } from "../mcp/toolkits/project/tools.ts";
 import {
   resolveInteractionMode,
   resolveRuntimeMode,
@@ -40,6 +39,10 @@ import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolv
 import { forkParked } from "../serverActivation.ts";
 import * as PeerForwarding from "./PeerForwarding.ts";
 import * as PeerLinks from "./PeerLinks.ts";
+
+/** Loaded on demand so project tool init can import homeRouting without a cycle. */
+const loadProjectToolkit = () =>
+  import("../mcp/toolkits/project/tools.ts").then((mod) => mod.ProjectToolkit);
 
 /** How long one follow of a remote task waits on its thread there before checking again. */
 const FOLLOW_WAIT_MS = 10 * 60 * 1_000;
@@ -163,6 +166,7 @@ const make = Effect.gen(function* () {
     }
     const matches: Array<{ readonly id: ProjectId; readonly title: string }> = [];
     let cursor: number | null = 0;
+    const ProjectToolkit = yield* Effect.promise(loadProjectToolkit);
     while (cursor !== null) {
       const listed: Tool.Success<typeof ProjectToolkit.tools.t3_project_list> =
         yield* forwarding.call(scope, ProjectToolkit.tools.t3_project_list, environmentId, {
@@ -258,6 +262,7 @@ const make = Effect.gen(function* () {
       // the forwarder scopes the launch's, and the record's names it.
       const key = input.clientRequestId ?? (yield* crypto.randomUUIDv4().pipe(Effect.orDie));
       const task = taskPrompt(input);
+      const ProjectToolkit = yield* Effect.promise(loadProjectToolkit);
       const launched = yield* forwarding.call(
         scope,
         ProjectToolkit.tools.t3_thread_launch,

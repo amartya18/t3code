@@ -83,11 +83,8 @@ const access = Effect.gen(function* () {
   return yield* Project.ProjectService;
 });
 /**
- * Threads Home launches are watched for it, wherever they run. The watch is
- * saved before the launch, and a launch whose watch cannot be saved does not
- * run. A failed launch keeps its watch: a relay timeout does not prove the
- * thread was not created, and a watch whose thread never appears ends at the
- * next start.
+ * Watch a thread Home launched, saved before the launch, wherever it runs.
+ * A failed launch keeps the watch: a timeout does not prove it was not created.
  */
 const watchLaunched = (homeThreadId: ThreadId, environmentId: EnvironmentId, threadId: ThreadId) =>
   HomeService.HomeService.pipe(

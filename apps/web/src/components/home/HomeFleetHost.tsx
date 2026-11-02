@@ -11,9 +11,10 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { isElectron } from "../../env";
+import { useStableCallback } from "../../hooks/useStableCallback";
 import { useThreadShells } from "../../state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { homeEnvironment, liveShellEnvironmentIdsAtom } from "../../state/home";
@@ -28,10 +29,8 @@ const WATCH_REPORT_RETRY_MS = 5_000;
 const WATCH_REPORT_ATTEMPTS = 12;
 
 /**
- * Desktop-only host for Home, which runs on the desktop's own server. While
- * Home is on, this renderer relays Home's calls to the user's other
- * environments over the connections it already holds, reports watched thread
- * changes back to Home, and keeps itself alive when the window closes.
+ * Desktop host for Home: relays calls, reports watched threads, and stays
+ * alive when the window closes.
  */
 export function HomeFleetHost() {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -43,6 +42,7 @@ function HomeHub({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const settings = useAtomValue(serverEnvironment.settingsValueAtom(environmentId));
   const home = settings?.home ?? DEFAULT_HOME_SETTINGS;
   const on = home.threadId !== null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the desktop process alive while Home is on, via the native close handler
   useEffect(() => {
     void window.desktopBridge?.setKeepAliveOnClose?.(on);
     // Without a relay running, closing the window should quit as usual.
@@ -85,57 +85,48 @@ function HomeRelay({ environmentId }: { readonly environmentId: EnvironmentId })
         connected: environment.connection.phase === "connected",
       })),
   );
-  const registration = useMemo<FleetHostRegistration>(
-    () => ({ clientId, environments: JSON.parse(reachKey) }),
-    [clientId, reachKey],
-  );
+  const registration: FleetHostRegistration = { clientId, environments: JSON.parse(reachKey) };
   const requestsAtom = homeEnvironment.relayRequests({ environmentId, input: registration });
   const invoke = useAtomCommand(homeEnvironment.invoke, { reportFailure: false });
   const respond = useAtomCommand(homeEnvironment.relayRespond, { reportFailure: false });
 
-  const handle = useCallback(
-    async (request: FleetHostRequest) => {
-      const result = await invoke({ environmentId: request.environmentId, input: request.invoke });
-      await respond({
-        environmentId,
-        input:
-          result._tag === "Success"
-            ? { requestId: request.requestId, result: result.value }
-            : {
-                requestId: request.requestId,
-                failure: relayFailure(squashAtomCommandFailure(result)),
-              },
-      });
-    },
-    [environmentId, invoke, respond],
-  );
+  const handle = useStableCallback(async (request: FleetHostRequest) => {
+    const result = await invoke({ environmentId: request.environmentId, input: request.invoke });
+    await respond({
+      environmentId,
+      input:
+        result._tag === "Success"
+          ? { requestId: request.requestId, result: result.value }
+          : {
+              requestId: request.requestId,
+              failure: relayFailure(squashAtomCommandFailure(result)),
+            },
+    });
+  });
   // The consumer outlives renders, so it reads the latest handler from an atom.
   const [handlerAtom] = useState(() => Atom.make({ handle }));
   const setHandler = useAtomSet(handlerAtom);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the latest relay handler into the atom the connect consumer reads
   useEffect(() => {
     setHandler({ handle });
   }, [handle, setHandler]);
 
-  const consumerAtom = useMemo(
-    () =>
-      Atom.make((get) => {
-        get.mount(handlerAtom);
-        // A request runs once even if the stream value is seen again.
-        const handled = new Set<string>();
-        // `immediate` reads the stream atom now, which opens fleet.connect. Without
-        // it the atom is never computed and the hub never hears from this window.
-        get.subscribe(
-          requestsAtom,
-          (result) => {
-            if (!AsyncResult.isSuccess(result) || handled.has(result.value.requestId)) return;
-            handled.add(result.value.requestId);
-            void get.once(handlerAtom).handle(result.value);
-          },
-          { immediate: true },
-        );
-      }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`home:relay:${environmentId}:${clientId}`)),
-    [clientId, environmentId, handlerAtom, requestsAtom],
-  );
+  const consumerAtom = Atom.make((get) => {
+    get.mount(handlerAtom);
+    // A request runs once even if the stream value is seen again.
+    const handled = new Set<string>();
+    // `immediate` reads the stream atom now, which opens fleet.connect. Without
+    // it the atom is never computed and the hub never hears from this window.
+    get.subscribe(
+      requestsAtom,
+      (result) => {
+        if (!AsyncResult.isSuccess(result) || handled.has(result.value.requestId)) return;
+        handled.add(result.value.requestId);
+        void get.once(handlerAtom).handle(result.value);
+      },
+      { immediate: true },
+    );
+  }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`home:relay:${environmentId}:${clientId}`));
   useAtomValue(consumerAtom);
   return null;
 }
@@ -154,10 +145,8 @@ function HomeWatchReporter({
   const [knownWatchKeys] = useState(
     () => new Set(home.watches.map((watch) => homeWatchKey(watch.environmentId, watch.threadId))),
   );
-  const labels = useMemo(
-    () =>
-      new Map(environments.map((environment) => [environment.environmentId, environment.label])),
-    [environments],
+  const labels = new Map(
+    environments.map((environment) => [environment.environmentId, environment.label]),
   );
   const report = useAtomCommand(homeEnvironment.reportWatchEvents, { reportFailure: false });
   const previous = useRef<ReadonlyMap<string, WatchedThreadState>>(new Map());
@@ -167,6 +156,7 @@ function HomeWatchReporter({
   const sending = useRef(false);
   const stopped = useRef(false);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- batches watched-thread events onto a timer and retries failed reports
   useEffect(() => {
     const { next, events } = diffWatchedThreads({
       previous: previous.current,
@@ -204,6 +194,7 @@ function HomeWatchReporter({
     timer.current = setTimeout(() => void send(), WATCH_REPORT_DELAY_MS);
   }, [environmentId, home, knownWatchKeys, labels, liveEnvironmentIds, report, shells]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the watch-report timer when the reporter unmounts
   useEffect(() => {
     stopped.current = false;
     return () => {

@@ -142,8 +142,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           ...input,
           // Like the other project tools, an omitted project means the caller's own; a client
           // outside a thread, or Home, searches every project.
-          projectId:
-            input.projectId ?? ((yield* callerIsHome()) ? undefined : caller?.projectId),
+          projectId: input.projectId ?? ((yield* callerIsHome()) ? undefined : caller?.projectId),
         })
         .pipe(Effect.mapError(unavailable));
       return {

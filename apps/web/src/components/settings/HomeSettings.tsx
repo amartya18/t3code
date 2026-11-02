@@ -16,10 +16,7 @@ import {
   getCustomModelOptionsByInstance,
   resolveAppModelSelectionForInstance,
 } from "../../modelSelection";
-import {
-  deriveProviderInstanceEntries,
-  providerInstanceEntriesFor,
-} from "../../providerInstances";
+import { deriveProviderInstanceEntries, providerInstanceEntriesFor } from "../../providerInstances";
 import { useThreadShell } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { homeEnvironment } from "../../state/home";

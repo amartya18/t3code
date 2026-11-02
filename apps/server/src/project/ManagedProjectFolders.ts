@@ -1,15 +1,6 @@
 /**
- * ManagedProjectFolders - the project folders T3 Code makes for the user under
- * its data dir, rather than ones the user picks:
- *
- * - `<baseDir>/scratch`: the Scratch project ("No project"), with a folder of
- *   its own for each thread;
- * - `<baseDir>/projects/<slug>`: projects started from just a name, each a new
- *   Git repository with a README, an icon, and a first commit;
- * - `<baseDir>/home`: Home's folder, one Git repository every Home thread
- *   shares so its notes and instructions survive a fresh start.
- *
- * @module ManagedProjectFolders
+ * Scratch, named, and Home folders T3 Code creates under its data dir.
+ * Home is one git repo every Home thread shares.
  */
 import {
   CommandId,
@@ -574,9 +565,9 @@ const make = Effect.gen(function* () {
           .writeFileString(claudePath, "@AGENTS.md\n")
           .pipe(Effect.mapError(folderError));
       }
-      const id = yield* crypto.randomUUIDv4().pipe(
-        Effect.mapError((cause) => new NamedProjectCreateError({ workspaceRoot, cause })),
-      );
+      const id = yield* crypto
+        .randomUUIDv4()
+        .pipe(Effect.mapError((cause) => new NamedProjectCreateError({ workspaceRoot, cause })));
       const bootstrapped = yield* projects
         .bootstrap({
           commandId: CommandId.make(`home-project:${id}`),
@@ -615,13 +606,14 @@ const make = Effect.gen(function* () {
     namedProjectsRoot,
     createNamedProject,
     homeRoot: Effect.succeed(homeFolder),
-    isInHomeFolder: (candidate) =>
+    isInHomeFolder: Effect.fn("ManagedProjectFolders.isInHomeFolder")((candidate) =>
       Effect.sync(() => {
         const relative = path.relative(path.resolve(homeFolder), path.resolve(candidate));
         // Only a leading ".." segment leaves the folder; "..notes" is a name inside it.
         const leaves = relative === ".." || relative.startsWith(`..${path.sep}`);
         return !leaves && !path.isAbsolute(relative);
       }),
+    ),
     ensureHomeProject,
   });
 });

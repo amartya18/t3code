@@ -115,3 +115,8 @@ it.effect("lets Home read but not change anything outside full-access/default mo
 it("registers Home MCP handlers as an McpToolAccess layer", () => {
   expect(() => McpToolAccess.HandlersLayer.layer(HomeHandlersLive)).not.toThrow();
 });
+
+it("loads ProjectToolkit without a homeRouting init cycle", async () => {
+  const { ProjectToolkit } = await import("./toolkits/project/tools.ts");
+  expect(ProjectToolkit).toBeDefined();
+});
