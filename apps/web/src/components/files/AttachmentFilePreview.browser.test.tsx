@@ -2516,11 +2516,11 @@ function pdfScroll(screen: Screen) {
   return { region, canvas, offset, scrollTo };
 }
 
+// oxlint-disable-next-line t3code/no-test-timeout-or-unreasoned-skip -- PDF first paint on GitHub-hosted 4vcpu, not a hidden wait.
 it("keeps workspace PDF scroll and zoom after reloads", async () => {
   using fixture = await workspacePdfPreview();
   const { preview, urls } = fixture;
   await using screen = await render(preview(urls.original, "one"));
-  // GitHub-hosted ubuntu-24.04 paints this PDF slower than Blacksmith 8vcpu; 15s cuts off page 1.
   await expect
     .element(screen.getByText("1 / 3 pages", { exact: true }), { timeout: 30_000 })
     .toBeVisible();
