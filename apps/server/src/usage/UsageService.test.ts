@@ -22,6 +22,7 @@ import {
   type UsageSummaryInput,
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
+import * as DateTime from "effect/DateTime";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -2613,7 +2614,7 @@ describe("UsageService", () => {
       // that window once "now" is early November 2026, so the file mtime and
       // the windows under test stay 10 days behind the live clock.
       const fileMs = (yield* Clock.currentTimeMillis) - 10 * 24 * 60 * 60 * 1000;
-      const utcDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+      const utcDay = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms)).slice(0, 10);
       const fileDay = utcDay(fileMs);
       const window = {
         timeZone: "UTC" as const,
@@ -2623,7 +2624,10 @@ describe("UsageService", () => {
       yield* Effect.promise(async () => {
         await NodeFSP.writeFile(
           transcript,
-          claudeLine(1, 5).replace("2026-08-01T10:00:00Z", new Date(fileMs).toISOString()),
+          claudeLine(1, 5).replace(
+            "2026-08-01T10:00:00Z",
+            DateTime.formatIso(DateTime.makeUnsafe(fileMs)),
+          ),
         );
         await NodeFSP.utimes(transcript, fileMs / 1000, fileMs / 1000);
       });
