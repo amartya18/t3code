@@ -16,12 +16,15 @@ See [FORK.md](FORK.md) for install, adding patches, conflicts, and rollback.
 ### GitHub-hosted CI on this fork
 
 5. `ci.yml` and `mobile-fingerprint-check.yml` use GitHub-hosted `ubuntu-24.04` / `macos-latest` when `github.repository_owner != pingdotgg`. pingdotgg keeps Blacksmith. `ubuntu-latest` is Ubuntu 26, which Playwright 1.60 cannot install Chromium on.
+6. Two v0.1.6 tests are adjusted so GitHub-hosted CI can go green: storage cleanup accepts Git 2.56's gitfile fatal instead of treating a missing gitdir as a branch change, and the usage "windows it reaches" fixture stays inside the 92-day cache retention window.
 
 ## Maintained files
 
 - `scripts/build-desktop-artifact.ts` (+ `.test.ts`)
 - `.github/workflows/ci.yml`
 - `.github/workflows/mobile-fingerprint-check.yml`
+- `apps/server/src/storageCleanup.test.ts`
+- `apps/server/src/usage/UsageService.test.ts`
 
 ## Dropped from upstream signing
 

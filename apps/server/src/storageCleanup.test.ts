@@ -2050,7 +2050,16 @@ describe("storage cleanup reports and local file policies", () => {
         yield* fs.remove(`${index.trim()}.lock`);
         const gitFile = yield* fs.readFileString(`${worktree}/.git`);
         yield* fs.writeFileString(`${worktree}/.git`, "gitdir: /missing-git-directory\n");
-        expect((yield* service.runNow).entries[0]).toMatchObject(changed);
+        // Git 2.43 treats a missing gitdir as a branch change (kept). Git 2.56
+        // on GitHub-hosted runners fatals ("gitfile does not point to a valid
+        // repository"). Either way the worktree must not be removed.
+        const missingGit = (yield* service.runNow).entries[0];
+        expect(missingGit?.outcome).not.toBe("removed");
+        if (missingGit?.outcome === "failed") {
+          expect(missingGit.reason).toContain("gitfile");
+        } else {
+          expect(missingGit).toMatchObject(changed);
+        }
         yield* fs.writeFileString(`${worktree}/.git`, gitFile);
         expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "removed" });
         expect(fullStatusCalls()).toBe(0);

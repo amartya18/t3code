@@ -2609,27 +2609,41 @@ describe("UsageService", () => {
   it.live("reports saved usage of a removed directory only for windows it reaches", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;
+      // Cache retention is 92 days. Hard-coded 2026-08-01 dates fall out of
+      // that window once "now" is early November 2026, so the file mtime and
+      // the windows under test stay 10 days behind the live clock.
+      const fileMs = Date.now() - 10 * 24 * 60 * 60 * 1000;
+      const utcDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+      const fileDay = utcDay(fileMs);
+      const window = {
+        timeZone: "UTC" as const,
+        sinceDay: UsageDay.make(utcDay(fileMs - 24 * 60 * 60 * 1000)),
+        untilDay: UsageDay.make(utcDay(fileMs + 24 * 60 * 60 * 1000)),
+      };
       yield* Effect.promise(async () => {
-        await NodeFSP.writeFile(transcript, claudeLine(1, 5));
-        const lastWrite = Date.parse("2026-08-01T10:00:00Z") / 1000;
-        await NodeFSP.utimes(transcript, lastWrite, lastWrite);
+        await NodeFSP.writeFile(
+          transcript,
+          claudeLine(1, 5).replace("2026-08-01T10:00:00Z", new Date(fileMs).toISOString()),
+        );
+        await NodeFSP.utimes(transcript, fileMs / 1000, fileMs / 1000);
       });
       const service = yield* UsageService.make.pipe(
         Effect.provide(layerService({ prefix: "usage-service-saved-window-test", home, settings })),
       );
-      const first = yield* service.readSummary(WINDOW);
+      const first = yield* service.readSummary(window);
+      assert.strictEqual(first.buckets[0]?.day, fileDay);
       yield* Effect.promise(() =>
         NodeFSP.rm(NodePath.join(home, "claude", "projects"), { recursive: true }),
       );
 
-      const reached = yield* service.readSummary(WINDOW);
+      const reached = yield* service.readSummary(window);
       assert.deepStrictEqual(reached.buckets, first.buckets);
       assert.strictEqual(reached.sources[0]?.status, "ok");
 
       const later = yield* service.readSummary({
         timeZone: "UTC",
-        sinceDay: UsageDay.make("2026-08-10"),
-        untilDay: UsageDay.make("2026-08-12"),
+        sinceDay: UsageDay.make(utcDay(fileMs + 9 * 24 * 60 * 60 * 1000)),
+        untilDay: UsageDay.make(utcDay(fileMs + 11 * 24 * 60 * 60 * 1000)),
       });
       assert.deepStrictEqual(later.buckets, []);
       assert.strictEqual(later.sources[0]?.status, "missing");
