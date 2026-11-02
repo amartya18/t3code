@@ -40,6 +40,7 @@ import {
   renderMacPasskeyEntitlements,
   resolveMacWebAuthnEntitlements,
   resolveMacPasskeySigningConfiguration,
+  shouldResolveMacPasskeySigning,
   resolveMergedStageDependencies,
   resolveBuildOptions,
   stageWslRuntimeArchive,
@@ -541,6 +542,70 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       Effect.provide(
         ConfigProvider.layer(
           ConfigProvider.fromEnv({ env: { GITHUB_REPOSITORY: "pingdotgg/t3code" } }),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("signed macOS builds without a passkey profile skip notarization and provisioning", () =>
+    Effect.gen(function* () {
+      const signedSelf = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "0.1.6",
+        true,
+        false,
+        undefined,
+        undefined,
+      );
+      const mac = signedSelf.mac as Record<string, unknown>;
+      assert.equal(mac.notarize, false);
+      assert.match(String(mac.sign), /scripts[\\/]sign-macos\.ts$/);
+      assert.notProperty(mac, "provisioningProfile");
+      assert.notProperty(mac, "entitlements");
+
+      const signedPasskeys = yield* createBuildConfig("mac", "dmg", "0.1.6", true, false, undefined, {
+        entitlementsPath: "/tmp/entitlements.mac.plist",
+        provisioningProfilePath: "/tmp/t3code.provisionprofile",
+      });
+      const passkeyMac = signedPasskeys.mac as Record<string, unknown>;
+      assert.notProperty(passkeyMac, "notarize");
+      assert.equal(passkeyMac.provisioningProfile, "/tmp/t3code.provisionprofile");
+      assert.equal(passkeyMac.entitlements, "/tmp/entitlements.mac.plist");
+    }).pipe(
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({ env: { GITHUB_REPOSITORY: "amartya18/t3code" } }),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("resolves the GitHub update feed from T3CODE_DESKTOP_UPDATE_REPOSITORY", () =>
+    Effect.gen(function* () {
+      const config = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "0.1.6",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+      assert.deepStrictEqual(config.publish, [
+        {
+          provider: "github",
+          owner: "amartya18",
+          repo: "t3code",
+          releaseType: "release",
+        },
+      ]);
+    }).pipe(
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({
+            env: { T3CODE_DESKTOP_UPDATE_REPOSITORY: "amartya18/t3code" },
+          }),
         ),
       ),
     ),
@@ -1487,6 +1552,27 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.match(
       entitlements,
       /<key>com\.apple\.developer\.web-browser\.public-key-credential<\/key>\s*<true\/>/u,
+    );
+  });
+
+  it("skips passkey resolution when Apple team id and provisioning profile are both absent", () => {
+    assert.equal(shouldResolveMacPasskeySigning({}), false);
+    assert.equal(
+      shouldResolveMacPasskeySigning({
+        T3CODE_APPLE_TEAM_ID: "  ",
+        T3CODE_MACOS_PROVISIONING_PROFILE: "",
+      }),
+      false,
+    );
+    assert.equal(
+      shouldResolveMacPasskeySigning({ T3CODE_APPLE_TEAM_ID: "ABC1234567" }),
+      true,
+    );
+    assert.equal(
+      shouldResolveMacPasskeySigning({
+        T3CODE_MACOS_PROVISIONING_PROFILE: "/tmp/t3code.provisionprofile",
+      }),
+      true,
     );
   });
 

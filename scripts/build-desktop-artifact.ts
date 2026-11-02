@@ -1243,6 +1243,15 @@ function normalizePasskeyRpDomain(value: string): string {
   return parsed.hostname;
 }
 
+/** True when the env asks for Developer ID passkey signing. Empty means self-signed, no passkeys. */
+export function shouldResolveMacPasskeySigning(
+  env: Readonly<Record<string, string | undefined>>,
+): boolean {
+  const teamId = env.T3CODE_APPLE_TEAM_ID?.trim() ?? "";
+  const provisioningProfilePath = env.T3CODE_MACOS_PROVISIONING_PROFILE?.trim() ?? "";
+  return teamId.length > 0 || provisioningProfilePath.length > 0;
+}
+
 export function resolveMacPasskeySigningConfiguration(
   env: Readonly<Record<string, string | undefined>>,
 ): MacPasskeySigningConfiguration {
@@ -2856,6 +2865,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         },
       ],
       ...(signed ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") } : {}),
+      ...(signed && !macPasskeySigning ? { notarize: false } : {}),
       ...(macPasskeySigning
         ? {
             entitlements: macPasskeySigning.entitlementsPath,
@@ -3794,10 +3804,11 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
   const stageProdResourcesDir = path.join(stageAppDir, "apps/desktop/prod-resources");
   yield* fs.copy(stageResourcesDir, stageProdResourcesDir);
 
+  const repoEnv = loadRepoEnv({ repoRoot });
   const configuredMacPasskeySigning =
-    options.platform === "mac" && options.signed
+    options.platform === "mac" && options.signed && shouldResolveMacPasskeySigning(repoEnv)
       ? yield* Effect.try({
-          try: () => resolveMacPasskeySigningConfiguration(loadRepoEnv({ repoRoot })),
+          try: () => resolveMacPasskeySigningConfiguration(repoEnv),
           catch: MacPasskeySigningConfigurationResolutionError.fromCause,
         })
       : undefined;
@@ -3810,6 +3821,11 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
         ),
       }
     : undefined;
+  if (options.platform === "mac" && options.signed && macPasskeySigning === undefined) {
+    yield* Effect.log(
+      "[desktop-artifact] macOS signing without passkey entitlements or notarization (no Apple team id / provisioning profile).",
+    );
+  }
   const macEntitlementsPath = macPasskeySigning
     ? path.join(stageAppDir, "entitlements.mac.plist")
     : undefined;
