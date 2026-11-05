@@ -16,6 +16,7 @@ import * as Schema from "effect/Schema";
 import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 
 import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts";
+import * as HomeService from "../home/HomeService.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
@@ -31,6 +32,7 @@ const backgroundThreadId = ThreadId.make("thread:background");
 const oldProviderThreadId = ThreadId.make("thread:old-provider-background");
 const archivedThreadId = ThreadId.make("thread:archived-background");
 const unknownOwnerThreadId = ThreadId.make("thread:unknown-background-owner");
+const homeThreadId = ThreadId.make("home:thread");
 
 const backgroundShell = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) => ({
   ...liveThreadShell(threadId, { activeRunId: null }),
@@ -46,6 +48,7 @@ const shells = new Map([
     liveThreadShell(planThreadId, { runtimeMode: "approval-required", interactionMode: "plan" }),
   ],
   [fullAccessThreadId, liveThreadShell(fullAccessThreadId)],
+  [homeThreadId, liveThreadShell(homeThreadId)],
   [endedThreadId, liveThreadShell(endedThreadId, { activeRunId: null })],
   [backgroundThreadId, backgroundShell(backgroundThreadId, ProviderInstanceId.make("codex"))],
   [oldProviderThreadId, backgroundShell(oldProviderThreadId, ProviderInstanceId.make("claude"))],
@@ -220,6 +223,7 @@ const call = (
 const supervised = threadCaller(supervisedThreadId);
 const plan = threadCaller(planThreadId);
 const fullAccess = threadCaller(fullAccessThreadId);
+const home = threadCaller(homeThreadId);
 const ended = threadCaller(endedThreadId);
 const background = threadCaller(backgroundThreadId);
 const oldProviderBackground = threadCaller(oldProviderThreadId);
@@ -376,6 +380,7 @@ const LinkedProbeToolkit = Toolkit.make(
   Tool.make("writes_threads", linkedProbe),
   Tool.make("starts_threads", linkedProbe),
   Tool.make("writes_environment", linkedProbe),
+  Tool.make("t3_thread_list", linkedProbe),
 );
 /** Runs here, and tells whether `environmentId` reached the handler. */
 const ranHere = <P extends object>(params: P) =>
@@ -390,6 +395,7 @@ const linkedProbeServer = McpHttpServer.toolkitRegistration(
     writes_threads: McpToolAccess.writesThreads((input) => [input.threadId], ranHere),
     starts_threads: McpToolAccess.startsThreads((input) => input, ranHere, "stamped"),
     writes_environment: McpToolAccess.writesEnvironment(ranHere),
+    t3_thread_list: McpToolAccess.reads(ranHere),
   }),
 ).pipe(
   Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
@@ -403,6 +409,12 @@ const linkedProbeServer = McpHttpServer.toolkitRegistration(
     Layer.mock(PeerForwarding.PeerForwarding)({
       call: (_scope, tool, environmentId) =>
         Effect.succeed({ ran: `${tool.name} in ${environmentId}` } as never),
+    }),
+  ),
+  Layer.provide(
+    Layer.mock(HomeService.HomeService)({
+      available: true,
+      isHome: (threadId) => Effect.succeed(threadId === homeThreadId),
     }),
   ),
 );
@@ -432,6 +444,12 @@ it.effect.each([
     "writes_environment in environment-box",
   ],
   ["writes_environment", fullAccess, { environmentId: here }, "here"],
+
+  // Home reaches other environments through its own routing, never a peer link.
+  ["t3_thread_list", home, { environmentId: box }, "saw environmentId"],
+  ["t3_thread_list", supervised, { environmentId: box }, "t3_thread_list in environment-box"],
+  ["reads", home, { environmentId: box }, "capability_denied"],
+  ["reads", home, { environmentId: here }, "here"],
 
   // A thread id names a thread where the call runs, and is checked there.
   [

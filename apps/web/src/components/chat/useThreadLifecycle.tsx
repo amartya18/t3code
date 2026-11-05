@@ -56,10 +56,14 @@ import { composerDraftHasUserContent, useComposerDraftStore } from "../../compos
 import { useEnvironmentScope } from "~/state/session";
 import { threadEnvironment } from "../../state/threads";
 import { vcsEnvironment } from "../../state/vcs";
-import { useChildThreadInputs, readThreadShell, waitForThreadShell } from "../../state/entities";
+import {
+  useChildThreadInputs,
+  readThreadShell,
+  readThreadShells,
+  waitForThreadShell,
+} from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
 import { environmentShell } from "../../state/shell";
-import { readPrimaryEnvironmentId } from "../../state/environments";
 import { ThreadStatusLine } from "./ThreadStatusLine";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
@@ -458,14 +462,15 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   };
   const handleStopBackgroundWorkStable = useStableCallback(handleStopBackgroundWork);
   const openRelatedThreadGenerationRef = useRef(0);
-  // A task delegated to a linked environment opens there. Home lives on this client's
-  // primary environment; any other thread defaults to this thread's own.
-  const onOpenRelatedThread = async (
-    threadId: ThreadId,
-    threadEnvironmentId: EnvironmentId = isHomeThreadId(threadId)
-      ? (readPrimaryEnvironmentId() ?? environmentId)
-      : environmentId,
-  ) => {
+  // A task delegated to a linked environment opens there. Home may message this thread
+  // from another environment, so its thread opens wherever it is loaded.
+  const onOpenRelatedThread = async (threadId: ThreadId, delegatedTo?: EnvironmentId) => {
+    const threadEnvironmentId =
+      delegatedTo ??
+      (isHomeThreadId(threadId)
+        ? readThreadShells().find((shell) => shell.id === threadId)?.environmentId
+        : undefined) ??
+      environmentId;
     const generation = ++openRelatedThreadGenerationRef.current;
     const threadRef = scopeThreadRef(threadEnvironmentId, threadId);
     const isEnvironmentLive = () =>

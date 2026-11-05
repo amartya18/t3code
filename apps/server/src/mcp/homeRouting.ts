@@ -34,6 +34,24 @@ export const callerIsHome = Effect.fn("mcp.callerIsHome")(function* () {
   return yield* home.isHome(scope.thread.threadId);
 });
 
+/**
+ * Tools whose handler routes Home's `environmentId` itself. Home names another
+ * environment only through these; its other tools stay on its own environment.
+ */
+export const HOME_ROUTED_TOOLS: ReadonlySet<string> = new Set([
+  "orchestrator_capabilities",
+  "t3_project_list",
+  "t3_thread_list",
+  "t3_thread_read",
+  "t3_thread_launch",
+  "t3_thread_send",
+  "t3_thread_interrupt",
+  "t3_thread_organize",
+  "t3_thread_update",
+  "t3_thread_watch",
+  "t3_pending_request",
+]);
+
 /** Whether each operation changes state. A new operation must pick a side. */
 const CHANGES_STATE = {
   capabilities: false,

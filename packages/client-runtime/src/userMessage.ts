@@ -108,13 +108,14 @@ export function resolveUserMessagePresentation(message: {
   return {
     // The agent needs words to start a turn; people sent only the attachments.
     text: isAttachmentOnlyBootstrapPrompt(message.text) ? "" : message.text,
-    attribution: message.id?.startsWith(HOME_REPORT_MESSAGE_ID_PREFIX)
-      ? "t3code"
-      : message.createdBy !== "agent"
-        ? null
-        : message.creationSource === "server"
-          ? "t3code"
-          : "agent",
+    attribution:
+      message.createdBy === "system" && message.id?.startsWith(HOME_REPORT_MESSAGE_ID_PREFIX)
+        ? "t3code"
+        : message.createdBy !== "agent"
+          ? null
+          : message.creationSource === "server"
+            ? "t3code"
+            : "agent",
     scheduledTaskId: undefined,
   };
 }
