@@ -47,6 +47,8 @@ export const SETTINGS_DEVICE_ONLY_PATHS: ReadonlySet<string> = new Set([
   "/settings/appearance",
   "/settings/chat",
   "/settings/diffs",
+  // Home is saved on this desktop's own server.
+  "/settings/home",
   "/settings/snap-shot",
   "/settings/connections",
   // Network access and authorized clients belong to the environment serving this app.

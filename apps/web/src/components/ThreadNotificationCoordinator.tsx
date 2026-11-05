@@ -6,7 +6,12 @@ import {
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import type { AnyRouter } from "@tanstack/react-router";
 import { threadKey } from "@t3tools/client-runtime/state/entities";
-import type { EnvironmentId, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  isHomeLaunchedThreadId,
+  type OrchestrationV2ThreadShell,
+  type ThreadId,
+} from "@t3tools/contracts";
 import type { ClientSettings } from "@t3tools/contracts/settings";
 import * as Option from "effect/Option";
 import type { AtomRegistry } from "effect/reactivity";
@@ -20,6 +25,7 @@ import {
 import { getClientSettings, subscribeClientSettings } from "../hooks/useSettings";
 import { isWindowsPlatform } from "../lib/utils";
 import { environmentSummaries } from "../state/presentation";
+import { primaryServerSettingsAtom } from "../state/server";
 import { environmentShell } from "../state/shell";
 import { environmentThreadShells } from "../state/threads";
 import {
@@ -123,6 +129,13 @@ export function startThreadNotifications(
         .has(threadKey({ environmentId, threadId: thread.id }))
     )
       return;
+    // Home answers for the threads it launched; it reaches the user through its own thread.
+    if (
+      isHomeLaunchedThreadId(thread.id) &&
+      registry.get(primaryServerSettingsAtom).home.threadId !== null
+    ) {
+      return;
+    }
     const { notificationMode: mode, inAppNotificationsEnabled } = getClientSettings();
     const active = (router.state.matches.at(-1)?.params ?? {}) as {
       environmentId?: string;

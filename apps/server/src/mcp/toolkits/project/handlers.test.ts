@@ -23,6 +23,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
+import { notHomeLayer } from "../../../home/HomeTestkit.ts";
 import * as DocumentText from "../../../provider/DocumentText.ts";
 import { OrchestratorRuntimeModeAboveCeilingError } from "../../../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
@@ -161,6 +162,7 @@ const clientLaunchHarness = (input: {
     Layer.mock(PeerForwarding.PeerForwarding)({}),
     Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
     DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)),
+    notHomeLayer,
   ).pipe(
     Layer.provideMerge(GitVcsDriver.layer),
     Layer.provideMerge(VcsProcess.layer),

@@ -36,6 +36,7 @@ import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.t
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as SourceControlRepositoryService from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
+import { homeRoutingDependencies } from "../../homeRouting.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const shared = {
@@ -47,6 +48,7 @@ const shared = {
     ThreadManagementService.ThreadManagementService,
     ProjectService.ProjectService,
     SecureRandom.SecureRandom,
+    ...homeRoutingDependencies,
   ],
 };
 const ProjectListTool = Tool.make("t3_project_list", {
@@ -97,7 +99,8 @@ const ProjectUpdateTool = Tool.make("t3_project_update", {
 }).annotate(Tool.Destructive, true);
 const ProjectDeleteTool = Tool.make("t3_project_delete", {
   ...shared,
-  description: "Delete one project. Nonempty needs `force: true`. Folder on disk stays.",
+  description:
+    "Delete one project. Nonempty needs `force: true`. Folder on disk stays. Home cannot delete projects.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     projectId: ProjectId,
@@ -124,7 +127,7 @@ const ProjectCloneTool = Tool.make("t3_project_clone", {
 const ThreadLaunchTool = Tool.make("t3_thread_launch", {
   ...shared,
   description:
-    "Create one new top-level thread, bound to its workspace before the agent starts. Task in `message`. Omit `projectId`, model and modes to inherit yours (outside a thread, pass `projectId` or `scratch`); modes cannot exceed yours. After an error or lost reply, retry with the same `clientRequestId`. Follow it with `t3_thread_read` or `t3_thread_wait`. Mention it with its `link`.",
+    "Create one new top-level thread, bound to its workspace before the agent starts. Task in `message`. Omit `projectId`, model and modes to inherit yours (outside a thread, pass `projectId` or `scratch`); modes cannot exceed yours. After an error or lost reply, retry with the same `clientRequestId`. Follow it with `t3_thread_read` or `t3_thread_wait`. Mention it with its `link`. Home must pass `projectId` or `scratch`; threads Home launches are watched for it.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     projectId: Schema.optional(ProjectId),

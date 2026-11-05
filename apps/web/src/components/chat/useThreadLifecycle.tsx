@@ -18,6 +18,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
   type EnvironmentId,
+  isHomeThreadId,
   type ScopedThreadRef,
   type ThreadId,
   ProviderInteractionMode,
@@ -58,6 +59,7 @@ import { vcsEnvironment } from "../../state/vcs";
 import { useChildThreadInputs, readThreadShell, waitForThreadShell } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
 import { environmentShell } from "../../state/shell";
+import { readPrimaryEnvironmentId } from "../../state/environments";
 import { ThreadStatusLine } from "./ThreadStatusLine";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
@@ -456,10 +458,13 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   };
   const handleStopBackgroundWorkStable = useStableCallback(handleStopBackgroundWork);
   const openRelatedThreadGenerationRef = useRef(0);
-  // A task delegated to a linked environment opens there; the default is this thread's own.
+  // A task delegated to a linked environment opens there. Home lives on this client's
+  // primary environment; any other thread defaults to this thread's own.
   const onOpenRelatedThread = async (
     threadId: ThreadId,
-    threadEnvironmentId: EnvironmentId = environmentId,
+    threadEnvironmentId: EnvironmentId = isHomeThreadId(threadId)
+      ? (readPrimaryEnvironmentId() ?? environmentId)
+      : environmentId,
   ) => {
     const generation = ++openRelatedThreadGenerationRef.current;
     const threadRef = scopeThreadRef(threadEnvironmentId, threadId);
