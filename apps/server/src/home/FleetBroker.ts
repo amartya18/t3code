@@ -60,6 +60,7 @@ export class FleetBroker extends Context.Service<
 >()("t3/home/FleetBroker") {}
 
 interface Host {
+  readonly clientId: string;
   readonly queue: Queue.Queue<FleetHostRequest, Cause.Done>;
   readonly environments: ReadonlyArray<FleetEnvironment>;
 }
@@ -105,14 +106,29 @@ const make = Effect.gen(function* () {
 
   const acquire = Effect.fn("FleetBroker.acquire")(function* (registration: FleetHostRegistration) {
     const queue = yield* Queue.unbounded<FleetHostRequest, Cause.Done>();
-    const previous = yield* SynchronizedRef.modify(state, (current) => [
-      current.host,
-      {
-        ...current,
-        host: { queue, environments: registration.environments },
-      },
-    ]);
-    if (previous !== null) yield* retire(previous.queue);
+    const previous = yield* SynchronizedRef.modify(state, (current) => {
+      const sameWindow = current.host?.clientId === registration.clientId;
+      return [
+        current.host,
+        {
+          host: { clientId: registration.clientId, queue, environments: registration.environments },
+          // A window re-registers when its reach changes; it still answers what it owes.
+          pending: sameWindow
+            ? new Map(
+                [...current.pending].map(([requestId, entry]) => [
+                  requestId,
+                  entry.queue === current.host?.queue ? { ...entry, queue } : entry,
+                ]),
+              )
+            : current.pending,
+        },
+      ];
+    });
+    if (previous === null) return queue;
+    if (previous.clientId === registration.clientId) {
+      yield* Queue.offerAll(queue, yield* Queue.clear(previous.queue));
+    }
+    yield* retire(previous.queue);
     return queue;
   });
 

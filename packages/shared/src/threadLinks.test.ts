@@ -187,6 +187,11 @@ describe("thread links", () => {
     );
   });
 
+  it("never splits an emoji when a Home title is cut", () => {
+    const link = formatThreadLink({ ...ref("e", "t1"), title: `${"a".repeat(119)}😀b` });
+    expect(link).toBe(`[${"a".repeat(119)}😀](t3-thread://v2/e/t1)`);
+  });
+
   it("uses Untitled thread when a Home title sanitizes away", () => {
     expect(formatThreadLink({ ...ref("e", "t1"), title: " ] " })).toBe(
       "[Untitled thread](t3-thread://v2/e/t1)",

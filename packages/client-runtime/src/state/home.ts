@@ -1,5 +1,6 @@
 import { WS_METHODS } from "@t3tools/contracts";
 import type { Atom } from "effect/reactivity";
+import * as Stream from "effect/Stream";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import {
@@ -45,6 +46,8 @@ export function createHomeEnvironmentAtoms<R, E>(
       label: "environment-data:home:relay-requests",
       tag: WS_METHODS.fleetConnect,
       idleTtlMs: 0,
+      // Stream atoms publish only the last value per chunk; every relayed call must run.
+      transform: (stream) => stream.pipe(Stream.rechunk(1)),
     }),
     relayRespond: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:home:relay-respond",

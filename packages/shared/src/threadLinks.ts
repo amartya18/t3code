@@ -136,7 +136,9 @@ export function formatThreadLink(
   label?: string,
 ): string {
   if (label === undefined && ref.title !== undefined) {
-    const cleaned = linkLabel(ref.title)?.slice(0, LINK_LABEL_MAX_CHARS) || "Untitled thread";
+    // By code point: a lone surrogate from a split emoji breaks provider JSON parsers.
+    const title = [...(linkLabel(ref.title) ?? "")].slice(0, LINK_LABEL_MAX_CHARS).join("");
+    const cleaned = title || "Untitled thread";
     return `[${cleaned}](${threadLinkHref(ref)})`;
   }
   const cleaned = linkLabel(label);

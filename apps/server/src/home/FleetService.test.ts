@@ -5,6 +5,7 @@ import {
   type ExecutionEnvironmentDescriptor,
   type Project as ContractProject,
   ProjectId,
+  ProviderInstanceId,
   RuntimeRequestId,
   ThreadId,
   type OrchestrationV2ServerCommand,
@@ -62,6 +63,7 @@ const shell = (
 
 const setup = () => {
   const dispatched: Array<OrchestrationV2ServerCommand> = [];
+  const launched: Array<string> = [];
   const layer = FleetService.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -85,7 +87,16 @@ const setup = () => {
           isInHomeFolder: (candidate) =>
             Effect.succeed(candidate === "/home" || candidate.startsWith("/home/")),
         }),
-        Layer.mock(ThreadLaunch.ThreadLaunchService)({}),
+        Layer.mock(ThreadLaunch.ThreadLaunchService)({
+          launch: (input) => {
+            launched.push(input.commandId);
+            return Effect.succeed({
+              threadId: input.threadId,
+              projection: { thread: shell(String(input.threadId), "a", 1), runs: [] },
+              resumed: false,
+            } as never);
+          },
+        }),
         Layer.mock(ProviderRegistry.ProviderRegistry)({}),
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({}),
         Layer.mock(ThreadManagement.ThreadManagementService)({
@@ -122,7 +133,7 @@ const setup = () => {
       ),
     ),
   );
-  return { layer, dispatched };
+  return { layer, dispatched, launched };
 };
 
 it.effect("lists threads from every project, newest first, with snooze state", () => {
@@ -268,6 +279,29 @@ it.effect("refuses a decision for a request that is not an approval", () => {
       .pipe(Effect.asVoid, Effect.flip);
     expect(error.code).toBe("invalid_request");
     expect(dispatched).toHaveLength(0);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("a retried Home launch keeps its command, so it replays", () => {
+  const { layer, launched } = setup();
+  return Effect.gen(function* () {
+    const fleet = yield* FleetService.FleetService;
+    const launch = fleet.execute({
+      actor,
+      request: {
+        op: "threads.launch",
+        input: {
+          threadId: ThreadId.make("home-launched:one"),
+          projectId: ProjectId.make("a"),
+          title: "Worker",
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+        },
+      },
+    });
+    yield* launch;
+    yield* launch;
+    expect(launched).toHaveLength(2);
+    expect(launched[1]).toBe(launched[0]);
   }).pipe(Effect.provide(layer));
 });
 

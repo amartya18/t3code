@@ -69,6 +69,20 @@ it.effect("refuses an environment the desktop reports offline", () =>
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
+it.effect("the same window re-registering keeps the calls it still owes", () =>
+  Effect.gen(function* () {
+    const broker = yield* FleetBroker.FleetBroker;
+    const firstRequest = yield* serve(yield* broker.connect(host("desktop")));
+    yield* Effect.yieldNow;
+    const call = yield* broker.invoke(studio, invoke).pipe(Effect.forkScoped);
+    const request = yield* Deferred.await(firstRequest);
+    yield* serve(yield* broker.connect(host("desktop")));
+    yield* Effect.yieldNow;
+    yield* broker.respond({ requestId: request.requestId, result: { requestIds: [] } });
+    expect(yield* Fiber.join(call)).toEqual({ requestIds: [] });
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
 it.effect("a newer desktop registration fails calls the old one still owed", () =>
   Effect.gen(function* () {
     const broker = yield* FleetBroker.FleetBroker;

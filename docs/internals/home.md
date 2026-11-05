@@ -48,6 +48,12 @@ Consequences:
   everything it does. Older peers without it fail with `environment_unavailable`.
 - Results cross the relay untyped and are decoded on the hub per operation
   (`FleetResults`), so the renderer stays a dumb pipe.
+- Home never uses peer links. `McpToolAccess.routed` hands Home's calls to
+  `HOME_ROUTED_TOOLS` and refuses the rest, so a full-access link cannot skip
+  Home's rules, such as no deletes. `delegate_task` has its own environment
+  field and still takes a peer link.
+- The same window re-registers whenever its reach changes, and keeps what it
+  owes. Only a different window fails the old one's calls.
 
 A hub credential per peer would let Home run headless. It needs a relay-side
 "peer mint" for T3 Connect and a pairing step for the rest.

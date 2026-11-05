@@ -265,7 +265,13 @@ const make = Effect.gen(function* () {
           "Pass modelSelection; this environment has no default model.",
         );
       }
-      const id = yield* commandId(actor, "launch");
+      // The hub picks one thread id per launch, so a retry keeps the command and replays.
+      const id =
+        input.threadId === undefined
+          ? yield* commandId(actor, "launch")
+          : CommandId.make(
+              `fleet:launch:${actor.environmentId}:${actor.threadId}:${input.threadId}`,
+            );
       const messageId = MessageId.make(id);
       const result = yield* launches
         .launch({
