@@ -31,7 +31,7 @@ export interface EarlyLinuxElectronOptions {
 }
 
 export const resolveLinuxDesktopEntryName = (isDevelopment: boolean): string =>
-  isDevelopment ? "com.t3tools.T3Code.Development.desktop" : "com.t3tools.T3Code.desktop";
+  isDevelopment ? "com.t3tools.T3Code.Development.desktop" : "com.amartya18.T3CodeFork.desktop";
 
 const trimNonEmpty = (value: string | undefined): string | null => {
   const trimmed = value?.trim();
@@ -56,6 +56,7 @@ function resolveEarlyDesktopSettingsPath(input: {
   const t3Home = Option.fromUndefinedOr(input.env.T3CODE_HOME);
   const baseDir = resolveDesktopBaseDir({
     homeDirectory: input.homeDirectory,
+    isDevelopment: isDevelopmentEnvironment(input.env),
     joinPath: input.joinPath,
     t3Home,
   });
