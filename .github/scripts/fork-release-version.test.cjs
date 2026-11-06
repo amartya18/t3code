@@ -36,18 +36,23 @@ test("refuses to guess without a release tag", () => {
   assert.throws(() => next([]), /release tag/);
 });
 
-test("rejects a fork version that installed apps would skip", () => {
+test("rejects a fork version other than the next one", () => {
   for (const [tags, requested] of [
     [["v0.1.7"], "0.1.7-fork.1"],
-    [["v0.1.7", "v0.1.9-fork.2"], "0.1.8-fork.1"],
+    [["v0.1.7"], "0.1.9-fork.1"],
+    [["v0.1.7"], "0.1.8-fork.3"],
+    [["v0.1.7"], "0.1.8-fork.01"],
+    [["v0.1.7"], "0.01.8-fork.1"],
+    [["v0.1.7", "v0.1.8-fork.2"], "0.1.8-fork.1"],
   ]) {
-    assert.throws(() => resolveVersion(tags, requested), /not newer/);
+    assert.throws(() => resolveVersion(tags, requested), /not the next/);
   }
 });
 
-test("accepts a newer fork version, including its own pushed tag", () => {
-  assert.equal(resolveVersion(["v0.1.7"], "0.1.8-fork.3"), "0.1.8-fork.3");
+test("accepts the next fork version, including its own pushed tag", () => {
+  assert.equal(resolveVersion(["v0.1.7"], "0.1.8-fork.1"), "0.1.8-fork.1");
   assert.equal(resolveVersion(["v0.1.7", "v0.1.8-fork.1"], "0.1.8-fork.1"), "0.1.8-fork.1");
+  assert.equal(resolveVersion(["v0.1.7", "v0.1.8-fork.1"], "0.1.8-fork.2"), "0.1.8-fork.2");
 });
 
 test("passes other versions through", () => {

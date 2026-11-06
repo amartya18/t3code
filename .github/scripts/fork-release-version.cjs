@@ -32,11 +32,9 @@ function resolveVersion(tags, requested) {
   if (requested === "") return nextForkVersion(tags);
   const release = parseRelease(`v${requested}`);
   if (release === null || release.build === STABLE_BUILD) return requested;
-  const newest = newestRelease(tags.filter((tag) => tag !== `v${requested}`));
-  if (newest !== undefined && compareReleases(release, newest) <= 0) {
-    throw new Error(
-      `${requested} is not newer than the newest release, so installed apps would skip it. Leave the version blank.`,
-    );
+  const next = nextForkVersion(tags.filter((tag) => tag !== `v${requested}`));
+  if (requested !== next) {
+    throw new Error(`${requested} is not the next fork release, ${next}. Leave the version blank.`);
   }
   return requested;
 }
