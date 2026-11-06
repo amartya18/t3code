@@ -1,8 +1,9 @@
 name: Fork release
 
 # Linux x64 desktop and CLI release for forks. release.yml only runs in
-# pingdotgg/t3code. A plain X.Y.Z version becomes the latest release that
+# pingdotgg/t3code. X.Y.Z and X.Y.Z-fork.N become the latest release that
 # installed fork apps update to; any other version is a prerelease.
+# X.Y.Z-fork.N sorts before X.Y.Z, so a fork release uses the next patch.
 
 on:
   push:
@@ -11,8 +12,8 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to release, for example 1.2.3 or 1.2.3-fork.1"
-        required: true
+        description: "Version to release. Leave blank for the next X.Y.Z-fork.N."
+        required: false
         type: string
 
 concurrency:
@@ -43,7 +44,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          sparse-checkout: .env.example
+          sparse-checkout: |
+            .env.example
+            .github/scripts/fork-release-version.cjs
           sparse-checkout-cone-mode: false
 
       - id: meta
@@ -54,16 +57,17 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
-            version="${GITHUB_REF_NAME#v}"
+            requested="${GITHUB_REF_NAME#v}"
           else
-            version="${INPUT_VERSION#v}"
+            requested="${INPUT_VERSION#v}"
           fi
+          version="$(git ls-remote --tags --refs origin 'v*' | sed 's#.*refs/tags/##' | node .github/scripts/fork-release-version.cjs "$requested")"
           if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
             echo "::error::'$version' is not a release version such as 1.2.3 or 1.2.3-fork.1."
             exit 1
           fi
           prerelease=true
-          if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then prerelease=false; fi
+          if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-fork\.[0-9]+)?$ ]]; then prerelease=false; fi
           {
             echo "version=$version"
             echo "tag=v$version"

@@ -56,14 +56,18 @@ export function resolveVersionMismatch(
 
   const clientCore = versionCore(normalizedClientVersion);
   const serverCore = versionCore(normalizedServerVersion);
-  const compareNightlyBuilds =
-    parseSemver(normalizedClientVersion)?.prerelease[0] === "nightly" &&
-    parseSemver(normalizedServerVersion)?.prerelease[0] === "nightly";
+  const tracks = [normalizedClientVersion, normalizedServerVersion].map(
+    (version) => parseSemver(version)?.prerelease[0],
+  );
+  // Fork releases share Stable's track, so X.Y.Z-fork.N must order against X.Y.Z.
+  const compareFullVersions =
+    tracks.every((track) => track === "nightly") ||
+    tracks.every((track) => track === undefined || track === "fork");
   const serverIsBehind =
     parseSemver(clientCore) && parseSemver(serverCore)
       ? compareSemverVersions(
-          compareNightlyBuilds ? normalizedServerVersion : serverCore,
-          compareNightlyBuilds ? normalizedClientVersion : clientCore,
+          compareFullVersions ? normalizedServerVersion : serverCore,
+          compareFullVersions ? normalizedClientVersion : clientCore,
         ) < 0
       : normalizedServerVersion !== normalizedClientVersion;
   if (!serverIsBehind) {
