@@ -100,6 +100,31 @@ describe("versionSkew", () => {
     });
   });
 
+  it.each([
+    { server: "0.1.8-fork.1", client: "0.1.8-fork.2" },
+    { server: "0.1.8-fork.2", client: "0.1.8-fork.10" },
+    { server: "0.1.8-fork.2", client: "0.1.8" },
+    { server: "0.1.7", client: "0.1.8-fork.1" },
+  ])("warns when fork server $server is behind client $client", ({ server, client }) => {
+    branding.APP_VERSION = client;
+
+    expect(resolveVersionMismatch(server)).toEqual({
+      clientVersion: client,
+      serverVersion: server,
+      hint: MISMATCH_HINT,
+    });
+  });
+
+  it.each([
+    { server: "0.1.8", client: "0.1.8-fork.2" },
+    { server: "0.1.8-fork.2", client: "0.1.8-fork.1" },
+    { server: "0.1.8-fork.1", client: "0.1.8-nightly.20261105.4218" },
+  ])("does not warn for fork server $server and client $client", ({ server, client }) => {
+    branding.APP_VERSION = client;
+
+    expect(resolveVersionMismatch(server)).toBeNull();
+  });
+
   it("falls back to string inequality when a version is not semver", () => {
     expect(resolveVersionMismatch("dev")).toEqual({
       clientVersion: "0.0.34",
