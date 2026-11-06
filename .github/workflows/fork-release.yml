@@ -1,8 +1,10 @@
 name: Fork release
 
-# Linux x64 desktop and CLI release for forks. release.yml only runs in
-# pingdotgg/t3code. X.Y.Z and X.Y.Z-fork.N become the latest release that
-# installed fork apps update to; any other version is a prerelease.
+# macOS arm64 desktop, Linux x64 desktop and Linux x64 CLI release for forks.
+# macOS builds are unsigned, since this workflow passes no signing secrets.
+# release.yml only runs in pingdotgg/t3code. X.Y.Z and X.Y.Z-fork.N become the
+# latest release that installed fork apps update to; any other version is a
+# prerelease.
 # X.Y.Z-fork.N sorts before X.Y.Z, so a fork release uses the next patch.
 
 on:
@@ -165,9 +167,33 @@ jobs:
       cli_archive: true
       launch_check: true
 
+  desktop_mac_arm64:
+    name: Desktop macOS arm64
+    needs: [resolve, build_bundle]
+    if: github.repository != 'pingdotgg/t3code'
+    uses: ./.github/workflows/release-desktop.yml
+    with:
+      version: ${{ needs.resolve.outputs.version }}
+      ref: ${{ needs.resolve.outputs.ref }}
+      release_channel: stable
+      relay_client_tracing: false
+      clerk_publishable_key: ${{ needs.resolve.outputs.clerk_publishable_key }}
+      clerk_jwt_template: ${{ needs.resolve.outputs.clerk_jwt_template }}
+      clerk_cli_oauth_client_id: ${{ needs.resolve.outputs.clerk_cli_oauth_client_id }}
+      relay_url: ${{ needs.resolve.outputs.relay_url }}
+      label: macOS arm64
+      runner: macos-latest
+      platform: mac
+      target: dmg
+      arch: arm64
+      rust_target: aarch64-apple-darwin
+      resource_key: darwin-arm64
+      cli_archive: false
+      launch_check: true
+
   release:
     name: Publish GitHub Release
-    needs: [resolve, desktop_linux_x64]
+    needs: [resolve, desktop_linux_x64, desktop_mac_arm64]
     if: github.repository != 'pingdotgg/t3code'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -215,7 +241,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob extglob
-          files=(release-assets/!(builder-debug).yml release-assets/*.AppImage release-assets/*.blockmap release-assets/*.tar.gz release-assets/SHA256SUMS)
+          files=(release-assets/!(builder-debug).yml release-assets/*.AppImage release-assets/*.dmg release-assets/*.zip release-assets/*.blockmap release-assets/*.tar.gz release-assets/SHA256SUMS)
           flags=(--latest)
           if [[ "$PRERELEASE" == "true" ]]; then flags=(--prerelease --latest=false); fi
           gh release create "$TAG" --draft --target "$REF" --title "$TAG" --generate-notes "${flags[@]}" "${files[@]}"
