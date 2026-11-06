@@ -128,13 +128,13 @@ $channel = if ($env:T3CODE_CHANNEL) { $env:T3CODE_CHANNEL } else { "stable" }
 $version = $env:T3CODE_VERSION
 if (-not $version) {
   $tagPattern = switch ($channel) {
-    "stable" { '^v\d+\.\d+\.\d+$' }
+    "stable" { '^v\d+\.\d+\.\d+(-fork\.\d+)?$' }
     "nightly" { '^v\d+\.\d+\.\d+-nightly\.\d+\.\d+$' }
     "preview" { '^v\d+\.\d+\.\d+-preview\.\d+\.\d+$' }
     default { Fail "T3CODE_CHANNEL must be stable, nightly, or preview" }
   }
   if ($channel -eq "stable") {
-    # release.yml marks only plain stable releases latest. This is a github.com
+    # Only stable and fork releases are marked latest. This is a github.com
     # page, so it is not cut off by a page of newer nightlies or the API quota.
     $release = Invoke-RestMethod -Uri "https://github.com/$repo/releases/latest" -Headers @{ "User-Agent" = "t3-install"; "Accept" = "application/json" }
     $tag = ($release | Where-Object { $_.tag_name -match $tagPattern }).tag_name

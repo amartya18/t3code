@@ -64,8 +64,9 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer home
 describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer channel lookup", () => {
   it.each([
     ["stable", "1.2.3"],
+    ["stable", "1.2.4-fork.2"],
     ["preview", "1.2.4-preview.20261019.50"],
-  ])("finds the newest %s release behind a full page of nightlies", async (channel, version) => {
+  ])("finds the newest %s release %s behind a full page of nightlies", async (channel, version) => {
     const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-install-index-"));
     const target = NodePath.join(root, "home/runtime/versions", version);
     const server = NodeHttp.createServer((request, response) => {
@@ -73,7 +74,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer chan
       const body =
         url.pathname === "/amartya18/t3code/releases/latest" &&
         request.headers.accept === "application/json"
-          ? { tag_name: "v1.2.3" }
+          ? { tag_name: `v${channel === "stable" ? version : "1.2.3"}` }
           : url.pathname === "/repos/amartya18/t3code/releases"
             ? { "1": nightlies, "2": [{ tag_name: `v${version}` }, { tag_name: "v1.2.3" }] }[
                 url.searchParams.get("page") ?? ""
