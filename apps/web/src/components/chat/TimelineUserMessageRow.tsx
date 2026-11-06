@@ -3,6 +3,7 @@ import { filePreviewKind } from "@t3tools/shared/filePreview";
 import { findRevealRef } from "./markdownFindContext";
 import {
   type EnvironmentId,
+  isHomeThreadId,
   type MessageId,
   type ScheduledTaskId,
   type ServerProviderSkill,
@@ -459,7 +460,11 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       ? { environmentId: ctx.activeThreadEnvironmentId, threadId: senderThreadId }
       : null,
   );
-  const senderLabel = senderShell?.title.trim() || "Agent";
+  // Home's thread lives on the hub, so a thread on another environment cannot look it up.
+  const senderLabel =
+    senderThreadId !== undefined && isHomeThreadId(senderThreadId)
+      ? "Home"
+      : senderShell?.title.trim() || "Agent";
   const resolvedContext = resolveUserMessageContext({ ...row.message, text: userMessage.text });
   const previewImages = userImages.filter((image) => image.name.startsWith("preview-annotation-"));
   const revertTurnCount = row.revertTurnCount;

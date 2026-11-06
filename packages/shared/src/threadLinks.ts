@@ -110,7 +110,12 @@ export function guessThreadLinkRef(
   return null;
 }
 
-function threadLinkHref(link: ThreadLink): string {
+const LINK_LABEL_MAX_CHARS = 120;
+
+function threadLinkHref(link: {
+  readonly environmentId: string | null;
+  readonly threadId: string;
+}): string {
   return link.environmentId === null
     ? `${V1_PREFIX}${link.threadId}`
     : `${V2_PREFIX}${link.environmentId}/${link.threadId}`;
@@ -122,8 +127,20 @@ const linkLabel = (label: string | undefined) =>
     .replace(/\s+/g, " ")
     .trim();
 
-/** Without a label, an autolink: clients show the thread's current title. */
-export function formatThreadLink(ref: ThreadLink, label?: string): string {
+/**
+ * Without a label, an autolink: clients show the thread's current title.
+ * Home's tools pass `title` so the agent sees a labeled link instead of a raw href.
+ */
+export function formatThreadLink(
+  ref: ThreadLink & { readonly title?: string },
+  label?: string,
+): string {
+  if (label === undefined && ref.title !== undefined) {
+    // By code point: a lone surrogate from a split emoji breaks provider JSON parsers.
+    const title = [...(linkLabel(ref.title) ?? "")].slice(0, LINK_LABEL_MAX_CHARS).join("");
+    const cleaned = title || "Untitled thread";
+    return `[${cleaned}](${threadLinkHref(ref)})`;
+  }
   const cleaned = linkLabel(label);
   return cleaned ? `[${cleaned}](${threadLinkHref(ref)})` : `<${threadLinkHref(ref)}>`;
 }

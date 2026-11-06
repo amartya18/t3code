@@ -1,5 +1,6 @@
 import {
   type CommandId,
+  type EnvironmentId,
   type RuntimeRequestId,
   ThreadId,
   type OrchestrationV2ThreadProjection,
@@ -8,6 +9,7 @@ import {
   type OrchestrationV2Command,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import { modelSelectionCommandType } from "@t3tools/shared/model";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -19,6 +21,7 @@ import {
   readThread,
   unavailable,
 } from "../../threadAccess.ts";
+import { callerIsHome, routeHome } from "../../homeRouting.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
@@ -86,6 +89,17 @@ const required = <A>(value: A | undefined, name: string) =>
         }),
       )
     : Effect.succeed(value);
+/** Home's thread when it names none in its own environment; another environment needs one. */
+const defaultThreadId = Effect.fn("mcp.defaultThreadId")(function* (input: {
+  readonly environmentId?: EnvironmentId | undefined;
+  readonly threadId?: ThreadId | undefined;
+}) {
+  const scope = yield* McpInvocationContext.McpInvocationContext;
+  if (input.threadId !== undefined) return input.threadId;
+  return input.environmentId === undefined || input.environmentId === scope.environmentId
+    ? scope.thread?.threadId
+    : undefined;
+});
 const writesThread = <P extends { readonly threadId?: ThreadId | undefined }, A, E, R>(
   handle: (params: P) => Effect.Effect<A, E, R>,
 ) => McpToolAccess.writesThreads((params: P) => [params.threadId], handle);
@@ -129,7 +143,12 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const threadSearch = yield* ThreadSearch.ThreadSearch;
       const { matches } = yield* threadSearch
-        .searchThreads({ ...input, projectId: input.projectId ?? caller?.projectId })
+        .searchThreads({
+          ...input,
+          // Like the other project tools, an omitted project means the caller's own; a client
+          // outside a thread, or Home, searches every project.
+          projectId: input.projectId ?? ((yield* callerIsHome()) ? undefined : caller?.projectId),
+        })
         .pipe(Effect.mapError(unavailable));
       return {
         matches: matches.map((match) => ({
@@ -230,7 +249,10 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
     (input) => input.action !== "respond",
     McpToolAccess.reads((input) =>
       Effect.gen(function* () {
+        const threadId = yield* defaultThreadId(input);
         if (input.action === "list") {
+          const routed = yield* routeHome(input.environmentId, "requests.list", { threadId });
+          if (Option.isSome(routed)) return routed.value;
           const { projection } = yield* readThread(input.threadId, ["runtimeRequests"]);
           return {
             requestIds: projection.runtimeRequests
@@ -239,6 +261,11 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           };
         }
         const requestId = yield* required(input.requestId, "requestId");
+        const routed = yield* routeHome(input.environmentId, "requests.read", {
+          threadId,
+          requestId,
+        });
+        if (Option.isSome(routed)) return routed.value;
         const { item } = yield* readQuestion({ threadId: input.threadId, requestId });
         return { requestId, questions: item.questions };
       }),
@@ -246,6 +273,18 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
     writesThread((input) =>
       Effect.gen(function* () {
         const requestId = yield* required(input.requestId, "requestId");
+        const routed = yield* routeHome(input.environmentId, "requests.respond", {
+          threadId: yield* defaultThreadId(input),
+          requestId,
+          ...(input.answers === undefined ? {} : { answers: input.answers }),
+          ...(input.decision === undefined ? {} : { decision: input.decision }),
+        });
+        if (Option.isSome(routed)) return routed.value;
+        if (input.decision !== undefined)
+          return yield* new OrchestratorMcpFailure({
+            code: "capability_denied",
+            message: "Only Home can answer approval requests. Pass answers for a question.",
+          });
         const answers = yield* required(input.answers, "answers");
         const { threads, projection } = yield* readQuestion({
           threadId: input.threadId,
@@ -334,6 +373,11 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   ),
   t3_thread_organize: writesThread((input) =>
     Effect.gen(function* () {
+      const routed = yield* routeHome(input.environmentId, "threads.organize", {
+        ...input,
+        threadId: yield* defaultThreadId(input),
+      });
+      if (Option.isSome(routed)) return routed.value;
       const { threads, projection, caller } = yield* readThread(input.threadId);
       const common = { commandId: yield* newCommandId(), threadId: projection.thread.id };
       if (input.action === "settle") {

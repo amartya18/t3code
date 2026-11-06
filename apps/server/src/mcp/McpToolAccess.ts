@@ -20,7 +20,9 @@ import {
   DispatchModeLimit,
   type DispatchModeRefusal,
 } from "../orchestration-v2/DispatchModeLimit.ts";
+import * as HomeService from "../home/HomeService.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
+import { HOME_ROUTED_TOOLS } from "./homeRouting.ts";
 import { assertNotLinked, assertSameLink, callerLinkOrigin } from "./linkOrigin.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import { resolveInteractionMode, resolveRuntimeMode } from "./delegatedTaskModes.ts";
@@ -369,6 +371,11 @@ const linksUnavailable = new OrchestratorMcpFailure({
   message: "This environment cannot reach linked environments.",
 });
 
+const homeStaysHere = new OrchestratorMcpFailure({
+  code: "capability_denied",
+  message: "Home runs this tool only in its own environment.",
+});
+
 /**
  * Every tool that takes a linked environment runs there the same way: its
  * declaration checks the caller here, and the same call goes to the other
@@ -382,6 +389,11 @@ const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record
 ) {
   // Optional so toolkits that never leave this environment build without it.
   const forwarding = yield* Effect.serviceOption(PeerForwarding.PeerForwarding);
+  const home = yield* Effect.serviceOption(HomeService.HomeService);
+  const callerIsHome = (scope: McpInvocationContext.McpInvocationScope) =>
+    Option.isSome(home) && scope.capabilities.has("orchestration") && scope.thread !== undefined
+      ? home.value.isHome(scope.thread.threadId)
+      : Effect.succeed(false);
   const handlers: Record<string, unknown> = { ...checked };
   for (const [name, declaration] of Object.entries<Declaration<unknown>>(declarations)) {
     const tool = toolkit.tools[name];
@@ -399,6 +411,11 @@ const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record
         const scope = yield* McpInvocationContext.McpInvocationContext;
         const target = PeerForwarding.remoteTarget(scope, environmentId);
         if (target === undefined) return yield* here(params);
+        // Home reaches other environments through its desktop relay, never a peer link.
+        if (yield* callerIsHome(scope)) {
+          if (!HOME_ROUTED_TOOLS.has(name)) return yield* homeStaysHere;
+          return yield* here({ ...params, environmentId });
+        }
         if (scope.linkedEnvironments === false) return yield* PeerForwarding.linkedEnvironmentsOff;
         yield* (remote as RemoteCheck<typeof params>)(params);
         if (Option.isNone(forwarding)) return yield* linksUnavailable;

@@ -2,6 +2,7 @@ import {
   type ChatAttachment,
   type ChatFileAttachment,
   type GuestMessageAttribution,
+  HOME_REPORT_MESSAGE_ID_PREFIX,
   type OrchestrationMessageContext,
   type OrchestrationV2Actor,
   type OrchestrationV2CreationSource,
@@ -108,11 +109,13 @@ export function resolveUserMessagePresentation(message: {
     // The agent needs words to start a turn; people sent only the attachments.
     text: isAttachmentOnlyBootstrapPrompt(message.text) ? "" : message.text,
     attribution:
-      message.createdBy !== "agent"
-        ? null
-        : message.creationSource === "server"
-          ? "t3code"
-          : "agent",
+      message.createdBy === "system" && message.id?.startsWith(HOME_REPORT_MESSAGE_ID_PREFIX)
+        ? "t3code"
+        : message.createdBy !== "agent"
+          ? null
+          : message.creationSource === "server"
+            ? "t3code"
+            : "agent",
     scheduledTaskId: undefined,
   };
 }

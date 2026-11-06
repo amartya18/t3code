@@ -1,8 +1,4 @@
-import {
-  scopedProjectKey,
-  scopeProjectRef,
-  scopeThreadRef,
-} from "@t3tools/client-runtime/environment";
+import { scopedProjectKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { DEFAULT_SERVER_SETTINGS, type ScopedProjectRef, type ThreadId } from "@t3tools/contracts";
 import { type AnyRouter, useRouter } from "@tanstack/react-router";
 import {
@@ -30,6 +26,7 @@ import {
   useQuietThreadShell,
 } from "../state/entities";
 import {
+  defaultNewThreadProjectRef,
   hasExplicitComposerModelSelection,
   resolveNewDraftStartFromOrigin,
   resolveNewThreadModelSelectionOverride,
@@ -38,7 +35,7 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { readT3ProjectFile } from "../lib/t3ProjectFileDefaults";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentSummaries } from "../state/presentation";
-import { environmentServerConfigsAtom } from "../state/server";
+import { environmentServerConfigsAtom, primaryServerConfigAtom } from "../state/server";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { getClientSettings } from "./useSettings";
@@ -427,7 +424,7 @@ export function resolveDefaultProjectRef(
   projects: ReadonlyArray<EnvironmentProject>,
   projectOrder: readonly string[],
 ): ScopedProjectRef | null {
-  const [defaultProject] = orderItemsByPreferredIds({
+  const orderedProjects = orderItemsByPreferredIds({
     items: projects.filter((project) => project.archivedAt == null),
     preferredIds: projectOrder,
     getId: getProjectOrderKey,
@@ -436,7 +433,11 @@ export function resolveDefaultProjectRef(
       legacyProjectCwdPreferenceKey(project.workspaceRoot),
     ],
   });
-  return defaultProject ? scopeProjectRef(defaultProject.environmentId, defaultProject.id) : null;
+  const primaryConfig = appAtomRegistry.get(primaryServerConfigAtom);
+  return defaultNewThreadProjectRef(orderedProjects, {
+    primaryEnvironmentId: primaryConfig?.environment.environmentId ?? null,
+    homeWorkspaceRoot: primaryConfig?.homeWorkspaceRoot ?? null,
+  });
 }
 
 export function useHandleNewThread() {
