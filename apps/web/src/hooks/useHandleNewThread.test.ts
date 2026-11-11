@@ -134,7 +134,9 @@ vi.mock("../rpc/atomRegistry", () => ({
     get: (atom: unknown) =>
       atom === "connected-environment-ids"
         ? testState.connectedEnvironmentIds
-        : testServerConfigs(),
+        : atom === "primary-config"
+          ? null
+          : testServerConfigs(),
   },
 }));
 
