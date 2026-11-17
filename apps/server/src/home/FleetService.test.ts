@@ -62,6 +62,15 @@ const shell = (
   }) as unknown as OrchestrationV2ThreadShell;
 
 const setup = () => {
+  const fleetShells = [
+    // The test clock starts at 0, so this one wakes in a minute.
+    shell("snoozed", "a", 0, {
+      snoozedAt: DateTime.makeUnsafe(0),
+      snoozedUntil: DateTime.makeUnsafe(60_000),
+    }),
+    shell("older", "a", 1),
+    shell("newer", "b", 2),
+  ];
   const dispatched: Array<OrchestrationV2ServerCommand> = [];
   const launched: Array<string> = [];
   const layer = FleetService.layer.pipe(
@@ -101,19 +110,14 @@ const setup = () => {
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({}),
         Layer.mock(ThreadManagement.ThreadManagementService)({
           getThreadShell: (id) => Effect.succeed(shell(id, "a", 1)),
-          getShellSnapshot: () =>
+          // The store lists threads newest first; the shells come back in any order.
+          listProjectThreads: () =>
+            Effect.succeed(fleetShells.toReversed().map(({ id }) => ({ id }) as never)),
+          getShellSnapshot: (options) =>
             Effect.succeed({
               schemaVersion: 1,
               snapshotSequence: 0,
-              threads: [
-                shell("older", "a", 1),
-                shell("newer", "b", 2),
-                // The test clock starts at 0, so this one wakes in a minute.
-                shell("snoozed", "a", 0, {
-                  snoozedAt: DateTime.makeUnsafe(0),
-                  snoozedUntil: DateTime.makeUnsafe(60_000),
-                }),
-              ],
+              threads: fleetShells.filter(({ id }) => options?.threadIds?.includes(id) ?? true),
               archivedThreads: [],
             }),
           getThreadRecords: () =>
