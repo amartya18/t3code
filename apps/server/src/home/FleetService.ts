@@ -22,7 +22,6 @@ import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -30,6 +29,7 @@ import * as Schema from "effect/Schema";
 
 import {
   listItemFromShell,
+  listedThreadStatus,
   providerCapabilities,
   readThreadPage,
   threadManagementFailure,
@@ -176,33 +176,27 @@ const make = Effect.gen(function* () {
     "threads.list": Effect.fn("FleetService.threads.list")(function* (input, actor) {
       // The same default as the regular thread list: subagents unless turned off.
       const includeSubagents = input.includeSubagents !== false;
-      const shells =
-        input.projectId === undefined
-          ? yield* threads.getShellSnapshot().pipe(
-              Effect.mapError(threadManagementFailure),
-              Effect.map((snapshot) =>
-                snapshot.threads
-                  .filter(
-                    (thread) =>
-                      includeSubagents || thread.lineage.relationshipToParent !== "subagent",
-                  )
-                  .toSorted(
-                    (left, right) =>
-                      DateTime.toEpochMillis(right.updatedAt) -
-                        DateTime.toEpochMillis(left.updatedAt) || right.id.localeCompare(left.id),
-                  ),
+      const listed = yield* threads
+        .listProjectThreads({ projectId: input.projectId, includeSubagents })
+        .pipe(Effect.mapError(threadManagementFailure));
+      const shellsById =
+        listed.length === 0
+          ? new Map()
+          : new Map(
+              (yield* threads
+                .getShellSnapshot({ location: "active", threadIds: listed.map(({ id }) => id) })
+                .pipe(Effect.mapError(threadManagementFailure))).threads.map(
+                (shell) => [shell.id, shell] as const,
               ),
-            )
-          : yield* threads
-              .listProjectThreads({ projectId: input.projectId, includeSubagents })
-              .pipe(Effect.mapError(threadManagementFailure));
+            );
+      const shells = listed.flatMap(({ id }) => shellsById.get(id) ?? []);
       const nowMs = yield* Clock.currentTimeMillis;
       const statuses = input.statuses === undefined ? null : new Set(input.statuses);
       const titleContains = input.titleContains?.toLocaleLowerCase();
       const filtered = shells.filter(
         (thread) =>
           thread.deletedAt === null &&
-          (statuses === null || statuses.has(thread.activityRunStatus ?? thread.status)) &&
+          (statuses === null || statuses.has(listedThreadStatus(thread))) &&
           (input.settled === undefined || threadSettlement(thread).settled === input.settled) &&
           (input.snoozed === undefined || isSnoozed(thread, nowMs) === input.snoozed) &&
           (titleContains === undefined || thread.title.toLocaleLowerCase().includes(titleContains)),
