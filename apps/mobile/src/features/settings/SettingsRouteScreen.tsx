@@ -146,6 +146,7 @@ function ConfiguredSettingsRouteScreen() {
           onPress: () => navigation.navigate("SettingsAuth"),
         },
         environmentsRow(gt("Environments"), Object.keys(savedConnectionsById).length),
+        homeRow(gt("Home")),
         {
           id: "SettingsNotifications",
           icon: "bell.badge",
@@ -162,9 +163,16 @@ function LocalSettingsRouteScreen() {
   const { savedConnectionsById } = useSavedRemoteConnections();
   return (
     <SettingsList
-      connections={[environmentsRow(gt("Environments"), Object.keys(savedConnectionsById).length)]}
+      connections={[
+        environmentsRow(gt("Environments"), Object.keys(savedConnectionsById).length),
+        homeRow(gt("Home")),
+      ]}
     />
   );
+}
+
+function homeRow(label: string): SettingsListRow {
+  return { id: "SettingsHome", icon: "house", label, target: "SettingsHome" };
 }
 
 function environmentsRow(label: string, count: number): SettingsListRow {

@@ -97,6 +97,7 @@ import { SettingsEnvironmentDetailRouteScreen } from "./features/settings/Settin
 import { SettingsEnvironmentsRouteScreen } from "./features/settings/SettingsEnvironmentsRouteScreen";
 import { SettingsFollowUpRouteScreen } from "./features/settings/SettingsFollowUpRouteScreen";
 import { SettingsLanguageRouteScreen } from "./features/settings/SettingsLanguageRouteScreen";
+import { SettingsHomeRouteScreen } from "./features/settings/SettingsHomeRouteScreen";
 import {
   SettingsEnvironmentMaintenanceRouteScreen,
   SettingsThreadsRouteScreen,
@@ -262,6 +263,11 @@ const SETTINGS_SCREENS = {
     screen: SettingsLanguageRouteScreen,
     linking: "settings/language",
     options: settingsPage("Language"),
+  }),
+  SettingsHome: createNativeStackScreen({
+    screen: SettingsHomeRouteScreen,
+    linking: "settings/home",
+    options: settingsPage("Home"),
   }),
   SettingsProjectOverview: createNativeStackScreen({
     screen: SettingsProjectOverviewRouteScreen,
