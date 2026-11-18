@@ -3,6 +3,7 @@ import {
   OrchestrationSearchThreadsInput,
   ProjectId,
   type OrchestrationThreadSearchMatch,
+  type ScopedThreadRef,
   type OrchestrationV2SearchThreadsInput,
   type OrchestrationV2SearchThreadsResult,
   type OrchestrationV2ThreadFamily,
@@ -18,7 +19,9 @@ import {
 } from "@t3tools/shared/paletteSearch";
 import { threadSearchPullRequests } from "@t3tools/shared/threadPullRequests";
 
+import { threadKey } from "./entities.ts";
 import type { EnvironmentThreadShell } from "./models.ts";
+import { resolveListedAncestorThreadRef } from "./threadShell.ts";
 import { getThreadSortTimestamp } from "./threadSort.ts";
 
 // When this client last sent an open per thread, by its own clock: a server
@@ -43,6 +46,41 @@ export function claimThreadOpen(environmentId: EnvironmentId, threadId: string, 
   }
   sentThreadOpens.set(key, now);
   return true;
+}
+
+function threadOpenedAt(thread: Pick<EnvironmentThreadShell, "environmentId" | "id" | "opens">) {
+  return Math.max(
+    localThreadOpens.get(`${thread.environmentId}:${thread.id}`) ?? 0,
+    thread.opens?.openedAt ?? 0,
+  );
+}
+
+/**
+ * Where a thread's sidebar row opens: the most recently opened of the row's
+ * thread and the threads shown under it (subagents, side chats, delegated tasks).
+ */
+export function resolveThreadRowOpenTarget(
+  rowRef: ScopedThreadRef,
+  threads: readonly Pick<
+    EnvironmentThreadShell,
+    "id" | "environmentId" | "lineage" | "delegatedFrom" | "archivedAt" | "opens"
+  >[],
+): ScopedThreadRef {
+  const rowKey = threadKey(rowRef);
+  const row = threads.find(
+    (thread) => thread.id === rowRef.threadId && thread.environmentId === rowRef.environmentId,
+  );
+  let target = rowRef;
+  let targetOpenedAt = row === undefined ? 0 : threadOpenedAt(row);
+  for (const thread of threads) {
+    const openedAt = threadOpenedAt(thread);
+    if (openedAt <= targetOpenedAt) continue;
+    const ref = { environmentId: thread.environmentId, threadId: thread.id };
+    if (threadKey(resolveListedAncestorThreadRef(ref, threads)) !== rowKey) continue;
+    target = ref;
+    targetOpenedAt = openedAt;
+  }
+  return target;
 }
 
 export interface EnvironmentThreadSearchMatch extends OrchestrationThreadSearchMatch {
@@ -247,7 +285,7 @@ function buildThreadSearchSubject(
   environmentLabel: string | null | undefined,
 ): ThreadSearchSubject {
   const activityAt = getThreadSortTimestamp(thread, "updated_at");
-  const localOpenedAt = localThreadOpens.get(`${thread.environmentId}:${thread.id}`) ?? 0;
+  const openedAt = threadOpenedAt(thread);
   return {
     id: thread.id,
     title: thread.title,
@@ -259,8 +297,8 @@ function buildThreadSearchSubject(
     // This client's own latest open counts too: the server merged it, or has
     // no record yet (an older server ignores opens).
     opens:
-      localOpenedAt > (thread.opens?.openedAt ?? 0)
-        ? { score: 1, picks: [], ...thread.opens, openedAt: localOpenedAt }
+      openedAt > (thread.opens?.openedAt ?? 0)
+        ? { score: 1, picks: [], ...thread.opens, openedAt }
         : (thread.opens ?? null),
   };
 }
