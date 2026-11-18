@@ -973,37 +973,85 @@ function SidebarHomeRow(props: {
   );
 }
 
-function HomePlaceMark(props: { place: HomePlace }) {
-  const { place } = props;
-  if (place.kind === "here") return null;
-  const description =
-    place.kind === "conflict"
+function HomeRowStatus(props: {
+  place: HomePlace;
+  topStatus: (typeof HOME_ROW_STATUS)[keyof typeof HOME_ROW_STATUS] | null;
+}) {
+  const { place, topStatus } = props;
+  if (place.kind === "elsewhere" && !place.reachable) {
+    return (
+      <span className="ml-auto inline-flex shrink-0 items-center gap-1 text-xs font-medium text-muted-foreground">
+        <UnplugIcon aria-hidden className="size-4 shrink-0" />
+        <span>Offline</span>
+      </span>
+    );
+  }
+  if (!topStatus) return null;
+  return (
+    <span
+      className={cn(
+        "ml-auto inline-flex shrink-0 items-center gap-1 text-xs font-medium",
+        topStatus.className,
+      )}
+    >
+      <topStatus.Icon aria-hidden className="size-4 shrink-0" />
+      <span role="status">{topStatus.label}</span>
+    </span>
+  );
+}
+
+function homePlaceLabel(place: HomePlace) {
+  return place.kind === "here"
+    ? "This device"
+    : place.kind === "conflict"
+      ? `On in ${place.labels.length} places`
+      : place.label;
+}
+
+function homePlaceDescription(place: HomePlace) {
+  return place.kind === "here"
+    ? "Runs on this device"
+    : place.kind === "conflict"
       ? `Home is on in ${place.labels.length} places: ${place.labels.join(", ")}`
       : place.reachable
         ? `Runs on ${place.label}`
         : `${place.label} is offline`;
+}
+
+function HomePlaceLine(props: { place: HomePlace }) {
+  const { place } = props;
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span
-            role="img"
-            aria-label={description}
-            className={cn(
-              "inline-flex shrink-0 items-center",
-              place.kind === "conflict" ? "text-warning-foreground" : "text-muted-foreground",
+    <div
+      className={cn(
+        "mt-1 flex h-5 min-w-0 items-center gap-1.5 text-xs font-normal",
+        place.kind === "conflict" ? "text-warning-foreground" : "text-secondary-label",
+      )}
+    >
+      <span className="min-w-0 flex-1 truncate">{homePlaceLabel(place)}</span>
+      {place.kind === "here" ? null : (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span
+                role="img"
+                aria-label={homePlaceDescription(place)}
+                className={cn(
+                  "inline-flex shrink-0 items-center",
+                  place.kind === "elsewhere" && "text-sidebar-muted-foreground/70",
+                )}
+              />
+            }
+          >
+            {place.kind === "conflict" ? (
+              <TriangleAlertIcon aria-hidden className="size-3.5" />
+            ) : (
+              <EnvironmentMachineIcon aria-hidden kind={place.machine} className="size-3.5" />
             )}
-          />
-        }
-      >
-        {place.kind === "conflict" ? (
-          <TriangleAlertIcon aria-hidden className="size-3.5" />
-        ) : (
-          <EnvironmentMachineIcon aria-hidden kind={place.machine} className="size-3.5" />
-        )}
-      </TooltipTrigger>
-      <TooltipPopup side="top">{description}</TooltipPopup>
-    </Tooltip>
+          </TooltipTrigger>
+          <TooltipPopup side="top">{homePlaceDescription(place)}</TooltipPopup>
+        </Tooltip>
+      )}
+    </div>
   );
 }
 
@@ -1014,23 +1062,21 @@ function SidebarHomeRowView(props: {
   onActivate: () => void;
 }) {
   const { place, topStatus, isActive, onActivate } = props;
-  const placeLabel =
-    place.kind === "conflict" ? "On in 2 places" : place.kind === "elsewhere" ? place.label : null;
   return (
     <li className="list-none">
       <div
         role="treeitem"
         tabIndex={-1}
         data-sidebar-row="home"
-        aria-label={["Home", placeLabel, topStatus?.label]
+        aria-label={["Home", homePlaceLabel(place), topStatus?.label]
           .filter((part) => part != null)
           .join(", ")}
         aria-current={isActive ? "page" : undefined}
         data-testid="sidebar-home-row"
         className={cn(
-          "flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm font-medium outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+          "flex w-full cursor-pointer flex-col rounded-md px-(--sidebar-row-content-inset) py-(--sidebar-content-inset) text-left text-sm font-medium outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
           isActive
-            ? "bg-sidebar-row-active text-sidebar-foreground"
+            ? "bg-sidebar-row-active text-sidebar-foreground light:ring-1 light:ring-inset light:ring-sidebar-border/70"
             : "text-sidebar-foreground hover:bg-sidebar-row-hover",
         )}
         onClick={onActivate}
@@ -1040,25 +1086,12 @@ function SidebarHomeRowView(props: {
           onActivate();
         }}
       >
-        <HouseIcon aria-hidden className="size-4 shrink-0" />
-        <span className="shrink-0">Home</span>
-        <HomePlaceMark place={place} />
-        {place.kind === "elsewhere" && !place.reachable ? (
-          <span className="ml-auto inline-flex shrink-0 items-center gap-1 text-xs font-medium text-muted-foreground">
-            <UnplugIcon aria-hidden className="size-4 shrink-0" />
-            <span>Offline</span>
-          </span>
-        ) : topStatus ? (
-          <span
-            className={cn(
-              "ml-auto inline-flex shrink-0 items-center gap-1 text-xs font-medium",
-              topStatus.className,
-            )}
-          >
-            <topStatus.Icon aria-hidden className="size-4 shrink-0" />
-            <span role="status">{topStatus.label}</span>
-          </span>
-        ) : null}
+        <div className="flex h-5 min-w-0 items-center gap-2.5">
+          <HouseIcon aria-hidden className="size-4 shrink-0" />
+          <span className="truncate">Home</span>
+          <HomeRowStatus place={place} topStatus={topStatus} />
+        </div>
+        <HomePlaceLine place={place} />
       </div>
       <div
         aria-hidden
