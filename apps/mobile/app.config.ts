@@ -19,6 +19,36 @@ const runtimeVersionPolicy =
 const personalTeamBundleIdentifier = repoEnv.T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID?.trim();
 const IOS_BUNDLE_IDENTIFIER_PATTERN = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
 
+const UPSTREAM_IDENTITY = {
+  appleTeamId: "ARK85ZXQ4Z",
+  iosBundleIdPrefix: "com.t3tools.t3code",
+  expoOwner: "pingdotgg",
+  easProjectId: "d763fcb8-d37c-41ea-a773-b54a0ab4a454",
+};
+const FORK_IDENTITY_KEYS = [
+  "T3CODE_APPLE_TEAM_ID",
+  "T3CODE_IOS_BUNDLE_ID_PREFIX",
+  "T3CODE_EXPO_OWNER",
+  "T3CODE_EAS_PROJECT_ID",
+] as const;
+
+// A fork signs with its own Apple team and Expo project. A partial override would pair one
+// account's IDs with another's credentials, which only fails later at signing.
+function resolveIdentity(env: Record<string, string | undefined>) {
+  const values = FORK_IDENTITY_KEYS.map((key) => env[key]?.trim() || undefined);
+  if (values.every((value) => value === undefined)) return UPSTREAM_IDENTITY;
+  const [appleTeamId, iosBundleIdPrefix, expoOwner, easProjectId] = values;
+  if (!appleTeamId || !iosBundleIdPrefix || !expoOwner || !easProjectId) {
+    throw new Error(`Set all of ${FORK_IDENTITY_KEYS.join(", ")} for a fork build, or none.`);
+  }
+  if (!IOS_BUNDLE_IDENTIFIER_PATTERN.test(iosBundleIdPrefix)) {
+    throw new Error("T3CODE_IOS_BUNDLE_ID_PREFIX must be a reverse-DNS identifier.");
+  }
+  return { appleTeamId, iosBundleIdPrefix, expoOwner, easProjectId };
+}
+
+const identity = resolveIdentity(repoEnv);
+
 // Compiled into the native project. Without a relay, Observe's native side could dispatch to
 // Expo's own ingest before observe.ts turns it off; `.invalid` never resolves (RFC 6761).
 const observeEndpointUrl = repoEnv.T3CODE_RELAY_URL?.trim()
@@ -81,7 +111,7 @@ const VARIANT_CONFIG = {
   development: {
     appName: "T3 Code Dev",
     scheme: "t3code-dev",
-    iosBundleIdentifier: "com.t3tools.t3code.dev",
+    iosBundleIdentifier: `${identity.iosBundleIdPrefix}.dev`,
     androidPackage: "com.t3tools.t3code.dev",
     relyingParty: "clerk.t3.codes",
     assets: DEVELOPMENT_ASSETS,
@@ -89,7 +119,7 @@ const VARIANT_CONFIG = {
   preview: {
     appName: "T3 Code Preview",
     scheme: "t3code-preview",
-    iosBundleIdentifier: "com.t3tools.t3code.preview",
+    iosBundleIdentifier: `${identity.iosBundleIdPrefix}.preview`,
     androidPackage: "com.t3tools.t3code.preview",
     relyingParty: "clerk.t3.codes",
     assets: PREVIEW_ASSETS,
@@ -97,7 +127,7 @@ const VARIANT_CONFIG = {
   production: {
     appName: "T3 Code",
     scheme: "t3code",
-    iosBundleIdentifier: "com.t3tools.t3code",
+    iosBundleIdentifier: identity.iosBundleIdPrefix,
     androidPackage: "com.t3tools.t3code",
     relyingParty: "clerk.t3.codes",
     assets: RELEASE_ASSETS,
@@ -247,7 +277,7 @@ const config: ExpoConfig = {
   userInterfaceStyle: "automatic",
   updates: {
     enabled: repoEnv.T3CODE_MOBILE_UPDATES_ENABLED !== "0",
-    url: "https://u.expo.dev/d763fcb8-d37c-41ea-a773-b54a0ab4a454",
+    url: `https://u.expo.dev/${identity.easProjectId}`,
     checkAutomatically: "ON_LOAD",
     fallbackToCacheTimeout: 0,
   },
@@ -257,7 +287,7 @@ const config: ExpoConfig = {
     requireFullScreen: process.env.T3_SHOWCASE_CAPTURE_BUILD === "1",
     bundleIdentifier: iosBundleIdentifier,
     // Avoid Personal Team fallback: it cannot sign App Groups, Apple sign-in or push entitlements.
-    appleTeamId: "ARK85ZXQ4Z",
+    appleTeamId: identity.appleTeamId,
     associatedDomains: [
       `applinks:${variant.relyingParty}`,
       `webcredentials:${variant.relyingParty}`,
@@ -486,11 +516,11 @@ const config: ExpoConfig = {
       tracesToken: repoEnv.EXPO_PUBLIC_OTLP_TRACES_TOKEN ?? null,
     },
     eas: {
-      projectId: "d763fcb8-d37c-41ea-a773-b54a0ab4a454",
+      projectId: identity.easProjectId,
       observe: { endpointUrl: observeEndpointUrl },
     },
   },
-  owner: "pingdotgg",
+  owner: identity.expoOwner,
   experiments: {
     // Metro only runs babel-plugin-react-compiler when this is set; see src/reactCompilerCoverage.test.ts.
     reactCompiler: true,
