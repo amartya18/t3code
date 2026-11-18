@@ -1,5 +1,10 @@
 import { attachSidebarTree } from "../lib/sidebarTree";
-import { type EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  type EnvironmentMachineKind,
+  resolveEnvironmentMachineKind,
+  type ScopedProjectRef,
+} from "@t3tools/contracts";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import {
   dropThreadContext,
@@ -80,6 +85,8 @@ import {
   PlusIcon,
   SettingsIcon,
   ShieldQuestionIcon,
+  TriangleAlertIcon,
+  UnplugIcon,
   UserRoundIcon,
 } from "lucide-react";
 import {
@@ -271,7 +278,8 @@ import {
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
-import { TooltipProvider } from "./ui/tooltip";
+import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
+import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import {
   composerDraftHasUserContent,
   DraftId,
@@ -905,6 +913,19 @@ const HOME_ROW_STATUS: Record<
   done: { label: "Done", Icon: CircleCheckIcon, className: "text-success-foreground" },
 };
 
+/** Where the user's one Home runs, as seen from this client. */
+type HomePlace =
+  | { readonly kind: "here" }
+  | {
+      readonly kind: "elsewhere";
+      readonly label: string;
+      readonly machine: EnvironmentMachineKind;
+      readonly reachable: boolean;
+    }
+  | { readonly kind: "conflict"; readonly labels: ReadonlyArray<string> };
+
+const UNREACHABLE_PHASES = new Set(["offline", "reconnecting", "error", "unsupported"]);
+
 /**
  * The fixed row for the current Home thread, above every other row. Home has
  * no project, settle, or pin affordances, so it only shows its status.
@@ -912,18 +933,24 @@ const HOME_ROW_STATUS: Record<
 function SidebarHomeRow(props: {
   threadRef: ScopedThreadRef;
   onAnotherEnvironment: boolean;
-  inTwoPlaces: boolean;
+  conflictLabels: ReadonlyArray<string> | null;
   isActive: boolean;
   onActivate: (threadRef: ScopedThreadRef) => void;
 }) {
   const { isActive, onActivate, threadRef } = props;
   const thread = useThreadShell(threadRef);
-  const environmentLabel = useEnvironment(threadRef.environmentId)?.label ?? null;
-  const placeLabel = props.inTwoPlaces
-    ? "On in 2 places"
-    : props.onAnotherEnvironment
-      ? environmentLabel
-      : null;
+  const environment = useEnvironment(threadRef.environmentId);
+  const place: HomePlace =
+    props.conflictLabels !== null
+      ? { kind: "conflict", labels: props.conflictLabels }
+      : props.onAnotherEnvironment
+        ? {
+            kind: "elsewhere",
+            label: environment?.label ?? "another environment",
+            machine: resolveEnvironmentMachineKind(environment?.serverConfig ?? null),
+            reachable: !UNREACHABLE_PHASES.has(environment?.connection.phase ?? "connected"),
+          }
+        : { kind: "here" };
   const localLastVisitedAt = useUiStateStore(
     (state) => state.threadLastVisitedAtById[scopedThreadKey(threadRef)],
   );
@@ -936,7 +963,59 @@ function SidebarHomeRow(props: {
     });
   const topStatus =
     status !== "ready" ? HOME_ROW_STATUS[status] : isUnread ? HOME_ROW_STATUS.done : null;
-  const activate = () => onActivate(threadRef);
+  return (
+    <SidebarHomeRowView
+      place={place}
+      topStatus={topStatus}
+      isActive={isActive}
+      onActivate={() => onActivate(threadRef)}
+    />
+  );
+}
+
+function HomePlaceMark(props: { place: HomePlace }) {
+  const { place } = props;
+  if (place.kind === "here") return null;
+  const description =
+    place.kind === "conflict"
+      ? `Home is on in ${place.labels.length} places: ${place.labels.join(", ")}`
+      : place.reachable
+        ? `Runs on ${place.label}`
+        : `${place.label} is offline`;
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            role="img"
+            aria-label={description}
+            className={cn(
+              "inline-flex shrink-0 items-center",
+              place.kind === "conflict" ? "text-warning-foreground" : "text-muted-foreground",
+            )}
+          />
+        }
+      >
+        {place.kind === "conflict" ? (
+          <TriangleAlertIcon aria-hidden className="size-3.5" />
+        ) : (
+          <EnvironmentMachineIcon aria-hidden kind={place.machine} className="size-3.5" />
+        )}
+      </TooltipTrigger>
+      <TooltipPopup side="top">{description}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+function SidebarHomeRowView(props: {
+  place: HomePlace;
+  topStatus: (typeof HOME_ROW_STATUS)[keyof typeof HOME_ROW_STATUS] | null;
+  isActive: boolean;
+  onActivate: () => void;
+}) {
+  const { place, topStatus, isActive, onActivate } = props;
+  const placeLabel =
+    place.kind === "conflict" ? "On in 2 places" : place.kind === "elsewhere" ? place.label : null;
   return (
     <li className="list-none">
       <div
@@ -954,29 +1033,25 @@ function SidebarHomeRow(props: {
             ? "bg-sidebar-row-active text-sidebar-foreground"
             : "text-sidebar-foreground hover:bg-sidebar-row-hover",
         )}
-        onClick={activate}
+        onClick={onActivate}
         onKeyDown={(event) => {
           if (event.key !== "Enter" && event.key !== " ") return;
           event.preventDefault();
-          activate();
+          onActivate();
         }}
       >
         <HouseIcon aria-hidden className="size-4 shrink-0" />
-        <span className="min-w-0 flex-1 truncate">Home</span>
-        {placeLabel === null ? null : (
-          <span
-            className={cn(
-              "min-w-0 max-w-[45%] shrink truncate text-xs font-normal",
-              props.inTwoPlaces ? "text-warning" : "text-muted-foreground",
-            )}
-          >
-            {placeLabel}
+        <span className="shrink-0">Home</span>
+        <HomePlaceMark place={place} />
+        {place.kind === "elsewhere" && !place.reachable ? (
+          <span className="ml-auto inline-flex shrink-0 items-center gap-1 text-xs font-medium text-muted-foreground">
+            <UnplugIcon aria-hidden className="size-4 shrink-0" />
+            <span>Offline</span>
           </span>
-        )}
-        {topStatus ? (
+        ) : topStatus ? (
           <span
             className={cn(
-              "inline-flex shrink-0 items-center gap-1 text-xs font-medium",
+              "ml-auto inline-flex shrink-0 items-center gap-1 text-xs font-medium",
               topStatus.className,
             )}
           >
@@ -3633,7 +3708,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             onAnotherEnvironment={
                               homeThreadRef.environmentId !== primaryEnvironmentId
                             }
-                            inTwoPlaces={userHome.kind === "conflict"}
+                            conflictLabels={
+                              userHome.kind === "conflict"
+                                ? userHome.hosts.map(
+                                    (host) =>
+                                      environmentLabelById.get(host.environmentId) ?? "Unknown",
+                                  )
+                                : null
+                            }
                             isActive={routeThreadKey === scopedThreadKey(homeThreadRef)}
                             onActivate={navigateToThread}
                           />
