@@ -75,13 +75,24 @@ describe("diffWatchedThreads", () => {
     expect(asked.events).toMatchObject([
       { threadId: "a", kind: "question", environmentLabel: "laptop13" },
     ]);
+    expect(asked.events[0]?.detail).toBeUndefined();
 
+    const reply = { role: "assistant", text: `Done.\n\nAll   tests pass. ${"x".repeat(400)}` };
     const done = run(
       asked.next,
-      [shell("a", { status: "completed", latestRunCompletedAt: DateTime.makeUnsafe(1_000) })],
+      [
+        shell("a", {
+          status: "completed",
+          latestRunCompletedAt: DateTime.makeUnsafe(1_000),
+          latestVisibleMessage: reply,
+        } as Partial<OrchestrationV2ThreadShell>),
+      ],
       home,
     );
     expect(done.events).toMatchObject([{ threadId: "a", kind: "completed" }]);
+    const detail = done.events[0]?.detail ?? "";
+    expect(detail.startsWith("Done. All tests pass. xxx")).toBe(true);
+    expect([detail.length, detail.endsWith("…")]).toEqual([300, true]);
     expect(
       run(
         done.next,

@@ -20,6 +20,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { attentionOf, latestReplyOf } from "./agentStatus.ts";
 import * as HomeService from "./HomeService.ts";
 
 export interface WatchedThreadState {
@@ -33,20 +34,6 @@ export interface WatchedThreadState {
 }
 
 const UNSEEN = { attention: null, completion: null, ended: false };
-
-type AttentionKind = Extract<HomeWatchEvent["kind"], "approval" | "question" | "failed">;
-
-function attentionOf(
-  shell: OrchestrationV2ThreadShell,
-): { readonly kind: AttentionKind; readonly key: string } | null {
-  const request = shell.pendingRuntimeRequest;
-  if (request?.kind === "user_input") return { kind: "question", key: `request:${request.id}` };
-  if (request !== null && request.kind !== "auth_refresh") {
-    return { kind: "approval", key: `request:${request.id}` };
-  }
-  if (shell.status === "failed") return { kind: "failed", key: `failed:${shell.latestRunId}` };
-  return null;
-}
 
 /**
  * Diffs the changed shells against the last pass with the desktop-notification
@@ -77,13 +64,14 @@ export function diffWatchedThreads(input: {
   );
   const next = new Map(input.previous);
   const events: Array<HomeWatchEvent> = [];
-  const report = (state: WatchedThreadState, kind: HomeWatchEvent["kind"]) =>
+  const report = (state: WatchedThreadState, kind: HomeWatchEvent["kind"], detail?: string) =>
     events.push({
       environmentId: input.environmentId,
       environmentLabel: input.environmentLabel.slice(0, 200),
       threadId: state.threadId,
       title: state.title.slice(0, 300),
       kind,
+      ...(detail === undefined ? {} : { detail }),
     });
   for (const { threadId, shell } of input.changed) {
     const watch = watches.get(threadId);
@@ -135,13 +123,15 @@ export function diffWatchedThreads(input: {
       if (!prior.ended && watch !== undefined) report(state, "ended");
       continue;
     }
+    // Home reads what a finished thread said without a second call.
+    const reply = latestReplyOf(shell) ?? undefined;
     if (attention !== null && attention.key !== prior.attention) {
-      report(state, attention.kind);
+      report(state, attention.kind, attention.kind === "failed" ? reply : undefined);
     } else if (
       completion !== null &&
       (prior.completion === null || completion > prior.completion)
     ) {
-      report(state, "completed");
+      report(state, "completed", reply);
     }
   }
   return { next, events };
