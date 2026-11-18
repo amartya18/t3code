@@ -3,18 +3,22 @@ import {
   EnvironmentId,
   type HomeWatchEvent,
   ProjectId,
+  type PeerLinkSummary,
   ProviderInstanceId,
   ThreadId,
   type OrchestrationV2ServerCommand,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as HomeService from "./HomeService.ts";
@@ -31,6 +35,10 @@ const makeHome = () => {
   const dispatched: Array<OrchestrationV2ServerCommand> = [];
   // Threads with a running turn, to model a Home that is busy when it is replaced.
   const running = new Set<string>();
+  // Active threads here, newest first, as listProjectThreads returns them.
+  const listed: Array<Pick<OrchestrationV2ThreadShell, "id" | "settledOverride" | "settledAt">> =
+    [];
+  const snapshotRequests: Array<ReadonlyArray<ThreadId> | undefined> = [];
   const shell = (threadId: ThreadId) =>
     ({
       id: threadId,
@@ -39,6 +47,9 @@ const makeHome = () => {
       deletedAt: null,
       archivedAt: null,
       activeRunId: running.has(threadId) ? "run" : null,
+      status: "idle",
+      pendingRuntimeRequest: null,
+      latestVisibleMessage: null,
     }) as unknown as OrchestrationV2ThreadShell;
   // provideMerge, so a test reads the same settings Home writes.
   const layer = HomeService.layer.pipe(
@@ -50,6 +61,23 @@ const makeHome = () => {
           mode: "web",
         } as ServerConfig.ServerConfig["Service"]),
         ServerSettings.layerTest(),
+        Layer.mock(ServerEnvironment.ServerEnvironment)({
+          getEnvironmentId: Effect.succeed(environmentId),
+          getDescriptor: Effect.succeed({
+            label: "laptop13",
+          } as ServerEnvironment.ServerEnvironment["Service"] extends {
+            readonly getDescriptor: Effect.Effect<infer D>;
+          }
+            ? D
+            : never),
+        }),
+        Layer.mock(PeerLinks.PeerLinks)({
+          enabled: Effect.succeed(true),
+          list: Effect.succeed([
+            { environmentId: EnvironmentId.make("box"), label: "box", status: "reachable" },
+            { environmentId: EnvironmentId.make("mac"), label: "mac", status: "unreachable" },
+          ] as unknown as ReadonlyArray<PeerLinkSummary>),
+        }),
         Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
           namedProjectsRoot: "/projects",
           ensureHomeProject: Effect.succeed({ projectId: homeProjectId, workspaceRoot: "/home" }),
@@ -62,6 +90,16 @@ const makeHome = () => {
         }),
         Layer.mock(ThreadManagement.ThreadManagementService)({
           getThreadShell: (threadId) => Effect.succeed(shell(threadId)),
+          listProjectThreads: () => Effect.succeed(listed as never),
+          getShellSnapshot: (options) => {
+            snapshotRequests.push(options?.threadIds);
+            return Effect.succeed({
+              threads: (options?.threadIds ?? []).map(
+                (threadId) => ({ ...shell(threadId), title: threadId, status: "running" }) as never,
+              ),
+            } as never);
+          },
+          getThreadRecords: () => Effect.succeed({ subagents: [] } as never),
           sendToThread: (input) => {
             if (sendFailures.remaining > 0) {
               sendFailures.remaining -= 1;
@@ -82,7 +120,7 @@ const makeHome = () => {
       ),
     ),
   );
-  return { layer, launched, sent, dispatched, sendFailures, running };
+  return { layer, launched, sent, dispatched, sendFailures, running, listed, snapshotRequests };
 };
 
 const event = (
@@ -250,6 +288,54 @@ it.effect("starting fresh stops Home's run and starts a new session in the same 
     expect(sent).toMatchObject([
       { threadId, mode: "queue", freshContext: true, createdBy: "system" },
     ]);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("status lists where else to ask while Home is off here", () => {
+  const { layer, snapshotRequests } = makeHome();
+  return Effect.gen(function* () {
+    const status = yield* (yield* HomeService.HomeService).status({ link: () => "link" });
+    expect(status).toMatchObject({
+      environmentId,
+      environmentLabel: "laptop13",
+      agent: null,
+      linkedEnvironments: [
+        { environmentId: "box", label: "box", connected: true },
+        { environmentId: "mac", label: "mac", connected: false },
+      ],
+    });
+    expect(status.note).toContain("Home is off on laptop13.");
+    expect(snapshotRequests).toEqual([]);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("status reads the threads Home launched, and only the newest settled ones", () => {
+  const { layer, listed, snapshotRequests, launched, sent, dispatched } = makeHome();
+  const settledAt = DateTime.makeUnsafe(0);
+  listed.push(
+    { id: ThreadId.make("users-own"), settledOverride: null, settledAt: null },
+    { id: ThreadId.make("home-launched:open"), settledOverride: null, settledAt: null },
+    ...Array.from({ length: 12 }, (_, index) => ({
+      id: ThreadId.make(`home-launched:settled-${index}`),
+      settledOverride: null,
+      settledAt,
+    })),
+  );
+  return Effect.gen(function* () {
+    const home = yield* HomeService.HomeService;
+    const { threadId } = yield* home.enable({ modelSelection });
+    const status = yield* home.status({ link: (ref) => `link:${ref.threadId}` });
+    expect(status.agent).toMatchObject({ threadId, link: `link:${threadId}` });
+    expect(status.linkedEnvironments).toBeUndefined();
+    expect(snapshotRequests).toEqual([
+      [
+        "home-launched:open",
+        ...Array.from({ length: 10 }, (_, index) => `home-launched:settled-${index}`),
+      ],
+    ]);
+    expect(status.agent?.children.running).toHaveLength(11);
+    // Reading never wakes or changes anything.
+    expect([launched.length, sent, dispatched]).toEqual([1, [], []]);
   }).pipe(Effect.provide(layer));
 });
 

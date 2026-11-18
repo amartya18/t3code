@@ -30,6 +30,9 @@ so choose a model you trust with that.
 - Home leaves the threads you started alone. Ask it to watch a thread, or every
   thread on its environment, when you want it to step in.
 - Home cannot delete threads or projects.
+- Agents you connect to T3 Code over MCP can check on Home with
+  `t3_home_status`, which never wakes it. To give Home a task, they send a
+  message to its thread.
 
 ## Other environments
 

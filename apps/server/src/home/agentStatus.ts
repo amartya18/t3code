@@ -1,7 +1,19 @@
-/** What an agent's threads need from someone, shared by Home's watcher and status. */
-import type { HomeWatchEvent, OrchestrationV2ThreadShell } from "@t3tools/contracts";
+/** Where an agent's threads stand, shared by Home's watcher and its status read. */
+import type {
+  AgentStatusChild,
+  AgentStatusChildren,
+  AgentStatusKind,
+  EnvironmentId,
+  HomeWatchEvent,
+  OrchestrationV2Subagent,
+  OrchestrationV2ThreadShell,
+  ThreadId,
+} from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 
 const REPLY_PREVIEW_LENGTH = 300;
+/** Failed and finished threads past this many, newest first, are left out. */
+const RECENT_LIMIT = 5;
 
 type AttentionKind = Extract<HomeWatchEvent["kind"], "approval" | "question" | "failed">;
 
@@ -31,4 +43,122 @@ export function latestReplyOf(shell: OrchestrationV2ThreadShell): string | null 
   return message?.role === "assistant" && message.text.trim() !== ""
     ? replyPreview(message.text)
     : null;
+}
+
+export type ThreadLinker = (
+  ref: { readonly environmentId: EnvironmentId; readonly threadId: ThreadId },
+  title: string,
+) => string;
+
+const ACTIVE_SHELL_STATUSES: ReadonlySet<OrchestrationV2ThreadShell["status"]> = new Set([
+  "queued",
+  "preparing",
+  "starting",
+  "running",
+  "waiting",
+]);
+
+function shellStatus(
+  shell: OrchestrationV2ThreadShell,
+  attention: ReturnType<typeof attentionOf>,
+): AgentStatusKind {
+  if (attention?.kind === "question" || attention?.kind === "approval") return "waiting";
+  if (attention?.kind === "failed") return "failed";
+  if (shell.activeRunId !== null || ACTIVE_SHELL_STATUSES.has(shell.status)) return "running";
+  if (shell.status === "completed") return "finished";
+  // A thread that never ran waits for its first message.
+  if (shell.status === "idle") return "waiting";
+  return "failed";
+}
+
+function shellChild(
+  environmentId: EnvironmentId,
+  shell: OrchestrationV2ThreadShell,
+  link: ThreadLinker,
+): AgentStatusChild {
+  const attention = attentionOf(shell);
+  const status = shellStatus(shell, attention);
+  const ended = status === "finished" || status === "failed";
+  return {
+    environmentId,
+    threadId: shell.id,
+    title: shell.title,
+    link: link({ environmentId, threadId: shell.id }, shell.title),
+    status,
+    attention:
+      attention?.kind === "question" || attention?.kind === "approval" ? attention.kind : null,
+    completedAt:
+      ended && shell.latestRunCompletedAt != null
+        ? DateTime.formatIso(shell.latestRunCompletedAt)
+        : null,
+    latestReply: latestReplyOf(shell),
+  };
+}
+
+const TASK_STATUS: Record<OrchestrationV2Subagent["status"], AgentStatusKind> = {
+  pending: "running",
+  idle: "running",
+  running: "running",
+  waiting: "waiting",
+  completed: "finished",
+  failed: "failed",
+  cancelled: "failed",
+  interrupted: "failed",
+};
+
+function remoteTaskChild(
+  task: OrchestrationV2Subagent,
+  link: ThreadLinker,
+): ReadonlyArray<AgentStatusChild> {
+  const remote = task.remoteChild;
+  if (task.origin !== "app_owned" || remote === undefined) return [];
+  const title = remote.title ?? task.title ?? remote.label;
+  return [
+    {
+      environmentId: remote.environmentId,
+      threadId: remote.threadId,
+      title,
+      link: link(remote, title),
+      status: TASK_STATUS[task.status],
+      // Its questions and approvals are answered where it runs; which one is not known here.
+      attention: null,
+      completedAt: task.completedAt === null ? null : DateTime.formatIso(task.completedAt),
+      latestReply: task.result === null ? null : replyPreview(task.result),
+    },
+  ];
+}
+
+const newestFirst = (left: AgentStatusChild, right: AgentStatusChild) =>
+  (right.completedAt ?? "").localeCompare(left.completedAt ?? "");
+
+/**
+ * Groups an agent's threads: those on its own environment, and the tasks it
+ * handed to linked environments. Several tasks can follow up one thread
+ * there; the newest one speaks for it.
+ */
+export function groupAgentChildren(input: {
+  readonly environmentId: EnvironmentId;
+  readonly shells: ReadonlyArray<OrchestrationV2ThreadShell>;
+  readonly subagents: ReadonlyArray<OrchestrationV2Subagent>;
+  readonly link: ThreadLinker;
+}): AgentStatusChildren {
+  const byThread = new Map<string, AgentStatusChild>();
+  const add = (child: AgentStatusChild) => {
+    const key = `${child.environmentId}\u0000${child.threadId}`;
+    if (!byThread.has(key)) byThread.set(key, child);
+  };
+  for (const shell of input.shells) add(shellChild(input.environmentId, shell, input.link));
+  const newestTasks = input.subagents.toSorted(
+    (left, right) =>
+      DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
+  );
+  for (const child of newestTasks.flatMap((task) => remoteTaskChild(task, input.link))) add(child);
+  const children = [...byThread.values()];
+  const having = (status: AgentStatusKind) => children.filter((child) => child.status === status);
+  return {
+    running: having("running"),
+    waiting: having("waiting"),
+    failed: having("failed").toSorted(newestFirst).slice(0, RECENT_LIMIT),
+    recentlyFinished: having("finished").toSorted(newestFirst).slice(0, RECENT_LIMIT),
+  };
 }

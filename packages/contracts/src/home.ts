@@ -32,6 +32,7 @@ import {
 import {
   OrchestrationV2DispatchCommandResult,
   OrchestrationV2RunStatus,
+  OrchestrationV2ShellThreadStatus,
   OrchestrationV2ThreadLaunchWorkspaceStrategy,
 } from "./orchestrationV2.ts";
 import { Project } from "./project.ts";
@@ -337,3 +338,67 @@ export type HomeWatchEvent = typeof HomeWatchEvent.Type;
 
 export const HomeWatchReport = Schema.Struct({ events: Schema.Array(HomeWatchEvent) });
 export type HomeWatchReport = typeof HomeWatchReport.Type;
+
+/** Where an agent's thread stands, from the agent's point of view. */
+export const AgentStatusKind = Schema.Literals(["running", "waiting", "failed", "finished"]);
+export type AgentStatusKind = typeof AgentStatusKind.Type;
+
+/** What a waiting thread needs, when that is known. */
+export const AgentAttention = Schema.NullOr(Schema.Literals(["question", "approval"]));
+export type AgentAttention = typeof AgentAttention.Type;
+
+/** A thread an agent started, as its status shows it. */
+export const AgentStatusChild = Schema.Struct({
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+  title: Schema.String,
+  link: Schema.String,
+  status: AgentStatusKind,
+  attention: AgentAttention,
+  completedAt: Schema.NullOr(IsoDateTime),
+  /** A one-line preview of its latest reply. */
+  latestReply: Schema.NullOr(Schema.String),
+});
+export type AgentStatusChild = typeof AgentStatusChild.Type;
+
+export const AgentStatusChildren = Schema.Struct({
+  running: Schema.Array(AgentStatusChild),
+  waiting: Schema.Array(AgentStatusChild),
+  /** Newest first, at most a few. */
+  failed: Schema.Array(AgentStatusChild),
+  /** Newest first, at most a few. */
+  recentlyFinished: Schema.Array(AgentStatusChild),
+});
+export type AgentStatusChildren = typeof AgentStatusChildren.Type;
+
+export const HomeStatusInput = Schema.Struct({ environmentId: environmentIdField });
+export type HomeStatusInput = typeof HomeStatusInput.Type;
+
+export const HomeStatusResult = Schema.Struct({
+  /** The environment that answered: where Home runs, when it is on. */
+  environmentId: EnvironmentId,
+  environmentLabel: Schema.String,
+  /** Null when Home is off here. */
+  agent: Schema.NullOr(
+    Schema.Struct({
+      threadId: ThreadId,
+      link: Schema.String,
+      status: OrchestrationV2ShellThreadStatus,
+      attention: AgentAttention,
+      latestReply: Schema.NullOr(Schema.String),
+      children: AgentStatusChildren,
+    }),
+  ),
+  note: Schema.optional(Schema.String),
+  /** Only when Home is off here: where else to ask. */
+  linkedEnvironments: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        environmentId: EnvironmentId,
+        label: Schema.String,
+        connected: Schema.Boolean,
+      }),
+    ),
+  ),
+});
+export type HomeStatusResult = typeof HomeStatusResult.Type;

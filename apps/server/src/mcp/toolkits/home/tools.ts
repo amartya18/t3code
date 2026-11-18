@@ -1,4 +1,10 @@
-import { HomeWatch, OrchestratorMcpFailure, ThreadId } from "@t3tools/contracts";
+import {
+  HomeStatusInput,
+  HomeStatusResult,
+  HomeWatch,
+  OrchestratorMcpFailure,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 
@@ -23,4 +29,22 @@ const ThreadWatchTool = Tool.make("t3_thread_watch", {
   success: Schema.Struct({ watchAll: Schema.Boolean, watches: Schema.Array(HomeWatch) }),
 }).annotate(Tool.Destructive, false);
 
-export const HomeToolkit = Toolkit.make(ThreadWatchTool);
+const HomeStatusTool = Tool.make("t3_home_status", {
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: [
+    McpInvocationContext.McpInvocationContext,
+    ThreadManagementService.ThreadManagementService,
+    ...homeRoutingDependencies,
+  ],
+  description:
+    "Read where Home stands: whether it is on, its latest reply, and the threads it started here or handed off with delegate_task. Read-only; it never starts a turn. To ask Home something, use t3_thread_send on its threadId with mode queue, not auto, so you never steer its running turn. Threads it started in linked environments with t3_thread_launch are not tracked. If Home is off here, retry with an environmentId from linkedEnvironments.",
+  parameters: HomeStatusInput,
+  success: HomeStatusResult,
+})
+  .annotate(Tool.Title, "Read Home's status")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
+export const HomeToolkit = Toolkit.make(ThreadWatchTool, HomeStatusTool);

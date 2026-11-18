@@ -10,8 +10,10 @@ import {
   HOME_THREAD_ID_PREFIX,
   type HomeEnableInput,
   type HomeSettings,
+  type HomeStatusResult,
   type HomeThreadResult,
   HomeUnavailableError,
+  isHomeLaunchedThreadId,
   type HomeWatch,
   type HomeWatchEvent,
   type HomeWatchReport,
@@ -26,10 +28,18 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Semaphore from "effect/Semaphore";
 
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import {
+  attentionOf,
+  groupAgentChildren,
+  latestReplyOf,
+  type ThreadLinker,
+} from "./agentStatus.ts";
 
 export class HomeService extends Context.Service<
   HomeService,
@@ -52,6 +62,13 @@ export class HomeService extends Context.Service<
       homeThreadId: ThreadId,
       update: (home: HomeSettings) => HomeSettings,
     ) => Effect.Effect<HomeSettings, HomeUnavailableError>;
+    /**
+     * Where Home and the threads it started stand. Reads only, so it never
+     * wakes Home. When Home is off here, lists the linked environments to ask.
+     */
+    readonly status: (options: {
+      readonly link: ThreadLinker;
+    }) => Effect.Effect<HomeStatusResult, HomeUnavailableError>;
     /** Wakes Home with the watched events in one message. */
     readonly report: (report: HomeWatchReport) => Effect.Effect<void, HomeUnavailableError>;
   }
@@ -92,6 +109,9 @@ const EVENT_LABELS: Record<Exclude<HomeWatchEvent["kind"], "ended">, string> = {
   approval: "Needs approval",
 };
 
+/** Settled threads Home launched past this many, newest first, stay out of its status. */
+const SETTLED_STATUS_LIMIT = 10;
+
 const FRESH_START_MESSAGE =
   "Context reset. You no longer see the messages above this point. Reread your instructions and notes, then reply in one short line that you're ready.";
 
@@ -121,6 +141,8 @@ const make = Effect.gen(function* () {
   const threads = yield* ThreadManagementService.ThreadManagementService;
   const launches = yield* ThreadLaunchService.ThreadLaunchService;
   const crypto = yield* SecureRandom.SecureRandom;
+  const environment = yield* ServerEnvironment.ServerEnvironment;
+  const peerLinks = yield* PeerLinks.PeerLinks;
   const lock = yield* Semaphore.make(1);
   const fail = (message: string) => new HomeUnavailableError({ message });
 
@@ -223,6 +245,35 @@ const make = Effect.gen(function* () {
       .pipe(Effect.mapError(() => fail("Home could not be woken.")));
   });
 
+  /** Undefined when the links could not be read. */
+  const linkedEnvironments = peerLinks.enabled.pipe(
+    Effect.flatMap((enabled) => (enabled ? peerLinks.list : Effect.succeed([]))),
+    Effect.map((links) =>
+      links.map((link) => ({
+        environmentId: link.environmentId,
+        label: link.label,
+        connected: link.status === "reachable",
+      })),
+    ),
+    Effect.orElseSucceed(() => undefined),
+  );
+
+  const readFailure = () => fail("Home's threads could not be read.");
+
+  /** Unsettled threads Home launched here, and the newest settled ones. */
+  const launchedThreadIds = threads.listProjectThreads({ includeSubagents: true }).pipe(
+    Effect.mapError(readFailure),
+    Effect.map((listed) => {
+      const launched = listed.filter((thread) => isHomeLaunchedThreadId(thread.id));
+      const isSettled = (thread: (typeof launched)[number]) =>
+        thread.settledOverride === "settled" || thread.settledAt !== null;
+      return [
+        ...launched.filter((thread) => !isSettled(thread)),
+        ...launched.filter(isSettled).slice(0, SETTLED_STATUS_LIMIT),
+      ].map((thread) => thread.id);
+    }),
+  );
+
   return HomeService.of({
     enable: Effect.fn("HomeService.enable")((input) =>
       withLock(
@@ -300,6 +351,51 @@ const make = Effect.gen(function* () {
         }),
       ),
     ),
+
+    status: Effect.fn("HomeService.status")(function* ({ link }) {
+      const environmentId = yield* environment.getEnvironmentId;
+      const { label } = yield* environment.getDescriptor;
+      const home = yield* readHome;
+      const shell = home.threadId === null ? null : yield* liveShell(home.threadId);
+      if (shell === null) {
+        const linked = yield* linkedEnvironments;
+        const next =
+          linked === undefined
+            ? " Its linked environments could not be listed."
+            : linked.length === 0
+              ? ""
+              : " It may run in a linked environment: retry with environmentId set to one of linkedEnvironments.";
+        return {
+          environmentId,
+          environmentLabel: label,
+          agent: null,
+          note: `Home is off on ${label}.${next}`,
+          ...(linked === undefined ? {} : { linkedEnvironments: linked }),
+        };
+      }
+      const ids = yield* launchedThreadIds;
+      const shells =
+        ids.length === 0
+          ? []
+          : (yield* threads.getShellSnapshot({ threadIds: ids }).pipe(Effect.mapError(readFailure)))
+              .threads;
+      const { subagents } = yield* threads
+        .getThreadRecords(shell.id, ["subagents"])
+        .pipe(Effect.mapError(readFailure));
+      const attention = attentionOf(shell)?.kind;
+      return {
+        environmentId,
+        environmentLabel: label,
+        agent: {
+          threadId: shell.id,
+          link: link({ environmentId, threadId: shell.id }, shell.title),
+          status: shell.status,
+          attention: attention === "question" || attention === "approval" ? attention : null,
+          latestReply: latestReplyOf(shell),
+          children: groupAgentChildren({ environmentId, shells, subagents, link }),
+        },
+      };
+    }),
 
     // Under the lock, so turning Home off cannot slip in between choosing the
     // Home thread and waking it.
