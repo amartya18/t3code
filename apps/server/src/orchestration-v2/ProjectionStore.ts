@@ -4186,7 +4186,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ? sql<PayloadRow>`
                 SELECT payload_json FROM orchestration_v2_projection_messages
                 ${recentRunIndex("messages_run_idx")}
-                WHERE ${recentRunIds === null ? threadColumn(filter?.messageIds) : sql.literal("thread_id")} = ${threadId}
+                WHERE ${recentRunIds === null ? threadColumn(filter?.messageIds ?? filter?.messageRunIds) : sql.literal("thread_id")} = ${threadId}
                   ${inRecentRuns("run_id")}
                   ${filter?.messageIds === undefined ? sql`` : sql`AND message_id IN (SELECT value FROM json_each(${encodeIdList(filter.messageIds)}))`}
                   ${filter?.messageRoles === undefined ? sql`` : sql`AND role IN (SELECT value FROM json_each(${encodeIdList(filter.messageRoles)}))`}
