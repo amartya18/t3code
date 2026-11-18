@@ -6,8 +6,9 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
 
-import { diffWatchedThreads, type WatchedThreadState } from "./HomeWatcher.ts";
+import { diffWatchedThreads, type WatchedThreadState, withLatestReplies } from "./HomeWatcher.ts";
 
 const hub = EnvironmentId.make("hub");
 
@@ -66,41 +67,52 @@ const asking = (id: string, kind: "user_input" | "command") =>
   } as Partial<OrchestrationV2ThreadShell>);
 
 describe("diffWatchedThreads", () => {
-  it("sets a baseline first, then reports a question and a completion", () => {
-    const home = watching("a");
-    const first = run(new Map(), [shell("a")], home);
-    expect(first.events).toEqual([]);
+  it.effect("sets a baseline first, then reports a question and a completion", () =>
+    Effect.gen(function* () {
+      const home = watching("a");
+      // The latest run's messages, as the projection's record read returns them.
+      const threads = {
+        getThreadRecords: (
+          _threadId: ThreadId,
+          _fields: unknown,
+          filter?: { messageRunIds?: ReadonlyArray<string> },
+        ) =>
+          Effect.succeed({
+            messages: filter?.messageRunIds?.includes("run-1")
+              ? [{ role: "assistant", text: `Done.\n\nAll   tests pass. ${"x".repeat(400)}` }]
+              : [],
+          }),
+      } as unknown as Parameters<typeof withLatestReplies>[0];
+      const first = run(new Map(), [shell("a")], home);
+      expect(first.events).toEqual([]);
 
-    const asked = run(first.next, [asking("a", "user_input")], home);
-    expect(asked.events).toMatchObject([
-      { threadId: "a", kind: "question", environmentLabel: "laptop13" },
-    ]);
-    expect(asked.events[0]?.detail).toBeUndefined();
+      const askedShell = asking("a", "user_input");
+      const asked = run(first.next, [askedShell], home);
+      expect(asked.events).toMatchObject([
+        { threadId: "a", kind: "question", environmentLabel: "laptop13" },
+      ]);
+      const askedReport = yield* withLatestReplies(threads, asked.events, [{ shell: askedShell }]);
+      expect(askedReport[0]?.detail).toBeUndefined();
 
-    const reply = { role: "assistant", text: `Done.\n\nAll   tests pass. ${"x".repeat(400)}` };
-    const done = run(
-      asked.next,
-      [
-        shell("a", {
-          status: "completed",
-          latestRunCompletedAt: DateTime.makeUnsafe(1_000),
-          latestVisibleMessage: reply,
-        } as Partial<OrchestrationV2ThreadShell>),
-      ],
-      home,
-    );
-    expect(done.events).toMatchObject([{ threadId: "a", kind: "completed" }]);
-    const detail = done.events[0]?.detail ?? "";
-    expect(detail.startsWith("Done. All tests pass. xxx")).toBe(true);
-    expect([detail.length, detail.endsWith("…")]).toEqual([300, true]);
-    expect(
-      run(
-        done.next,
-        [shell("a", { status: "completed", latestRunCompletedAt: DateTime.makeUnsafe(1_000) })],
-        home,
-      ).events,
-    ).toEqual([]);
-  });
+      const doneShell = shell("a", {
+        status: "completed",
+        latestRunCompletedAt: DateTime.makeUnsafe(1_000),
+      });
+      const done = run(asked.next, [doneShell], home);
+      expect(done.events).toMatchObject([{ threadId: "a", kind: "completed" }]);
+      const [reported] = yield* withLatestReplies(threads, done.events, [{ shell: doneShell }]);
+      const detail = reported?.detail ?? "";
+      expect(detail.startsWith("Done. All tests pass. xxx")).toBe(true);
+      expect([detail.length, detail.endsWith("…")]).toEqual([300, true]);
+      expect(
+        run(
+          done.next,
+          [shell("a", { status: "completed", latestRunCompletedAt: DateTime.makeUnsafe(1_000) })],
+          home,
+        ).events,
+      ).toEqual([]);
+    }),
+  );
 
   it("ignores unwatched threads and every Home thread, even when watching all", () => {
     const changed = [shell("a"), shell("home:old")];

@@ -20,7 +20,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { attentionOf, latestReplyOf } from "./agentStatus.ts";
+import { attentionOf, readLatestReply } from "./agentStatus.ts";
 import * as HomeService from "./HomeService.ts";
 
 export interface WatchedThreadState {
@@ -64,14 +64,13 @@ export function diffWatchedThreads(input: {
   );
   const next = new Map(input.previous);
   const events: Array<HomeWatchEvent> = [];
-  const report = (state: WatchedThreadState, kind: HomeWatchEvent["kind"], detail?: string) =>
+  const report = (state: WatchedThreadState, kind: HomeWatchEvent["kind"]) =>
     events.push({
       environmentId: input.environmentId,
       environmentLabel: input.environmentLabel.slice(0, 200),
       threadId: state.threadId,
       title: state.title.slice(0, 300),
       kind,
-      ...(detail === undefined ? {} : { detail }),
     });
   for (const { threadId, shell } of input.changed) {
     const watch = watches.get(threadId);
@@ -123,19 +122,36 @@ export function diffWatchedThreads(input: {
       if (!prior.ended && watch !== undefined) report(state, "ended");
       continue;
     }
-    // Home reads what a finished thread said without a second call.
-    const reply = latestReplyOf(shell) ?? undefined;
     if (attention !== null && attention.key !== prior.attention) {
-      report(state, attention.kind, attention.kind === "failed" ? reply : undefined);
+      report(state, attention.kind);
     } else if (
       completion !== null &&
       (prior.completion === null || completion > prior.completion)
     ) {
-      report(state, "completed", reply);
+      report(state, "completed");
     }
   }
   return { next, events };
 }
+
+/** Quotes a finished or failed thread's last reply, so Home needn't read the thread. */
+export const withLatestReplies = Effect.fn("HomeWatcher.withLatestReplies")(function* (
+  threads: Parameters<typeof readLatestReply>[0],
+  events: ReadonlyArray<HomeWatchEvent>,
+  changed: ReadonlyArray<{ readonly shell: OrchestrationV2ThreadShell | null }>,
+) {
+  return yield* Effect.forEach(events, (event) => {
+    const shell = changed.find((entry) => entry.shell?.id === event.threadId)?.shell;
+    if ((event.kind !== "completed" && event.kind !== "failed") || shell == null) {
+      return Effect.succeed(event);
+    }
+    return readLatestReply(threads, shell).pipe(
+      // The quote is a convenience; the event still goes out without it.
+      Effect.orElseSucceed(() => null),
+      Effect.map((detail) => (detail === null ? event : { ...event, detail })),
+    );
+  });
+});
 
 /** Thread changes gather this long before Home is woken with all of them. */
 const BATCH_WINDOW = Duration.millis(1_500);
@@ -180,7 +196,9 @@ export const layer = Layer.effectDiscard(
         startedAtMs,
       });
       // A failed report leaves the last state, so the next change retries it.
-      if (events.length > 0) yield* home.report({ events });
+      if (events.length > 0) {
+        yield* home.report({ events: yield* withLatestReplies(threads, events, changed) });
+      }
       previous = next;
     });
 

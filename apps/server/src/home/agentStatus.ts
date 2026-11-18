@@ -10,6 +10,9 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+
+import type * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 
 const REPLY_PREVIEW_LENGTH = 300;
 /** Failed and finished threads past this many, newest first, are left out. */
@@ -37,13 +40,19 @@ function replyPreview(text: string): string {
     : `${line.slice(0, REPLY_PREVIEW_LENGTH - 1).trimEnd()}…`;
 }
 
-/** The thread's latest assistant reply, previewed, or null when its last message is not one. */
-export function latestReplyOf(shell: OrchestrationV2ThreadShell): string | null {
-  const message = shell.latestVisibleMessage;
-  return message?.role === "assistant" && message.text.trim() !== ""
-    ? replyPreview(message.text)
-    : null;
-}
+/** The last assistant reply of the thread's latest run, previewed. Reads that run's messages only. */
+export const readLatestReply = Effect.fn("agentStatus.readLatestReply")(function* (
+  threads: Pick<ThreadManagementService.ThreadManagementService["Service"], "getThreadRecords">,
+  shell: Pick<OrchestrationV2ThreadShell, "id" | "latestRunId">,
+) {
+  if (shell.latestRunId === null) return null;
+  const { messages } = yield* threads.getThreadRecords(shell.id, ["messages"], {
+    messageRunIds: [shell.latestRunId],
+    messageRoles: ["assistant"],
+  });
+  const reply = messages.findLast((message) => message.text.trim() !== "");
+  return reply === undefined ? null : replyPreview(reply.text);
+});
 
 export type ThreadLinker = (
   ref: { readonly environmentId: EnvironmentId; readonly threadId: ThreadId },
@@ -74,6 +83,7 @@ function shellStatus(
 function shellChild(
   environmentId: EnvironmentId,
   shell: OrchestrationV2ThreadShell,
+  latestReply: string | null,
   link: ThreadLinker,
 ): AgentStatusChild {
   const attention = attentionOf(shell);
@@ -91,7 +101,7 @@ function shellChild(
       ended && shell.latestRunCompletedAt != null
         ? DateTime.formatIso(shell.latestRunCompletedAt)
         : null,
-    latestReply: latestReplyOf(shell),
+    latestReply,
   };
 }
 
@@ -139,6 +149,7 @@ const newestFirst = (left: AgentStatusChild, right: AgentStatusChild) =>
 export function groupAgentChildren(input: {
   readonly environmentId: EnvironmentId;
   readonly shells: ReadonlyArray<OrchestrationV2ThreadShell>;
+  readonly replies: ReadonlyMap<ThreadId, string | null>;
   readonly subagents: ReadonlyArray<OrchestrationV2Subagent>;
   readonly link: ThreadLinker;
 }): AgentStatusChildren {
@@ -147,7 +158,9 @@ export function groupAgentChildren(input: {
     const key = `${child.environmentId}\u0000${child.threadId}`;
     if (!byThread.has(key)) byThread.set(key, child);
   };
-  for (const shell of input.shells) add(shellChild(input.environmentId, shell, input.link));
+  for (const shell of input.shells) {
+    add(shellChild(input.environmentId, shell, input.replies.get(shell.id) ?? null, input.link));
+  }
   const newestTasks = input.subagents.toSorted(
     (left, right) =>
       DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),

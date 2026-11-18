@@ -29,14 +29,6 @@ const asking = (id: string, kind: "user_input" | "command" | "auth_refresh") =>
     pendingRuntimeRequest: { id: `request-${id}`, kind, createdAt: at(0) },
   } as Partial<OrchestrationV2ThreadShell>);
 
-const reply = (role: "assistant" | "user", text: string) =>
-  ({
-    id: "message",
-    role,
-    text,
-    updatedAt: at(0),
-  }) as OrchestrationV2ThreadShell["latestVisibleMessage"];
-
 const remoteTask = (
   threadId: string,
   status: OrchestrationV2Subagent["status"],
@@ -61,6 +53,7 @@ const group = (
   groupAgentChildren({
     environmentId: hub,
     shells,
+    replies: new Map([[ThreadId.make("done"), "Fixed the build."]]),
     subagents,
     link: (ref, title) => `[${title}](${ref.environmentId}/${ref.threadId})`,
   });
@@ -89,14 +82,8 @@ describe("groupAgentChildren", () => {
       },
       shell("failed", { status: "failed", latestRunCompletedAt: at(2_000) }),
       shell("idle", { status: "idle" }),
-      shell("done", {
-        latestRunCompletedAt: at(1_000),
-        latestVisibleMessage: reply("assistant", "Fixed\n\nthe build."),
-      }),
-      shell("user-last", {
-        latestRunCompletedAt: at(500),
-        latestVisibleMessage: reply("user", "thanks"),
-      }),
+      shell("done", { latestRunCompletedAt: at(1_000) }),
+      shell("quiet", { latestRunCompletedAt: at(500) }),
     ]);
     expect(summary(children)).toEqual({
       running: [
@@ -111,7 +98,7 @@ describe("groupAgentChildren", () => {
       failed: [["failed", null]],
       recentlyFinished: [
         ["done", null],
-        ["user-last", null],
+        ["quiet", null],
       ],
     });
     expect(children.recentlyFinished[0]).toMatchObject({

@@ -6,6 +6,7 @@ import {
   type PeerLinkSummary,
   ProviderInstanceId,
   ThreadId,
+  type OrchestrationV2ConversationMessage,
   type OrchestrationV2ServerCommand,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
@@ -39,6 +40,10 @@ const makeHome = () => {
   const listed: Array<Pick<OrchestrationV2ThreadShell, "id" | "settledOverride" | "settledAt">> =
     [];
   const snapshotRequests: Array<ReadonlyArray<ThreadId> | undefined> = [];
+  const messages = new Map<
+    string,
+    Array<Pick<OrchestrationV2ConversationMessage, "runId" | "role" | "text">>
+  >();
   const shell = (threadId: ThreadId) =>
     ({
       id: threadId,
@@ -47,9 +52,9 @@ const makeHome = () => {
       deletedAt: null,
       archivedAt: null,
       activeRunId: running.has(threadId) ? "run" : null,
+      latestRunId: `run:${threadId}`,
       status: "idle",
       pendingRuntimeRequest: null,
-      latestVisibleMessage: null,
     }) as unknown as OrchestrationV2ThreadShell;
   // provideMerge, so a test reads the same settings Home writes.
   const layer = HomeService.layer.pipe(
@@ -99,7 +104,15 @@ const makeHome = () => {
               ),
             } as never);
           },
-          getThreadRecords: () => Effect.succeed({ subagents: [] } as never),
+          getThreadRecords: (threadId, _fields, filter) =>
+            Effect.succeed({
+              subagents: [],
+              messages: (messages.get(threadId) ?? []).filter(
+                (message) =>
+                  filter?.messageRunIds?.includes(message.runId!) !== false &&
+                  filter?.messageRoles?.includes(message.role) !== false,
+              ),
+            } as never),
           sendToThread: (input) => {
             if (sendFailures.remaining > 0) {
               sendFailures.remaining -= 1;
@@ -120,7 +133,17 @@ const makeHome = () => {
       ),
     ),
   );
-  return { layer, launched, sent, dispatched, sendFailures, running, listed, snapshotRequests };
+  return {
+    layer,
+    launched,
+    sent,
+    dispatched,
+    sendFailures,
+    running,
+    listed,
+    snapshotRequests,
+    messages,
+  };
 };
 
 const event = (
@@ -310,7 +333,7 @@ it.effect("status lists where else to ask while Home is off here", () => {
 });
 
 it.effect("status reads the threads Home launched, and only the newest settled ones", () => {
-  const { layer, listed, snapshotRequests, launched, sent, dispatched } = makeHome();
+  const { layer, listed, snapshotRequests, launched, sent, dispatched, messages } = makeHome();
   const settledAt = DateTime.makeUnsafe(0);
   listed.push(
     { id: ThreadId.make("users-own"), settledOverride: null, settledAt: null },
@@ -324,8 +347,20 @@ it.effect("status reads the threads Home launched, and only the newest settled o
   return Effect.gen(function* () {
     const home = yield* HomeService.HomeService;
     const { threadId } = yield* home.enable({ modelSelection });
+    messages.set(threadId, [
+      { runId: "run:earlier" as never, role: "assistant", text: "An older run's reply." },
+      { runId: `run:${threadId}` as never, role: "assistant", text: "Checked\n\nthe fleet." },
+      { runId: `run:${threadId}` as never, role: "user", text: "Thanks." },
+    ]);
+    messages.set("home-launched:open", [
+      { runId: "run:home-launched:open" as never, role: "assistant", text: "Opened the PR." },
+    ]);
     const status = yield* home.status({ link: (ref) => `link:${ref.threadId}` });
-    expect(status.agent).toMatchObject({ threadId, link: `link:${threadId}` });
+    expect(status.agent).toMatchObject({
+      threadId,
+      link: `link:${threadId}`,
+      latestReply: "Checked the fleet.",
+    });
     expect(status.linkedEnvironments).toBeUndefined();
     expect(snapshotRequests).toEqual([
       [
@@ -334,6 +369,10 @@ it.effect("status reads the threads Home launched, and only the newest settled o
       ],
     ]);
     expect(status.agent?.children.running).toHaveLength(11);
+    expect(status.agent?.children.running[0]).toMatchObject({
+      threadId: "home-launched:open",
+      latestReply: "Opened the PR.",
+    });
     // Reading never wakes or changes anything.
     expect([launched.length, sent, dispatched]).toEqual([1, [], []]);
   }).pipe(Effect.provide(layer));

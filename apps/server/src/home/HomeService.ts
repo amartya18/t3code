@@ -37,7 +37,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import {
   attentionOf,
   groupAgentChildren,
-  latestReplyOf,
+  readLatestReply,
   type ThreadLinker,
 } from "./agentStatus.ts";
 
@@ -382,6 +382,14 @@ const make = Effect.gen(function* () {
       const { subagents } = yield* threads
         .getThreadRecords(shell.id, ["subagents"])
         .pipe(Effect.mapError(readFailure));
+      const replies = new Map(
+        yield* Effect.forEach([shell, ...shells], (thread) =>
+          readLatestReply(threads, thread).pipe(
+            Effect.mapError(readFailure),
+            Effect.map((reply) => [thread.id, reply] as const),
+          ),
+        ),
+      );
       const attention = attentionOf(shell)?.kind;
       return {
         environmentId,
@@ -391,8 +399,8 @@ const make = Effect.gen(function* () {
           link: link({ environmentId, threadId: shell.id }, shell.title),
           status: shell.status,
           attention: attention === "question" || attention === "approval" ? attention : null,
-          latestReply: latestReplyOf(shell),
-          children: groupAgentChildren({ environmentId, shells, subagents, link }),
+          latestReply: replies.get(shell.id) ?? null,
+          children: groupAgentChildren({ environmentId, shells, replies, subagents, link }),
         },
       };
     }),
