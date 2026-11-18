@@ -1060,6 +1060,13 @@ function SidebarHomeRowView(props: {
           </span>
         ) : null}
       </div>
+      <div
+        aria-hidden
+        className="mx-0.5 flex h-8 items-center gap-2 px-2 text-xs font-medium text-sidebar-muted-foreground"
+      >
+        Threads
+        <span className="h-px min-w-2 flex-1 bg-sidebar-border/50" />
+      </div>
     </li>
   );
 }
