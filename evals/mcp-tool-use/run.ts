@@ -56,6 +56,7 @@ import { withInlineContext } from "../../apps/server/src/orchestration-v2/Contex
 import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment/tools.ts";
 import { DeviceToolkit } from "../../apps/server/src/mcp/toolkits/device/tools.ts";
 import { EnvironmentToolkit } from "../../apps/server/src/mcp/toolkits/environment/tools.ts";
+import { HomeToolkit } from "../../apps/server/src/mcp/toolkits/home/tools.ts";
 import { HtmlToolkit } from "../../apps/server/src/mcp/toolkits/html/tools.ts";
 import { MessageToolkit } from "../../apps/server/src/mcp/toolkits/message/tools.ts";
 import { OrchestratorToolkit } from "../../apps/server/src/mcp/toolkits/orchestrator/tools.ts";
@@ -75,6 +76,7 @@ import {
 } from "../../apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { proxyConfig } from "../shared/proxy.ts";
 import { changeRequestsCreatedBy } from "../../apps/server/src/orchestration-v2/PullRequestSyncReactor.ts";
+import { refreshHomeAgents } from "../../apps/server/src/project/ManagedProjectFolders.ts";
 import { type BackgroundWait, makeBackgroundWait } from "./backgroundWait.ts";
 import { DeviceExpect, gradeDevice } from "./device-grading.ts";
 import { FileLinksExpect, gradeFileLinks } from "./file-link-grading.ts";
@@ -308,6 +310,8 @@ export const McpToolUseCase = Schema.Struct({
     role: Schema.Literals(["top", "delegated-child", "native-subagent"]),
     /** Runs only on this harness, for cases whose right answer depends on it. */
     harness: Schema.optional(Schema.Literals(["claude", "codex"])),
+    /** The thread is Home: its AGENTS.md, as T3 writes it, is the project instructions. */
+    home: Schema.optional(Schema.Boolean),
     /** The Linked environments beta is on, so T3 lists its link tools. */
     linkedEnvironments: Schema.optional(Schema.Boolean),
     /** delegate_task `role` for a delegated child. T3 builds the child's first message from it. */
@@ -461,6 +465,7 @@ const t3SourceTools: ReadonlyArray<Tool.Any> = [
   DeviceToolkit,
   HtmlToolkit,
   MessageToolkit,
+  HomeToolkit,
 ].flatMap((toolkit): ReadonlyArray<Tool.Any> => Object.values(toolkit.tools));
 // McpHttpServer decodes arguments with each tool's JSON codec, which drops undeclared keys.
 const t3InputDecoders = new Map(
@@ -1033,7 +1038,7 @@ export const buildMessages = (sample: Sample) => {
     if (last?.role !== role) messages.push({ role, content: blocks });
     else messages[messages.length - 1] = { role, content: [...last.content, ...blocks] };
   };
-  const { role, context, delegateRole, priorTurns = [] } = testCase.setup;
+  const { role, context, delegateRole, home, priorTurns = [] } = testCase.setup;
   const sideChat = testCase.setup.sideChat;
   if (testCase.prompt === "" && (role !== "top" || sideChat !== undefined)) {
     throw new Error(
@@ -1051,6 +1056,9 @@ export const buildMessages = (sample: Sample) => {
   const notes = [
     native
       ? "You are a subagent started by the parent agent's Agent tool. Your final message goes to the parent agent, not to the user."
+      : undefined,
+    home
+      ? `Contents of /home/user/.t3/home/AGENTS.md (project instructions, checked into the codebase):\n\n${refreshHomeAgents(null)}`
       : undefined,
     context,
   ];

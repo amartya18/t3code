@@ -1,59 +1,52 @@
 import {
-  EnvironmentId,
+  HomeStatusInput,
+  HomeStatusResult,
   HomeWatch,
-  OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpFailure,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { Tool, Toolkit } from "effect/ai";
+import { McpSchema, Tool, Toolkit } from "effect/ai";
 
-import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import { homeRoutingDependencies } from "../../homeRouting.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
-const shared = {
+const ThreadWatchTool = Tool.make("t3_thread_watch", {
   failure: OrchestratorMcpFailure,
-  failureMode: "return" as const,
+  failureMode: "return",
   dependencies: [
     McpInvocationContext.McpInvocationContext,
     ThreadManagementService.ThreadManagementService,
-    ServerEnvironment.ServerEnvironment,
     ...homeRoutingDependencies,
   ],
-};
-
-const EnvironmentListTool = Tool.make("t3_environment_list", {
-  ...shared,
   description:
-    "List the environments this thread can act in. Other threads see only their own environment. Home sees every environment the user's desktop app is connected to; relayConnected is false when no desktop window is open to relay calls to them.",
-  success: Schema.Struct({
-    currentEnvironmentId: EnvironmentId,
-    relayConnected: Schema.Boolean,
-    environments: Schema.Array(
-      Schema.Struct({
-        environmentId: EnvironmentId,
-        label: Schema.String,
-        connected: Schema.Boolean,
-        current: Schema.Boolean,
-      }),
-    ),
-  }),
-})
-  .annotate(Tool.Readonly, true)
-  .annotate(Tool.Destructive, false);
-
-const ThreadWatchTool = Tool.make("t3_thread_watch", {
-  ...shared,
-  description:
-    "Home only. Choose which threads wake Home. watch/unwatch one thread (threadId, optional environmentId), or watch_all/unwatch_all for every thread in every environment. Threads Home launches are already watched. A watch ends when its thread is settled or archived. Returns what Home now watches.",
+    "Home only. Choose which threads in this environment wake Home. watch/unwatch one thread (threadId), or watch_all/unwatch_all for every thread here. Threads Home launches here are already watched. A watch ends when its thread is settled or archived. For a thread in a linked environment, use t3_thread_wait. Returns what Home now watches.",
   parameters: Schema.Struct({
     action: Schema.Literals(["watch", "unwatch", "watch_all", "unwatch_all"]),
-    environmentId: OrchestratorMcpEnvironmentTarget,
     threadId: Schema.optional(ThreadId),
   }),
   success: Schema.Struct({ watchAll: Schema.Boolean, watches: Schema.Array(HomeWatch) }),
-}).annotate(Tool.Destructive, false);
+})
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
-export const HomeToolkit = Toolkit.make(EnvironmentListTool, ThreadWatchTool);
+const HomeStatusTool = Tool.make("t3_home_status", {
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: [
+    McpInvocationContext.McpInvocationContext,
+    ThreadManagementService.ThreadManagementService,
+    ...homeRoutingDependencies,
+  ],
+  description:
+    "Read where Home stands: whether it is on, its latest reply, and the threads it started here or handed off with delegate_task. Read-only; it never starts a turn. To ask Home something, use t3_thread_send on its threadId with mode queue, not auto, so you never steer its running turn. Threads it started in linked environments with t3_thread_launch are not tracked. If Home is off here, retry with an environmentId from linkedEnvironments.",
+  parameters: HomeStatusInput,
+  success: HomeStatusResult,
+})
+  .annotate(Tool.Title, "Read Home's status")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
+export const HomeToolkit = Toolkit.make(ThreadWatchTool, HomeStatusTool);

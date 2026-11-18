@@ -26,7 +26,7 @@ import {
 import { getClientSettings, subscribeClientSettings } from "../hooks/useSettings";
 import { isWindowsPlatform } from "../lib/utils";
 import { environmentSummaries } from "../state/presentation";
-import { primaryServerSettingsAtom } from "../state/server";
+import { serverEnvironment } from "../state/server";
 import { environmentShell } from "../state/shell";
 import { environmentThreadShells } from "../state/threads";
 import {
@@ -149,7 +149,7 @@ export function startThreadNotifications(
     // Home answers for the threads it launched; it reaches the user through its own thread.
     if (
       isHomeLaunchedThreadId(thread.id) &&
-      registry.get(primaryServerSettingsAtom).home.threadId !== null
+      registry.get(serverEnvironment.settingsValueAtom(environmentId))?.home.threadId != null
     ) {
       return;
     }

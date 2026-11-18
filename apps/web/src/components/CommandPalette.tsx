@@ -121,6 +121,8 @@ import { filesystemEnvironment, useFilesystemReadAccess } from "../state/filesys
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
 import { serverEnvironment } from "../state/server";
+import { homeWorkspaceRootsAtom, isProjectInHomeFolder, userHomeAtom } from "../state/home";
+import { userHomeThreadRef } from "@t3tools/client-runtime/state/home";
 import { threadEnvironment } from "../state/threads";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { sourceControlEnvironment } from "../state/sourceControl";
@@ -161,7 +163,6 @@ import {
   hasTrailingPathSeparator,
   inferProjectTitleFromPath,
   isExplicitRelativeProjectPath,
-  isHomeProject,
   isFilesystemBrowseQuery,
   isScratchProject,
   isUnsupportedWindowsProjectPath,
@@ -267,11 +268,7 @@ import { openGuestShareDialog } from "./chat/guestShareDialogState";
 import { openUseInAnotherApp } from "./mcp/UseInAnotherAppDialog";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import { settingsForThisPlatform, SETTINGS_SECTION_LABELS } from "./settings/settingsSearch";
-import {
-  primaryServerConfigAtom,
-  primaryServerKeybindingsAtom,
-  primaryServerSettingsAtom,
-} from "../state/server";
+import { primaryServerKeybindingsAtom } from "../state/server";
 import { resolveShortcutCommand, threadJumpIndexFromCommand } from "../keybindings";
 import { CommandDialog, CommandDialogPopup, CommandFooterAction } from "./ui/command";
 import { Button } from "./ui/button";
@@ -487,14 +484,8 @@ function OpenCommandPaletteDialog(props: {
   const { environments } = useEnvironments();
   const desktopLocalBootstraps = useDesktopLocalBootstraps();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const homeThreadId = useAtomValue(
-    primaryServerSettingsAtom,
-    (settings) => settings.home.threadId,
-  );
-  const homeWorkspaceRoot = useAtomValue(
-    primaryServerConfigAtom,
-    (config) => config?.homeWorkspaceRoot ?? null,
-  );
+  const userHome = useAtomValue(userHomeAtom);
+  const homeWorkspaceRoots = useAtomValue(homeWorkspaceRootsAtom);
   const availableSettingsSearchItems = useAvailableSettingsSearchItems();
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
@@ -858,7 +849,7 @@ function OpenCommandPaletteDialog(props: {
 
   // Home's folder belongs to Home alone: no search result or picker starts a thread there.
   const isPrimaryHomeProject = (project: CommandPaletteProject) =>
-    project.environmentId === primaryEnvironmentId && isHomeProject(project, homeWorkspaceRoot);
+    isProjectInHomeFolder(homeWorkspaceRoots, project);
   // Pinning from a row keeps rows in place while the palette is open.
   const projectSearchItems = useOrderWhileOpen(
     buildProjectSearchItems({
@@ -1728,7 +1719,8 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
-  if (primaryEnvironmentId !== null && homeThreadId !== null) {
+  const homeRef = userHomeThreadRef(userHome);
+  if (homeRef !== null) {
     actionItems.push({
       kind: "action",
       value: "action:home",
@@ -1739,7 +1731,7 @@ function OpenCommandPaletteDialog(props: {
       run: async () => {
         await navigate({
           to: "/$environmentId/$threadId",
-          params: buildThreadRouteParams(scopeThreadRef(primaryEnvironmentId, homeThreadId)),
+          params: buildThreadRouteParams(homeRef),
         });
       },
     });

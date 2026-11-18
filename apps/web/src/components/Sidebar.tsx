@@ -1,5 +1,10 @@
 import { attachSidebarTree } from "../lib/sidebarTree";
-import { type EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  type EnvironmentMachineKind,
+  resolveEnvironmentMachineKind,
+  type ScopedProjectRef,
+} from "@t3tools/contracts";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import {
   dropThreadContext,
@@ -81,6 +86,8 @@ import {
   PlusIcon,
   SettingsIcon,
   ShieldQuestionIcon,
+  TriangleAlertIcon,
+  UnplugIcon,
   UserRoundIcon,
 } from "lucide-react";
 import {
@@ -148,11 +155,14 @@ import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
 import {
+  useEnvironment,
   useEnvironmentIdentities,
   useConnectedEnvironmentIds,
   useEnvironmentMachines,
   usePrimaryEnvironmentId,
 } from "../state/environments";
+import { homeWorkspaceRootsAtom, isProjectInHomeFolder, userHomeAtom } from "../state/home";
+import { userHomeThreadRef } from "@t3tools/client-runtime/state/home";
 import {
   readThreadShell,
   useAllEnvironmentProjectSnapshotsReady,
@@ -163,11 +173,7 @@ import {
   useThreadShell,
 } from "../state/entities";
 import { environmentPresentations } from "../state/presentation";
-import {
-  primaryServerConfigAtom,
-  primaryServerKeybindingsAtom,
-  primaryServerSettingsAtom,
-} from "../state/server";
+import { primaryServerKeybindingsAtom } from "../state/server";
 import { environmentProjects } from "../state/projects";
 import { threadEnvironment } from "../state/threads";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../state/olderSettledShelf";
@@ -183,7 +189,7 @@ import {
   resolveThreadRouteTarget,
 } from "../threadRoutes";
 import type { SidebarThreadSummary } from "../types";
-import { isHomeProject, isScratchProject } from "@t3tools/client-runtime/state/projects";
+import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { cn } from "~/lib/utils";
 import { ProjectEnvironmentBadge } from "./ProjectEnvironmentBadge";
 import { ProjectRowActions } from "./ProjectComboboxRow";
@@ -273,7 +279,8 @@ import {
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
-import { TooltipProvider } from "./ui/tooltip";
+import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
+import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import {
   composerDraftHasUserContent,
   DraftId,
@@ -859,22 +866,15 @@ function useSidebarLookups() {
   const projectGroupByScopeKey = new Map(
     projectGroups.map((project) => [project.projectKey, project] as const),
   );
-  const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const homeWorkspaceRoot = useAtomValue(
-    primaryServerConfigAtom,
-    (config) => config?.homeWorkspaceRoot ?? null,
-  );
+  const homeWorkspaceRoots = useAtomValue(homeWorkspaceRootsAtom);
   const projectScopeItems = [
     { value: "all", label: "All projects" },
     // Home's folder is not a project to scope to.
     ...pickableProjectGroups(projectGroups)
       .filter(
         (project) =>
-          homeWorkspaceRoot === null ||
-          !project.memberProjects.some(
-            (member) =>
-              member.environmentId === primaryEnvironmentId &&
-              isHomeProject(member, homeWorkspaceRoot),
+          !project.memberProjects.some((member) =>
+            isProjectInHomeFolder(homeWorkspaceRoots, member),
           ),
       )
       .map((project) => ({
@@ -914,17 +914,44 @@ const HOME_ROW_STATUS: Record<
   done: { label: "Done", Icon: CircleCheckIcon, className: "text-success-foreground" },
 };
 
+/** Where the user's one Home runs, as seen from this client. */
+type HomePlace =
+  | { readonly kind: "here" }
+  | {
+      readonly kind: "elsewhere";
+      readonly label: string;
+      readonly machine: EnvironmentMachineKind;
+      readonly reachable: boolean;
+    }
+  | { readonly kind: "conflict"; readonly labels: ReadonlyArray<string> };
+
+const UNREACHABLE_PHASES = new Set(["offline", "reconnecting", "error", "unsupported"]);
+
 /**
  * The fixed row for the current Home thread, above every other row. Home has
  * no project, settle, or pin affordances, so it only shows its status.
  */
 function SidebarHomeRow(props: {
   threadRef: ScopedThreadRef;
+  onAnotherEnvironment: boolean;
+  conflictLabels: ReadonlyArray<string> | null;
   isActive: boolean;
   onActivate: (threadRef: ScopedThreadRef) => void;
 }) {
   const { isActive, onActivate, threadRef } = props;
   const thread = useThreadShell(threadRef);
+  const environment = useEnvironment(threadRef.environmentId);
+  const place: HomePlace =
+    props.conflictLabels !== null
+      ? { kind: "conflict", labels: props.conflictLabels }
+      : props.onAnotherEnvironment
+        ? {
+            kind: "elsewhere",
+            label: environment?.label ?? "another environment",
+            machine: resolveEnvironmentMachineKind(environment?.serverConfig ?? null),
+            reachable: !UNREACHABLE_PHASES.has(environment?.connection.phase ?? "connected"),
+          }
+        : { kind: "here" };
   const localLastVisitedAt = useUiStateStore(
     (state) => state.threadLastVisitedAtById[scopedThreadKey(threadRef)],
   );
@@ -937,42 +964,142 @@ function SidebarHomeRow(props: {
     });
   const topStatus =
     status !== "ready" ? HOME_ROW_STATUS[status] : isUnread ? HOME_ROW_STATUS.done : null;
-  const activate = () => onActivate(threadRef);
+  return (
+    <SidebarHomeRowView
+      place={place}
+      topStatus={topStatus}
+      isActive={isActive}
+      onActivate={() => onActivate(threadRef)}
+    />
+  );
+}
+
+function HomeRowStatus(props: {
+  place: HomePlace;
+  topStatus: (typeof HOME_ROW_STATUS)[keyof typeof HOME_ROW_STATUS] | null;
+}) {
+  const { place, topStatus } = props;
+  if (place.kind === "elsewhere" && !place.reachable) {
+    return (
+      <span className="ml-auto inline-flex shrink-0 items-center gap-1 text-xs font-medium text-muted-foreground">
+        <UnplugIcon aria-hidden className="size-4 shrink-0" />
+        <span>Offline</span>
+      </span>
+    );
+  }
+  if (!topStatus) return null;
+  return (
+    <span
+      className={cn(
+        "ml-auto inline-flex shrink-0 items-center gap-1 text-xs font-medium",
+        topStatus.className,
+      )}
+    >
+      <topStatus.Icon aria-hidden className="size-4 shrink-0" />
+      <span role="status">{topStatus.label}</span>
+    </span>
+  );
+}
+
+function homePlaceLabel(place: HomePlace) {
+  return place.kind === "here"
+    ? "This device"
+    : place.kind === "conflict"
+      ? `On in ${place.labels.length} places`
+      : place.label;
+}
+
+function homePlaceDescription(place: HomePlace) {
+  return place.kind === "here"
+    ? "Runs on this device"
+    : place.kind === "conflict"
+      ? `Home is on in ${place.labels.length} places: ${place.labels.join(", ")}`
+      : place.reachable
+        ? `Runs on ${place.label}`
+        : `${place.label} is offline`;
+}
+
+function HomePlaceLine(props: { place: HomePlace }) {
+  const { place } = props;
+  return (
+    <div
+      className={cn(
+        "mt-1 flex h-5 min-w-0 items-center gap-1.5 text-xs font-normal",
+        place.kind === "conflict" ? "text-warning-foreground" : "text-secondary-label",
+      )}
+    >
+      <span className="min-w-0 flex-1 truncate">{homePlaceLabel(place)}</span>
+      {place.kind === "here" ? null : (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span
+                role="img"
+                aria-label={homePlaceDescription(place)}
+                className={cn(
+                  "inline-flex shrink-0 items-center",
+                  place.kind === "elsewhere" && "text-sidebar-muted-foreground/70",
+                )}
+              />
+            }
+          >
+            {place.kind === "conflict" ? (
+              <TriangleAlertIcon aria-hidden className="size-3.5" />
+            ) : (
+              <EnvironmentMachineIcon aria-hidden kind={place.machine} className="size-3.5" />
+            )}
+          </TooltipTrigger>
+          <TooltipPopup side="top">{homePlaceDescription(place)}</TooltipPopup>
+        </Tooltip>
+      )}
+    </div>
+  );
+}
+
+function SidebarHomeRowView(props: {
+  place: HomePlace;
+  topStatus: (typeof HOME_ROW_STATUS)[keyof typeof HOME_ROW_STATUS] | null;
+  isActive: boolean;
+  onActivate: () => void;
+}) {
+  const { place, topStatus, isActive, onActivate } = props;
   return (
     <li className="list-none">
       <div
         role="treeitem"
         tabIndex={-1}
         data-sidebar-row="home"
-        aria-label={topStatus ? `Home, ${topStatus.label}` : "Home"}
+        aria-label={["Home", homePlaceLabel(place), topStatus?.label]
+          .filter((part) => part != null)
+          .join(", ")}
         aria-current={isActive ? "page" : undefined}
         data-testid="sidebar-home-row"
         className={cn(
-          "flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm font-medium outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+          "flex w-full cursor-pointer flex-col rounded-md px-(--sidebar-row-content-inset) py-(--sidebar-content-inset) text-left text-sm font-medium outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
           isActive
-            ? "bg-sidebar-row-active text-sidebar-foreground"
+            ? "bg-sidebar-row-active text-sidebar-foreground light:ring-1 light:ring-inset light:ring-sidebar-border/70"
             : "text-sidebar-foreground hover:bg-sidebar-row-hover",
         )}
-        onClick={activate}
+        onClick={onActivate}
         onKeyDown={(event) => {
           if (event.key !== "Enter" && event.key !== " ") return;
           event.preventDefault();
-          activate();
+          onActivate();
         }}
       >
-        <HouseIcon aria-hidden className="size-4 shrink-0" />
-        <span className="min-w-0 flex-1 truncate">Home</span>
-        {topStatus ? (
-          <span
-            className={cn(
-              "inline-flex shrink-0 items-center gap-1 text-xs font-medium",
-              topStatus.className,
-            )}
-          >
-            <topStatus.Icon aria-hidden className="size-4 shrink-0" />
-            <span role="status">{topStatus.label}</span>
-          </span>
-        ) : null}
+        <div className="flex h-5 min-w-0 items-center gap-2.5">
+          <HouseIcon aria-hidden className="size-4 shrink-0" />
+          <span className="truncate">Home</span>
+          <HomeRowStatus place={place} topStatus={topStatus} />
+        </div>
+        <HomePlaceLine place={place} />
+      </div>
+      <div
+        aria-hidden
+        className="mx-0.5 flex h-8 items-center gap-2 px-2 text-xs font-medium text-sidebar-muted-foreground"
+      >
+        Threads
+        <span className="h-px min-w-2 flex-1 bg-sidebar-border/50" />
       </div>
     </li>
   );
@@ -1113,16 +1240,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   // Row callbacks capture only the handler; the rest of the context changes with the route.
   const { handleNewThread } = newThreadContext;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const homeThreadId = useAtomValue(
-    primaryServerSettingsAtom,
-    (settings) => settings.home.threadId,
-  );
-  // The current Home thread lives on the primary environment and gets its own
-  // fixed row; older Home threads stay in the normal lists.
-  const homeThreadRef =
-    primaryEnvironmentId !== null && homeThreadId !== null
-      ? scopeThreadRef(primaryEnvironmentId, homeThreadId)
-      : null;
+  const userHome = useAtomValue(userHomeAtom);
+  // The current Home thread gets its own fixed row, on whichever environment
+  // hosts it; older Home threads stay in the normal lists.
+  const homeThreadRef = userHomeThreadRef(userHome);
   const clearSelection = useThreadSelectionStore((s) => s.clearSelection);
   const setSelectionAnchor = useThreadSelectionStore((s) => s.setAnchor);
   const toggleThreadSelection = useThreadSelectionStore((s) => s.toggleThread);
@@ -3635,6 +3756,17 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           <SidebarHomeRow
                             key="home"
                             threadRef={homeThreadRef}
+                            onAnotherEnvironment={
+                              homeThreadRef.environmentId !== primaryEnvironmentId
+                            }
+                            conflictLabels={
+                              userHome.kind === "conflict"
+                                ? userHome.hosts.map(
+                                    (host) =>
+                                      environmentLabelById.get(host.environmentId) ?? "Unknown",
+                                  )
+                                : null
+                            }
                             isActive={routeThreadKey === scopedThreadKey(homeThreadRef)}
                             onActivate={navigateToThread}
                           />

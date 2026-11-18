@@ -269,7 +269,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       Effect.gen(function* () {
         const threadId = yield* defaultThreadId(input);
         if (input.action === "list") {
-          const routed = yield* routeHome(input.environmentId, "requests.list", { threadId });
+          const routed = yield* routeHome("requests.list", { threadId });
           if (Option.isSome(routed)) return routed.value;
           const { projection } = yield* readThread(input.threadId, ["runtimeRequests"]);
           return {
@@ -279,7 +279,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           };
         }
         const requestId = yield* required(input.requestId, "requestId");
-        const routed = yield* routeHome(input.environmentId, "requests.read", {
+        const routed = yield* routeHome("requests.read", {
           threadId,
           requestId,
         });
@@ -291,7 +291,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
     writesThread((input) =>
       Effect.gen(function* () {
         const requestId = yield* required(input.requestId, "requestId");
-        const routed = yield* routeHome(input.environmentId, "requests.respond", {
+        const routed = yield* routeHome("requests.respond", {
           threadId: yield* defaultThreadId(input),
           requestId,
           ...(input.answers === undefined ? {} : { answers: input.answers }),
@@ -400,7 +400,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   ),
   t3_thread_organize: writesThread((input) =>
     Effect.gen(function* () {
-      const routed = yield* routeHome(input.environmentId, "threads.organize", {
+      const routed = yield* routeHome("threads.organize", {
         ...input,
         threadId: yield* defaultThreadId(input),
       });

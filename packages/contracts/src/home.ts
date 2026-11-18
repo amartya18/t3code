@@ -1,6 +1,6 @@
 /**
- * One Home thread per desktop install, acting across connected environments.
- * Hub owns state; other environments go through fleet.invoke.
+ * One Home thread per user, hosted by whichever environment has it on. It acts
+ * here directly and reaches the host's linked environments like any thread.
  */
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -20,7 +20,6 @@ import {
   OrchestratorMcpClientRequestId,
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpProviderCapability,
-  OrchestratorMcpFailure,
   OrchestratorMcpThreadInterruptInput,
   OrchestratorMcpThreadInterruptResult,
   OrchestratorMcpThreadListInput,
@@ -33,6 +32,7 @@ import {
 import {
   OrchestrationV2DispatchCommandResult,
   OrchestrationV2RunStatus,
+  OrchestrationV2ShellThreadStatus,
   OrchestrationV2ThreadLaunchWorkspaceStrategy,
 } from "./orchestrationV2.ts";
 import { Project } from "./project.ts";
@@ -58,7 +58,7 @@ export const HomeWatch = Schema.Struct({
 export type HomeWatch = typeof HomeWatch.Type;
 
 /**
- * Home's state on the hub. It lives in server settings so every client sees
+ * Home's state on its host. It lives in server settings so every client sees
  * it with the settings it already streams, but clients cannot patch it: only
  * the Home RPCs and Home's own tools change it.
  */
@@ -74,9 +74,9 @@ export type HomeSettings = typeof HomeSettings.Type;
 export const DEFAULT_HOME_SETTINGS: HomeSettings = { threadId: null, watchAll: false, watches: [] };
 
 /**
- * Every Home thread's id starts with this, the current one and any a fresh
- * start left behind, so any client can label a message Home sent without
- * knowing which environment it came from.
+ * Every Home thread's id starts with this, the current one and any that
+ * turning Home off left behind, so any client can label a message Home sent
+ * without knowing which environment it came from.
  */
 export const HOME_THREAD_ID_PREFIX = "home:";
 
@@ -93,7 +93,7 @@ export const HOME_LAUNCHED_THREAD_ID_PREFIX = "home-launched:";
 export const isHomeLaunchedThreadId = (threadId: string): boolean =>
   threadId.startsWith(HOME_LAUNCHED_THREAD_ID_PREFIX);
 
-/** Watch reports T3 Code sends into Home's thread have message ids that start with this. */
+/** Messages T3 Code sends into Home's thread, such as watch reports, have ids that start with this. */
 export const HOME_REPORT_MESSAGE_ID_PREFIX = "home-report:";
 
 export const HomeEnableInput = Schema.Struct({ modelSelection: ModelSelection });
@@ -294,8 +294,8 @@ export const FleetRequest = Schema.Union([
 export type FleetRequest = typeof FleetRequest.Type;
 export type FleetOperation = FleetRequest["op"];
 
-/** The result schema of each operation. Results cross the wire untyped and are decoded with these. */
-export const FleetResults = {
+/** The result schema of each operation, which types what `FleetService` returns. */
+const FleetResults = {
   capabilities: FleetCapabilitiesResult,
   "projects.list": FleetProjectListResult,
   "threads.list": OrchestratorMcpThreadListResult,
@@ -312,36 +312,9 @@ export const FleetResults = {
 export type FleetResult<Op extends FleetOperation> = (typeof FleetResults)[Op]["Type"];
 export type FleetInput<Op extends FleetOperation> = Extract<FleetRequest, { op: Op }>["input"];
 
-/** Runs one fleet operation on the environment that receives it. */
+/** One operation Home runs on its own environment, with the user's reach. */
 export const FleetInvokeInput = Schema.Struct({ actor: FleetActor, request: FleetRequest });
 export type FleetInvokeInput = typeof FleetInvokeInput.Type;
-
-export const FleetEnvironment = Schema.Struct({
-  environmentId: EnvironmentId,
-  label: Schema.String,
-  connected: Schema.Boolean,
-});
-export type FleetEnvironment = typeof FleetEnvironment.Type;
-
-/** A desktop renderer offering to relay Home's calls to its connections. */
-export const FleetHostRegistration = Schema.Struct({
-  clientId: TrimmedNonEmptyString,
-  environments: Schema.Array(FleetEnvironment),
-});
-export type FleetHostRegistration = typeof FleetHostRegistration.Type;
-
-export const FleetHostRequest = Schema.Struct({
-  requestId: TrimmedNonEmptyString,
-  environmentId: EnvironmentId,
-  invoke: FleetInvokeInput,
-});
-export type FleetHostRequest = typeof FleetHostRequest.Type;
-
-export const FleetHostResponse = Schema.Union([
-  Schema.Struct({ requestId: TrimmedNonEmptyString, result: Schema.Unknown }),
-  Schema.Struct({ requestId: TrimmedNonEmptyString, failure: OrchestratorMcpFailure }),
-]);
-export type FleetHostResponse = typeof FleetHostResponse.Type;
 
 export const HomeWatchEventKind = Schema.Literals([
   "completed",
@@ -365,3 +338,67 @@ export type HomeWatchEvent = typeof HomeWatchEvent.Type;
 
 export const HomeWatchReport = Schema.Struct({ events: Schema.Array(HomeWatchEvent) });
 export type HomeWatchReport = typeof HomeWatchReport.Type;
+
+/** Where an agent's thread stands, from the agent's point of view. */
+export const AgentStatusKind = Schema.Literals(["running", "waiting", "failed", "finished"]);
+export type AgentStatusKind = typeof AgentStatusKind.Type;
+
+/** What a waiting thread needs, when that is known. */
+export const AgentAttention = Schema.NullOr(Schema.Literals(["question", "approval"]));
+export type AgentAttention = typeof AgentAttention.Type;
+
+/** A thread an agent started, as its status shows it. */
+export const AgentStatusChild = Schema.Struct({
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+  title: Schema.String,
+  link: Schema.String,
+  status: AgentStatusKind,
+  attention: AgentAttention,
+  completedAt: Schema.NullOr(IsoDateTime),
+  /** A one-line preview of its latest reply. */
+  latestReply: Schema.NullOr(Schema.String),
+});
+export type AgentStatusChild = typeof AgentStatusChild.Type;
+
+export const AgentStatusChildren = Schema.Struct({
+  running: Schema.Array(AgentStatusChild),
+  waiting: Schema.Array(AgentStatusChild),
+  /** Newest first, at most a few. */
+  failed: Schema.Array(AgentStatusChild),
+  /** Newest first, at most a few. */
+  recentlyFinished: Schema.Array(AgentStatusChild),
+});
+export type AgentStatusChildren = typeof AgentStatusChildren.Type;
+
+export const HomeStatusInput = Schema.Struct({ environmentId: environmentIdField });
+export type HomeStatusInput = typeof HomeStatusInput.Type;
+
+export const HomeStatusResult = Schema.Struct({
+  /** The environment that answered: where Home runs, when it is on. */
+  environmentId: EnvironmentId,
+  environmentLabel: Schema.String,
+  /** Null when Home is off here. */
+  agent: Schema.NullOr(
+    Schema.Struct({
+      threadId: ThreadId,
+      link: Schema.String,
+      status: OrchestrationV2ShellThreadStatus,
+      attention: AgentAttention,
+      latestReply: Schema.NullOr(Schema.String),
+      children: AgentStatusChildren,
+    }),
+  ),
+  note: Schema.optional(Schema.String),
+  /** Only when Home is off here: where else to ask. */
+  linkedEnvironments: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        environmentId: EnvironmentId,
+        label: Schema.String,
+        connected: Schema.Boolean,
+      }),
+    ),
+  ),
+});
+export type HomeStatusResult = typeof HomeStatusResult.Type;

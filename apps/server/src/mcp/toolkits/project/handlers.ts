@@ -197,7 +197,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           const modelSelection =
             input.modelSelection ?? (remote ? undefined : caller?.modelSelection);
           yield* watchLaunched(homeThreadId, targetEnvironmentId, threadId);
-          return yield* runAsHome(input.environmentId, "threads.launch", {
+          return yield* runAsHome("threads.launch", {
             threadId,
             ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
             ...(input.scratch === undefined ? {} : { scratch: input.scratch }),
@@ -404,7 +404,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
   ),
   t3_project_list: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
-      const routed = yield* routeHome(input.environmentId, "projects.list", input);
+      const routed = yield* routeHome("projects.list", input);
       if (Option.isSome(routed)) return routed.value;
       const projects = yield* access;
       // Identities are resolved: linked environments find this side's project by repository.

@@ -419,7 +419,6 @@ const linkedProbeServer = McpHttpServer.toolkitRegistration(
   ),
   Layer.provide(
     Layer.mock(HomeService.HomeService)({
-      available: true,
       isHome: (threadId) => Effect.succeed(threadId === homeThreadId),
     }),
   ),
@@ -451,8 +450,8 @@ it.effect.each([
   ],
   ["writes_environment", fullAccess, { environmentId: here }, "here"],
 
-  // Home reaches other environments through its own routing, never a peer link.
-  ["t3_thread_list", home, { environmentId: box }, "saw environmentId"],
+  // Home reaches linked environments over the link, but only with its routed tools.
+  ["t3_thread_list", home, { environmentId: box }, "t3_thread_list in environment-box"],
   ["t3_thread_list", supervised, { environmentId: box }, "t3_thread_list in environment-box"],
   ["reads", home, { environmentId: box }, "capability_denied"],
   ["reads", home, { environmentId: here }, "here"],

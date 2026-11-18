@@ -41,7 +41,8 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { readT3ProjectFile } from "../lib/t3ProjectFileDefaults";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentSummaries } from "../state/presentation";
-import { environmentServerConfigsAtom, primaryServerConfigAtom } from "../state/server";
+import { homeWorkspaceRootsAtom } from "../state/home";
+import { environmentServerConfigsAtom } from "../state/server";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { getClientSettings } from "./useSettings";
@@ -452,11 +453,7 @@ export function resolveDefaultProjectRef(
   lastUsedProjectKey: string | null,
   fallbackReady = true,
 ): ScopedProjectRef | null {
-  const primaryConfig = appAtomRegistry.get(primaryServerConfigAtom);
-  const home = {
-    primaryEnvironmentId: primaryConfig?.environment.environmentId ?? null,
-    homeWorkspaceRoot: primaryConfig?.homeWorkspaceRoot ?? null,
-  };
+  const home = appAtomRegistry.get(homeWorkspaceRootsAtom);
   const lastUsed = projects.filter(
     (project) =>
       project.archivedAt == null &&

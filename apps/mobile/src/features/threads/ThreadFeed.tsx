@@ -52,6 +52,7 @@ import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRunt
 import {
   AuthFilesystemReadScope,
   idleCompactionOf,
+  isHomeThreadId,
   type OrchestrationMessageContext,
   ThreadId,
   type ChatAttachment,
@@ -3904,7 +3905,11 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           info.item.message.projectedItem?.item.type === "user_message" &&
           info.item.message.projectedItem.item.freshContext ? (
             <ThreadContextDivider
-              label="New session"
+              label={
+                isHomeThreadId(props.threadId)
+                  ? "Context reset. Home doesn't remember anything above this line."
+                  : "New session"
+              }
               icon="arrow.clockwise"
               iconColor={iconSubtleColor}
             />

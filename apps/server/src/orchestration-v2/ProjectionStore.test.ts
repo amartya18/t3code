@@ -2791,10 +2791,15 @@ const messageOrdinalsReadThroughTheirIndex = Effect.gen(function* () {
       filter: { messageIds: [second.assistant, first.user] },
       loaded: [first.user, second.assistant],
     },
-    { filter: { messageRunIds: [RunId.make("run:first")] }, loaded: [first.user, first.assistant] },
+    {
+      filter: { messageRunIds: [RunId.make("run:first")] },
+      loaded: [first.user, first.assistant],
+      // Without it SQLite walks every message of the thread to find one run's.
+      messagesIndex: "orchestration_v2_projection_messages_run_idx",
+    },
     { filter: { messageRoles: ["user" as const] }, loaded: [first.user, second.user] },
   ];
-  for (const { filter, loaded } of narrowReads) {
+  for (const { filter, loaded, messagesIndex } of narrowReads) {
     const narrow = traceSqlStatements();
     const narrowed = yield* store
       .getThreadRecords(threadId, ["messages"], filter)
@@ -2807,6 +2812,17 @@ const messageOrdinalsReadThroughTheirIndex = Effect.gen(function* () {
       statement.includes("MIN(ordinal) AS ordinal"),
     );
     yield* assertReadsThroughMessageOrdinalIndex(bounded, ["thread_id=?", "<expr>=?"]);
+    if (messagesIndex !== undefined) {
+      const plan = yield* queryPlan(
+        narrow.statements.find((statement) =>
+          statement.includes("FROM orchestration_v2_projection_messages"),
+        ),
+      );
+      assert.isTrue(
+        plan.some((detail) => detail.includes(messagesIndex)),
+        plan.join("\n"),
+      );
+    }
   }
 });
 
