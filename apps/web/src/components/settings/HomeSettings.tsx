@@ -392,7 +392,7 @@ function HomeOnRows({ host }: { host: HomeHost }) {
       )}
       <SettingsRow
         title="Start fresh"
-        description="New Home thread. The current one stays as a normal thread."
+        description="Clears Home's memory of this chat. The history stays visible."
         control={
           <Button
             size="sm"

@@ -60,7 +60,8 @@ Home's `AGENTS.md` lives in its folder on the environment it runs on. When that
 is this device, **Settings → Home → Instructions** opens it. Add standing
 instructions below T3 Code's section. Home can also keep notes in its folder.
 
-**Start fresh** gives Home a new thread with the same model. The old thread
-stays in your history, and its notes and instructions carry over.
+**Start fresh** clears what Home remembers of its chat. It stays the same
+thread, and the history above stays visible, but Home no longer sees it. Its
+notes and instructions carry over.
 
 Turning Home off stops it from acting. Its thread stays in your history.

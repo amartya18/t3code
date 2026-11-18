@@ -596,9 +596,18 @@ function EnvironmentHandoffRow({
   return <HandoffRow {...props} environmentId={environmentId} providers={providers} />;
 }
 
-/** Marks where `/clear` or an automation started a new provider session in this thread. */
-export function FreshSessionRow() {
-  return <TimelineSystemDivider label="New session" icon={EraserIcon} />;
+/** Marks where `/clear`, an automation or Home's start fresh began a new provider session. */
+export function FreshSessionRow(props: { readonly home: boolean }) {
+  return (
+    <TimelineSystemDivider
+      label={
+        props.home
+          ? "Context reset. Home doesn't remember anything above this line."
+          : "New session"
+      }
+      icon={EraserIcon}
+    />
+  );
 }
 
 /** A same-harness model or effort change. Shows only what changed. */

@@ -177,12 +177,13 @@ it.effect("keeps a watch that ends in a batch until the batch is delivered", () 
   }).pipe(Effect.provide(layer));
 });
 
-it.effect("a Home thread that a fresh start replaced cannot change watches", () => {
+it.effect("a Home thread that was turned off cannot change the next Home's watches", () => {
   const { layer } = makeHome();
   return Effect.gen(function* () {
     const home = yield* HomeService.HomeService;
     const { threadId: old } = yield* home.enable({ modelSelection });
-    yield* home.startFresh;
+    yield* home.disable;
+    yield* home.enable({ modelSelection });
     const error = yield* home
       .updateWatches(old, (current) => ({ ...current, watchAll: true }))
       .pipe(Effect.flip);
@@ -224,18 +225,20 @@ it.effect("watching everything never wakes Home for its own thread", () => {
   }).pipe(Effect.provide(layer));
 });
 
-it.effect("starting fresh moves the grant to a new thread and settles the old one", () => {
-  const { layer, dispatched } = makeHome();
+it.effect("starting fresh stops Home's run and starts a new session in the same thread", () => {
+  const { layer, launched, dispatched, sent, running } = makeHome();
   return Effect.gen(function* () {
     const home = yield* HomeService.HomeService;
-    const first = yield* home.enable({ modelSelection });
+    const { threadId } = yield* home.enable({ modelSelection });
+    running.add(threadId);
     const fresh = yield* home.startFresh;
-    expect(fresh.threadId).not.toBe(first.threadId);
-    expect(yield* home.isHome(first.threadId)).toBe(false);
-    expect(yield* home.isHome(fresh.threadId)).toBe(true);
-    expect(dispatched).toMatchObject([
-      { type: "queue.hold", threadId: first.threadId },
-      { type: "thread.settle", threadId: first.threadId },
+    expect(fresh.threadId).toBe(threadId);
+    expect(yield* home.isHome(threadId)).toBe(true);
+    expect(launched).toHaveLength(1);
+    // A held queue would hold the fresh message too.
+    expect(dispatched).toMatchObject([{ type: "run.interrupt", threadId }]);
+    expect(sent).toMatchObject([
+      { threadId, mode: "queue", freshContext: true, createdBy: "system" },
     ]);
   }).pipe(Effect.provide(layer));
 });

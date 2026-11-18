@@ -73,9 +73,9 @@ export type HomeSettings = typeof HomeSettings.Type;
 export const DEFAULT_HOME_SETTINGS: HomeSettings = { threadId: null, watchAll: false, watches: [] };
 
 /**
- * Every Home thread's id starts with this, the current one and any a fresh
- * start left behind, so any client can label a message Home sent without
- * knowing which environment it came from.
+ * Every Home thread's id starts with this, the current one and any that
+ * turning Home off left behind, so any client can label a message Home sent
+ * without knowing which environment it came from.
  */
 export const HOME_THREAD_ID_PREFIX = "home:";
 
@@ -92,7 +92,7 @@ export const HOME_LAUNCHED_THREAD_ID_PREFIX = "home-launched:";
 export const isHomeLaunchedThreadId = (threadId: string): boolean =>
   threadId.startsWith(HOME_LAUNCHED_THREAD_ID_PREFIX);
 
-/** Watch reports T3 Code sends into Home's thread have message ids that start with this. */
+/** Messages T3 Code sends into Home's thread, such as watch reports, have ids that start with this. */
 export const HOME_REPORT_MESSAGE_ID_PREFIX = "home-report:";
 
 export const HomeEnableInput = Schema.Struct({ modelSelection: ModelSelection });

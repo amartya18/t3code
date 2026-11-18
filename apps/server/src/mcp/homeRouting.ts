@@ -81,8 +81,8 @@ export const runAsHome = Effect.fn("mcp.runAsHome")(function* <Op extends FleetO
   input: FleetInput<Op>,
 ) {
   const { scope } = CHANGES_STATE[op] ? yield* readHomeChangeCaller() : yield* readCaller();
-  // Checked again here, right before acting: Home may have been turned off or
-  // started fresh while the tool did earlier work.
+  // Checked again here, right before acting: Home may have been turned off
+  // while the tool did earlier work.
   if (scope.thread === undefined || !(yield* callerIsHome())) {
     return yield* new OrchestratorMcpFailure({
       code: "capability_denied",

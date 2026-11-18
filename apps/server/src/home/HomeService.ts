@@ -40,13 +40,13 @@ export class HomeService extends Context.Service<
     ) => Effect.Effect<HomeThreadResult, HomeUnavailableError>;
     /** Turns Home off. Its thread stays in history; its watches are dropped. */
     readonly disable: Effect.Effect<void, HomeUnavailableError>;
-    /** Points Home at a new thread with the same model and settles the old one. */
+    /** Stops Home's run and starts a new provider session in the same thread. */
     readonly startFresh: Effect.Effect<HomeThreadResult, HomeUnavailableError>;
     readonly isHome: (threadId: ThreadId) => Effect.Effect<boolean>;
     /**
      * Changes Home's watches for the Home thread `homeThreadId`. Fails when
-     * that thread is no longer Home, so a run that a fresh start replaced
-     * cannot change the new Home's watches.
+     * that thread is no longer Home, so a run of a Home that was turned off
+     * cannot change the next Home's watches.
      */
     readonly updateWatches: (
       homeThreadId: ThreadId,
@@ -91,6 +91,9 @@ const EVENT_LABELS: Record<Exclude<HomeWatchEvent["kind"], "ended">, string> = {
   question: "Asks a question",
   approval: "Needs approval",
 };
+
+const FRESH_START_MESSAGE =
+  "Context reset. You no longer see the messages above this point. Reread your instructions and notes, then reply in one short line that you're ready.";
 
 /** The text Home receives for one batch of watched events. */
 function formatWatchReport(events: ReadonlyArray<HomeWatchEvent>): string {
@@ -177,7 +180,7 @@ const make = Effect.gen(function* () {
       commandId: yield* commandId,
       threadId,
       runId: shell.activeRunId,
-      reason: "Home was turned off or started fresh.",
+      reason: "Home was turned off.",
     });
   });
 
@@ -241,21 +244,35 @@ const make = Effect.gen(function* () {
         const home = yield* readHome;
         const current = home.threadId === null ? null : yield* liveShell(home.threadId);
         if (current === null) return yield* fail("Turn Home on first.");
-        const threadId = yield* launchHome(current.modelSelection);
-        // The grant moves first; stopping the old run comes after.
-        yield* writeHome({ ...home, threadId });
-        yield* stopFormerHome(current.id).pipe(Effect.ignore);
-        // The old Home stays in history, out of the active list. Settling can
-        // fail while its interrupted run is still ending; it is then left active.
         const id = yield* crypto.uuidV4().pipe(Effect.orDie);
+        // No queue.hold: that would hold the fresh run too. The queued message
+        // starts once the interrupted run ends.
+        if (current.activeRunId !== null) {
+          yield* threads
+            .dispatch({
+              type: "run.interrupt",
+              commandId: CommandId.make(`home-fresh:${id}`),
+              threadId: current.id,
+              runId: current.activeRunId,
+              reason: "Home started fresh.",
+            })
+            .pipe(Effect.ignore);
+        }
         yield* threads
-          .dispatch({
-            type: "thread.settle",
-            commandId: CommandId.make(`home-settle:${id}`),
+          .sendToThread({
+            projectId: current.projectId,
+            commandId: CommandId.make(`${HOME_REPORT_MESSAGE_ID_PREFIX}${id}`),
             threadId: current.id,
+            messageId: MessageId.make(`${HOME_REPORT_MESSAGE_ID_PREFIX}${id}`),
+            text: FRESH_START_MESSAGE,
+            attachments: [],
+            mode: "queue",
+            freshContext: true,
+            createdBy: "system",
+            creationSource: "server",
           })
-          .pipe(Effect.ignore);
-        return { threadId };
+          .pipe(Effect.mapError(() => fail("Home could not start fresh.")));
+        return { threadId: current.id };
       }),
     ),
 
@@ -277,8 +294,8 @@ const make = Effect.gen(function* () {
       ),
     ),
 
-    // Under the lock, so turning Home off or starting fresh cannot slip in
-    // between choosing the Home thread and waking it.
+    // Under the lock, so turning Home off cannot slip in between choosing the
+    // Home thread and waking it.
     report: Effect.fn("HomeService.report")(({ events }) =>
       withLock(
         Effect.gen(function* () {

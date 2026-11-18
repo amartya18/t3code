@@ -15,10 +15,13 @@ guide: [Home](../user/home.md).
   settings stream. Clients cannot patch it: the WebSocket settings update drops
   `home`, and only the Home RPCs and Home's own tools write it.
 - The grant is "this thread is `home.threadId`", read on every MCP call in
-  `mcp/homeRouting.ts`. Turning Home off or starting fresh revokes the old
-  thread's reach at once, then holds its queue (`queue.hold`, under the
-  orchestrator's thread lock) and interrupts its active run. Fleet operations
-  check the grant again right before they act. No credential carries it.
+  `mcp/homeRouting.ts`. Turning Home off revokes the old thread's reach at
+  once, then holds its queue (`queue.hold`, under the orchestrator's thread
+  lock) and interrupts its active run. Fleet operations check the grant again
+  right before they act. No credential carries it.
+- Start fresh keeps the thread and its grant. It interrupts the active run and
+  queues a `freshContext` message, which starts a new provider session. It
+  never holds the queue, since that would hold the fresh message too.
 - Home threads are always full-access. The MCP mode check stops a caller from
   acting on a thread broader than itself, and approvals need the widest mode.
   Every change Home makes is checked with `readHomeChangeCaller`: a live Home
