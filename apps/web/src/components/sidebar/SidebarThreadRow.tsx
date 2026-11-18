@@ -583,6 +583,7 @@ type SidebarThreadRowProps = {
   timestampFormat: TimestampFormat;
   onThreadClick: (event: ReactMouseEvent, threadRef: ScopedThreadRef) => void;
   onThreadActivate: (threadRef: ScopedThreadRef) => void;
+  onThreadOpen: (threadRef: ScopedThreadRef) => void;
   onStartRename: (threadRef: ScopedThreadRef, title: string) => void;
   onRenameTitleChange: (title: string) => void;
   onCommitRename: (threadRef: ScopedThreadRef, title: string) => void;
@@ -663,6 +664,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     onSnooze,
     onStartRename,
     onThreadActivate,
+    onThreadOpen,
     onThreadClick,
     onUnsettle,
     onUnsnooze,
@@ -882,7 +884,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     }
     if (event.key !== "Enter" && event.key !== " ") return;
     event.preventDefault();
-    onThreadActivate(threadRef);
+    onThreadOpen(threadRef);
   };
   const handleDoubleClick = (event: ReactMouseEvent) => {
     if (

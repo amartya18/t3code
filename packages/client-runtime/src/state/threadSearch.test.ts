@@ -14,6 +14,7 @@ import {
   claimThreadOpen,
   nextShownOrder,
   createThreadSearchResultsAtomFamily,
+  resolveThreadRowOpenTarget,
   makeThreadSearchKey,
   threadSearchMatchKey,
   threadSearchSubject,
@@ -246,4 +247,40 @@ it("sends one open per thread every ten minutes by this client's clock", () => {
   expect(claimThreadOpen(envA, "thread-open", 9 * minute)).toBe(false);
   expect(claimThreadOpen(envB, "thread-open", 9 * minute)).toBe(true);
   expect(claimThreadOpen(envA, "thread-open", 10 * minute)).toBe(true);
+});
+
+it("opens a thread's row on whichever of it and its subagents was opened last", () => {
+  type Thread = Parameters<typeof resolveThreadRowOpenTarget>[1][number];
+  const shell = (id: string, parentId: string | null, openedAt?: number): Thread => ({
+    environmentId: envA,
+    id: ThreadId.make(id),
+    lineage:
+      parentId === null
+        ? { rootThreadId: ThreadId.make(id), parentThreadId: null, relationshipToParent: null }
+        : {
+            rootThreadId: ThreadId.make(parentId),
+            parentThreadId: ThreadId.make(parentId),
+            relationshipToParent: "subagent",
+          },
+    delegatedFrom: null,
+    archivedAt: null,
+    opens: openedAt === undefined ? null : { openedAt, score: 1, picks: [] },
+  });
+  const ref = (id: string) => ({ environmentId: envA, threadId: ThreadId.make(id) });
+  const threads = [
+    shell("row-parent", null),
+    shell("row-subagent", "row-parent"),
+    shell("row-nested", "row-subagent", 2_500),
+    shell("row-other", null),
+  ];
+
+  claimThreadOpen(envA, "row-parent", 1_000);
+  claimThreadOpen(envA, "row-subagent", 2_000);
+  claimThreadOpen(envA, "row-other", 9_000);
+  // Only the server recorded the nested subagent's open.
+  expect(resolveThreadRowOpenTarget(ref("row-parent"), threads)).toEqual(ref("row-nested"));
+  claimThreadOpen(envA, "row-subagent", 3_000);
+  expect(resolveThreadRowOpenTarget(ref("row-parent"), threads)).toEqual(ref("row-subagent"));
+  claimThreadOpen(envA, "row-parent", 4_000);
+  expect(resolveThreadRowOpenTarget(ref("row-parent"), threads)).toEqual(ref("row-parent"));
 });

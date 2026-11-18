@@ -37,6 +37,7 @@ import {
 import { sortSettledThreads } from "@t3tools/client-runtime/state/thread-sort";
 import {
   nextShownOrder,
+  resolveThreadRowOpenTarget,
   threadSearchMatchKey,
   threadSearchSubject,
   type ShownOrder,
@@ -1599,6 +1600,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     });
   };
 
+  // The highlighted row stands for an open subagent too, so clicking it goes back to its own thread.
+  const openThreadRow = useStableCallback((threadRef: ScopedThreadRef) =>
+    navigateToThread(
+      scopedThreadKey(threadRef) === routeRowThreadKey
+        ? threadRef
+        : resolveThreadRowOpenTarget(threadRef, threads),
+    ),
+  );
+
   const handleThreadFileDrop = async (threadRef: ScopedThreadRef, files: File[]) => {
     const dropId = queuePendingFileDrop({ threadRef, files });
     const landedBefore =
@@ -1725,7 +1735,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     if (isTrailingDoubleClick(event.detail)) {
       return;
     }
-    navigateToThread(threadRef);
+    openThreadRow(threadRef);
   };
 
   // Snapshot navigation before partition mutation; background parks use a null plan.
@@ -3043,7 +3053,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         if (!targetThread) return false;
         event.preventDefault();
         event.stopPropagation();
-        navigateToThread(scopeThreadRef(targetThread.environmentId, targetThread.id));
+        openThreadRow(scopeThreadRef(targetThread.environmentId, targetThread.id));
         return true;
       };
       const traversalDirection = threadTraversalDirectionFromCommand(command);
@@ -3065,7 +3075,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     return () => window.removeEventListener("keydown", onWindowKeyDown);
   }, [
     keybindings,
-    navigateToThread,
+    openThreadRow,
     orderedThreadKeys,
     routeRowThreadKey,
     routeThreadRef,
@@ -3600,6 +3610,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             timestampFormat={timestampFormat}
                             onThreadClick={handleThreadClick}
                             onThreadActivate={navigateToThread}
+                            onThreadOpen={openThreadRow}
                             onStartRename={startThreadRename}
                             onRenameTitleChange={setRenamingTitle}
                             onCommitRename={commitThreadRename}
