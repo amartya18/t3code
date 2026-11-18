@@ -24,7 +24,7 @@ const handlers = {
       if (input.environmentId === undefined || input.environmentId === scope.environmentId) {
         return local;
       }
-      const remote = yield* routeHome(input.environmentId, "capabilities", input);
+      const remote = yield* routeHome("capabilities", input);
       return Option.match(remote, {
         onNone: () => local,
         onSome: ({ providers }) => ({ ...local, providers }),
@@ -169,7 +169,7 @@ const handlers = {
   ),
   t3_thread_list: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
-      const routed = yield* routeHome(input.environmentId, "threads.list", input);
+      const routed = yield* routeHome("threads.list", input);
       if (Option.isSome(routed)) return routed.value;
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
@@ -178,7 +178,7 @@ const handlers = {
   ),
   t3_thread_read: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
-      const routed = yield* routeHome(input.environmentId, "threads.read", input);
+      const routed = yield* routeHome("threads.read", input);
       if (Option.isSome(routed)) return routed.value;
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
@@ -192,7 +192,7 @@ const handlers = {
         const scope = yield* McpInvocationContext.McpInvocationContext;
         const threadId = input.threadId ?? scope.thread?.threadId;
         if (input.action === "rename" && input.title !== undefined && threadId !== undefined) {
-          const routed = yield* routeHome(input.environmentId, "threads.rename", {
+          const routed = yield* routeHome("threads.rename", {
             threadId,
             title: input.title,
             ...(input.clientRequestId === undefined
@@ -226,7 +226,7 @@ const handlers = {
     // There the thread's parent is here, so only this side can make a follow-up a task.
     (input, environmentId, sent) =>
       Effect.gen(function* () {
-        const routed = yield* routeHome(input.environmentId, "threads.send", input);
+        const routed = yield* routeHome("threads.send", input);
         if (Option.isSome(routed)) return routed.value;
         const scope = yield* McpInvocationContext.McpInvocationContext;
         const remote = yield* RemoteDelegation.RemoteDelegation;
@@ -274,7 +274,7 @@ const handlers = {
     (input) => [input.threadId],
     (input) =>
       Effect.gen(function* () {
-        const routed = yield* routeHome(input.environmentId, "threads.interrupt", input);
+        const routed = yield* routeHome("threads.interrupt", input);
         if (Option.isSome(routed)) return routed.value;
         const scope = yield* McpInvocationContext.McpInvocationContext;
         const service = yield* OrchestratorMcpService.OrchestratorMcpService;

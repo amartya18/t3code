@@ -45,8 +45,9 @@ const makeHome = () => {
     Layer.provideMerge(
       Layer.mergeAll(
         NodeCrypto.layer,
+        // A headless server hosts Home as well as the desktop app's own.
         Layer.succeed(ServerConfig.ServerConfig, {
-          mode: "desktop",
+          mode: "web",
         } as ServerConfig.ServerConfig["Service"]),
         ServerSettings.layerTest(),
         Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({

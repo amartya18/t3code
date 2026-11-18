@@ -1,5 +1,5 @@
 /**
- * Owns the one Home thread on a desktop-hosted server.
+ * Owns the Home thread on the environment that hosts it.
  * Grant is `home.threadId` in settings, read on every call.
  */
 import {
@@ -26,7 +26,6 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Semaphore from "effect/Semaphore";
 
-import * as ServerConfig from "../config.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
@@ -35,8 +34,6 @@ import * as ServerSettings from "../serverSettings.ts";
 export class HomeService extends Context.Service<
   HomeService,
   {
-    /** Only a server the desktop app hosts can run Home. */
-    readonly available: boolean;
     /** Starts Home, or returns the running one. */
     readonly enable: (
       input: HomeEnableInput,
@@ -109,19 +106,13 @@ function formatWatchReport(events: ReadonlyArray<HomeWatchEvent>): string {
 }
 
 const make = Effect.gen(function* () {
-  const config = yield* ServerConfig.ServerConfig;
   const settings = yield* ServerSettings.ServerSettingsService;
   const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
   const threads = yield* ThreadManagementService.ThreadManagementService;
   const launches = yield* ThreadLaunchService.ThreadLaunchService;
   const crypto = yield* SecureRandom.SecureRandom;
   const lock = yield* Semaphore.make(1);
-  const available = config.mode === "desktop";
-
   const fail = (message: string) => new HomeUnavailableError({ message });
-  const requireAvailable = available
-    ? Effect.void
-    : Effect.fail(fail("Home runs only on a server the T3 Code desktop app hosts."));
 
   const readHome = settings.getSettings.pipe(
     Effect.map((current) => current.home),
@@ -192,7 +183,7 @@ const make = Effect.gen(function* () {
 
   // Home's instructions follow the app version, so an update reaches the
   // current Home in its next provider session, not only after a fresh start.
-  if (available && (yield* readHome.pipe(Effect.orElseSucceed(() => null)))?.threadId != null) {
+  if ((yield* readHome.pipe(Effect.orElseSucceed(() => null)))?.threadId != null) {
     yield* folders.ensureHomeProject.pipe(Effect.ignore);
   }
 
@@ -223,12 +214,9 @@ const make = Effect.gen(function* () {
   });
 
   return HomeService.of({
-    available,
-
     enable: Effect.fn("HomeService.enable")((input) =>
       withLock(
         Effect.gen(function* () {
-          yield* requireAvailable;
           const home = yield* readHome;
           if (home.threadId !== null && (yield* liveShell(home.threadId)) !== null) {
             return { threadId: home.threadId };
@@ -242,7 +230,6 @@ const make = Effect.gen(function* () {
 
     disable: withLock(
       Effect.gen(function* () {
-        yield* requireAvailable;
         const { threadId } = yield* readHome;
         yield* writeHome(DEFAULT_HOME_SETTINGS);
         if (threadId !== null) yield* stopFormerHome(threadId).pipe(Effect.ignore);
@@ -251,7 +238,6 @@ const make = Effect.gen(function* () {
 
     startFresh: withLock(
       Effect.gen(function* () {
-        yield* requireAvailable;
         const home = yield* readHome;
         const current = home.threadId === null ? null : yield* liveShell(home.threadId);
         if (current === null) return yield* fail("Turn Home on first.");
@@ -274,12 +260,10 @@ const make = Effect.gen(function* () {
     ),
 
     isHome: Effect.fn("HomeService.isHome")((threadId) =>
-      available
-        ? readHome.pipe(
-            Effect.map((home) => home.threadId === threadId),
-            Effect.orElseSucceed(() => false),
-          )
-        : Effect.succeed(false),
+      readHome.pipe(
+        Effect.map((home) => home.threadId === threadId),
+        Effect.orElseSucceed(() => false),
+      ),
     ),
 
     updateWatches: Effect.fn("HomeService.updateWatches")((homeThreadId, update) =>

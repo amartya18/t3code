@@ -14,6 +14,7 @@ import {
 } from "./chatThreadActions";
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
+const REMOTE_ENVIRONMENT_ID = EnvironmentId.make("environment-2");
 const PROJECT_ID = ProjectId.make("project-1");
 const FALLBACK_PROJECT_ID = ProjectId.make("project-2");
 
@@ -66,11 +67,19 @@ describe("chatThreadActions", () => {
       id: FALLBACK_PROJECT_ID,
       workspaceRoot: "/code/app",
     };
-    const options = { primaryEnvironmentId: ENVIRONMENT_ID, homeWorkspaceRoot: "/data/home" };
-    expect(defaultNewThreadProjectRef([home, app], options)).toEqual(
+    const roots = new Map([[ENVIRONMENT_ID, "/data/home"]]);
+    expect(defaultNewThreadProjectRef([home, app], roots)).toEqual(
       scopeProjectRef(ENVIRONMENT_ID, FALLBACK_PROJECT_ID),
     );
-    expect(defaultNewThreadProjectRef([home], options)).toBeNull();
+    expect(defaultNewThreadProjectRef([home], roots)).toBeNull();
+    // Home can live on any environment, not only the primary one.
+    const remoteHome = { ...home, environmentId: REMOTE_ENVIRONMENT_ID };
+    expect(
+      defaultNewThreadProjectRef(
+        [remoteHome, app],
+        new Map([[REMOTE_ENVIRONMENT_ID, "/data/home"]]),
+      ),
+    ).toEqual(scopeProjectRef(ENVIRONMENT_ID, FALLBACK_PROJECT_ID));
   });
 
   it("never starts a new thread in Home's folder from Home's draft before its shell loads", () => {

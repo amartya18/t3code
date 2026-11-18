@@ -134,8 +134,8 @@ vi.mock("../rpc/atomRegistry", () => ({
     get: (atom: unknown) =>
       atom === "connected-environment-ids"
         ? testState.connectedEnvironmentIds
-        : atom === "primary-config"
-          ? null
+        : atom === "home-workspace-roots"
+          ? new Map()
           : testServerConfigs(),
   },
 }));
@@ -242,9 +242,9 @@ vi.mock("../state/presentation", () => ({
 }));
 vi.mock("../state/server", () => ({
   environmentServerConfigsAtom: {},
-  primaryServerConfigAtom: "primary-config",
   primaryServerSettingsAtom: "primary-settings",
 }));
+vi.mock("../state/home", () => ({ homeWorkspaceRootsAtom: "home-workspace-roots" }));
 vi.mock("../threadRoutes", () => ({
   resolveThreadRouteTarget: () => testState.openDraftRoute,
 }));

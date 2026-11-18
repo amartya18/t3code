@@ -460,11 +460,9 @@ const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record
         const scope = yield* McpInvocationContext.McpInvocationContext;
         const target = PeerForwarding.remoteTarget(scope, environmentId);
         if (target === undefined) return yield* here(params);
-        // Home reaches other environments through its desktop relay, never a peer link.
-        if (yield* callerIsHome(scope)) {
-          if (!HOME_ROUTED_TOOLS.has(name)) return yield* homeStaysHere;
-          return yield* here({ ...params, environmentId });
-        }
+        // Home's no-delete rule holds over links too: only its routed tools leave here.
+        if (!HOME_ROUTED_TOOLS.has(name) && (yield* callerIsHome(scope)))
+          return yield* homeStaysHere;
         if (scope.linkedEnvironments === false) return yield* PeerForwarding.linkedEnvironmentsOff;
         yield* (remote as RemoteCheck<typeof params>)(params);
         if (Option.isNone(forwarding)) return yield* linksUnavailable;

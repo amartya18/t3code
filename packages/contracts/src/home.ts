@@ -1,6 +1,6 @@
 /**
- * One Home thread per desktop install, acting across connected environments.
- * Hub owns state; other environments go through fleet.invoke.
+ * One Home thread per user, hosted by whichever environment has it on. It acts
+ * here directly and reaches the host's linked environments like any thread.
  */
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -20,7 +20,6 @@ import {
   OrchestratorMcpClientRequestId,
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpProviderCapability,
-  OrchestratorMcpFailure,
   OrchestratorMcpThreadInterruptInput,
   OrchestratorMcpThreadInterruptResult,
   OrchestratorMcpThreadListInput,
@@ -58,7 +57,7 @@ export const HomeWatch = Schema.Struct({
 export type HomeWatch = typeof HomeWatch.Type;
 
 /**
- * Home's state on the hub. It lives in server settings so every client sees
+ * Home's state on its host. It lives in server settings so every client sees
  * it with the settings it already streams, but clients cannot patch it: only
  * the Home RPCs and Home's own tools change it.
  */
@@ -294,8 +293,8 @@ export const FleetRequest = Schema.Union([
 export type FleetRequest = typeof FleetRequest.Type;
 export type FleetOperation = FleetRequest["op"];
 
-/** The result schema of each operation. Results cross the wire untyped and are decoded with these. */
-export const FleetResults = {
+/** The result schema of each operation, which types what `FleetService` returns. */
+const FleetResults = {
   capabilities: FleetCapabilitiesResult,
   "projects.list": FleetProjectListResult,
   "threads.list": OrchestratorMcpThreadListResult,
@@ -312,36 +311,9 @@ export const FleetResults = {
 export type FleetResult<Op extends FleetOperation> = (typeof FleetResults)[Op]["Type"];
 export type FleetInput<Op extends FleetOperation> = Extract<FleetRequest, { op: Op }>["input"];
 
-/** Runs one fleet operation on the environment that receives it. */
+/** One operation Home runs on its own environment, with the user's reach. */
 export const FleetInvokeInput = Schema.Struct({ actor: FleetActor, request: FleetRequest });
 export type FleetInvokeInput = typeof FleetInvokeInput.Type;
-
-export const FleetEnvironment = Schema.Struct({
-  environmentId: EnvironmentId,
-  label: Schema.String,
-  connected: Schema.Boolean,
-});
-export type FleetEnvironment = typeof FleetEnvironment.Type;
-
-/** A desktop renderer offering to relay Home's calls to its connections. */
-export const FleetHostRegistration = Schema.Struct({
-  clientId: TrimmedNonEmptyString,
-  environments: Schema.Array(FleetEnvironment),
-});
-export type FleetHostRegistration = typeof FleetHostRegistration.Type;
-
-export const FleetHostRequest = Schema.Struct({
-  requestId: TrimmedNonEmptyString,
-  environmentId: EnvironmentId,
-  invoke: FleetInvokeInput,
-});
-export type FleetHostRequest = typeof FleetHostRequest.Type;
-
-export const FleetHostResponse = Schema.Union([
-  Schema.Struct({ requestId: TrimmedNonEmptyString, result: Schema.Unknown }),
-  Schema.Struct({ requestId: TrimmedNonEmptyString, failure: OrchestratorMcpFailure }),
-]);
-export type FleetHostResponse = typeof FleetHostResponse.Type;
 
 export const HomeWatchEventKind = Schema.Literals([
   "completed",

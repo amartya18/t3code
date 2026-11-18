@@ -1,5 +1,4 @@
 import {
-  type EnvironmentId,
   type FleetInput,
   type FleetOperation,
   type FleetRequest,
@@ -9,7 +8,6 @@ import {
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import * as FleetBroker from "../home/FleetBroker.ts";
 import * as FleetService from "../home/FleetService.ts";
 import * as HomeService from "../home/HomeService.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
@@ -19,7 +17,6 @@ import { assertFullAccess, readCaller } from "./threadAccess.ts";
 export const homeRoutingDependencies = [
   HomeService.HomeService,
   FleetService.FleetService,
-  FleetBroker.FleetBroker,
 ] as const;
 
 /**
@@ -35,8 +32,8 @@ export const callerIsHome = Effect.fn("mcp.callerIsHome")(function* () {
 });
 
 /**
- * Tools whose handler routes Home's `environmentId` itself. Home names another
- * environment only through these; its other tools stay on its own environment.
+ * Tools Home may run in a linked environment. They go over the link like any
+ * thread's call; its other tools, such as deletes, stay on its own environment.
  */
 export const HOME_ROUTED_TOOLS: ReadonlySet<string> = new Set([
   "orchestrator_capabilities",
@@ -48,7 +45,6 @@ export const HOME_ROUTED_TOOLS: ReadonlySet<string> = new Set([
   "t3_thread_interrupt",
   "t3_thread_organize",
   "t3_thread_update",
-  "t3_thread_watch",
   "t3_pending_request",
 ]);
 
@@ -79,9 +75,8 @@ export const readHomeChangeCaller = Effect.fn("mcp.readHomeChangeCaller")(functi
   return context;
 });
 
-/** Runs a fleet operation as Home, here or in the environment it names. */
+/** Runs a fleet operation as Home on its own environment. */
 export const runAsHome = Effect.fn("mcp.runAsHome")(function* <Op extends FleetOperation>(
-  environmentId: EnvironmentId | undefined,
   op: Op,
   input: FleetInput<Op>,
 ) {
@@ -94,38 +89,22 @@ export const runAsHome = Effect.fn("mcp.runAsHome")(function* <Op extends FleetO
       message: "Only Home can act with the user's reach.",
     });
   }
-  const invoke = {
+  const result = yield* (yield* FleetService.FleetService).execute({
     actor: { environmentId: scope.environmentId, threadId: scope.thread.threadId },
     // The pairing of op and input is what FleetInput<Op> guarantees.
     request: { op, input } as FleetRequest,
-  };
-  const result =
-    environmentId === undefined || environmentId === scope.environmentId
-      ? yield* (yield* FleetService.FleetService).execute(invoke)
-      : yield* (yield* FleetBroker.FleetBroker).invoke(environmentId, invoke);
-  // Local results come from the typed handlers; remote ones are decoded per op.
+  });
   return result as FleetResult<Op>;
 });
 
 /**
- * Routes a tool call from Home to the environment it names, with Home's reach
- * over every project. Returns None for any other caller, which keeps its
- * calling-project reach and may only name its own environment.
+ * Runs a tool call from Home with its reach over every project here. Returns
+ * None for any other caller, which keeps its calling-project reach.
  */
 export const routeHome = Effect.fn("mcp.routeHome")(function* <Op extends FleetOperation>(
-  environmentId: EnvironmentId | undefined,
   op: Op,
   input: FleetInput<Op>,
 ) {
-  if (yield* callerIsHome()) {
-    return Option.some(yield* runAsHome(environmentId, op, input));
-  }
-  const scope = yield* McpInvocationContext.McpInvocationContext;
-  if (environmentId !== undefined && environmentId !== scope.environmentId) {
-    return yield* new OrchestratorMcpFailure({
-      code: "capability_denied",
-      message: "Only Home can act in another environment.",
-    });
-  }
+  if (yield* callerIsHome()) return Option.some(yield* runAsHome(op, input));
   return Option.none<FleetResult<Op>>();
 });

@@ -84,21 +84,16 @@ export function defaultNewThreadProjectRef(
     readonly id: ProjectId;
     readonly workspaceRoot: string;
   }>,
-  home: {
-    readonly primaryEnvironmentId: EnvironmentId | null;
-    readonly homeWorkspaceRoot: string | null;
-  },
+  homeWorkspaceRoots: ReadonlyMap<EnvironmentId, string>,
 ): ScopedProjectRef | null {
-  const homeRoot =
-    home.homeWorkspaceRoot === null
-      ? ""
-      : normalizeProjectPathForComparison(home.homeWorkspaceRoot);
-  const project = projects.find(
-    (candidate) =>
-      homeRoot.length === 0 ||
-      candidate.environmentId !== home.primaryEnvironmentId ||
-      normalizeProjectPathForComparison(candidate.workspaceRoot) !== homeRoot,
-  );
+  const project = projects.find((candidate) => {
+    const homeRoot = homeWorkspaceRoots.get(candidate.environmentId);
+    return (
+      homeRoot === undefined ||
+      normalizeProjectPathForComparison(candidate.workspaceRoot) !==
+        normalizeProjectPathForComparison(homeRoot)
+    );
+  });
   return project ? scopeProjectRef(project.environmentId, project.id) : null;
 }
 

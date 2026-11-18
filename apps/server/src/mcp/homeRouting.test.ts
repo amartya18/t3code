@@ -10,7 +10,6 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
-import * as FleetBroker from "../home/FleetBroker.ts";
 import * as FleetService from "../home/FleetService.ts";
 import * as HomeService from "../home/HomeService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
@@ -20,7 +19,6 @@ import * as McpToolAccess from "./McpToolAccess.ts";
 import { HomeHandlersLive } from "./toolkits/home/handlers.ts";
 
 const hub = EnvironmentId.make("hub");
-const studio = EnvironmentId.make("studio");
 const callerId = ThreadId.make("caller");
 const target = ThreadId.make("target");
 const result = { requestIds: [] };
@@ -37,7 +35,6 @@ const liveCaller = {
 
 const setup = (isHome: boolean, caller: Partial<typeof liveCaller> = {}) => {
   const local: Array<FleetInvokeInput> = [];
-  const remote: Array<[EnvironmentId, FleetInvokeInput]> = [];
   const layer = Layer.mergeAll(
     Layer.succeed(McpInvocationContext.McpInvocationContext, {
       environmentId: hub,
@@ -55,60 +52,48 @@ const setup = (isHome: boolean, caller: Partial<typeof liveCaller> = {}) => {
       getThreadShell: () =>
         Effect.succeed({ ...liveCaller, ...caller } as unknown as OrchestrationV2ThreadShell),
     }),
-    Layer.mock(HomeService.HomeService)({ available: true, isHome: () => Effect.succeed(isHome) }),
+    Layer.mock(HomeService.HomeService)({ isHome: () => Effect.succeed(isHome) }),
     Layer.mock(FleetService.FleetService)({
       execute: (input) => {
         local.push(input);
         return Effect.succeed(result);
       },
     }),
-    Layer.mock(FleetBroker.FleetBroker)({
-      invoke: (environmentId, input) => {
-        remote.push([environmentId, input]);
-        return Effect.succeed(result);
-      },
-    }),
   );
-  return { layer, local, remote };
+  return { layer, local };
 };
 
-it.effect("keeps other threads in their own environment", () => {
-  const { layer, local, remote } = setup(false);
+it.effect("leaves other threads to their own handlers", () => {
+  const { layer, local } = setup(false);
   return Effect.gen(function* () {
-    const error = yield* routeHome(studio, "requests.list", { threadId: target }).pipe(Effect.flip);
-    expect(error.code).toBe("capability_denied");
-    expect(Option.isNone(yield* routeHome(hub, "requests.list", { threadId: target }))).toBe(true);
+    expect(Option.isNone(yield* routeHome("requests.list", { threadId: target }))).toBe(true);
     expect(local).toHaveLength(0);
-    expect(remote).toHaveLength(0);
   }).pipe(Effect.provide(layer));
 });
 
-it.effect("runs Home's calls here or relays them to the environment it names", () => {
-  const { layer, local, remote } = setup(true);
+it.effect("runs Home's calls here as Home", () => {
+  const { layer, local } = setup(true);
   return Effect.gen(function* () {
-    yield* routeHome(undefined, "requests.list", { threadId: target });
-    yield* routeHome(studio, "requests.list", { threadId: target });
-    const actor = { environmentId: hub, threadId: callerId };
+    yield* routeHome("requests.list", { threadId: target });
     expect(local).toEqual([
-      { actor, request: { op: "requests.list", input: { threadId: target } } },
-    ]);
-    expect(remote).toEqual([
-      [studio, { actor, request: { op: "requests.list", input: { threadId: target } } }],
+      {
+        actor: { environmentId: hub, threadId: callerId },
+        request: { op: "requests.list", input: { threadId: target } },
+      },
     ]);
   }).pipe(Effect.provide(layer));
 });
 
 it.effect("lets Home read but not change anything outside full-access/default mode", () => {
-  const { layer, local, remote } = setup(true, { interactionMode: "plan" });
+  const { layer, local } = setup(true, { interactionMode: "plan" });
   return Effect.gen(function* () {
-    yield* routeHome(undefined, "requests.list", { threadId: target });
-    const error = yield* routeHome(studio, "threads.send", {
+    yield* routeHome("requests.list", { threadId: target });
+    const error = yield* routeHome("threads.send", {
       threadId: target,
       message: "Ship it.",
     }).pipe(Effect.flip);
     expect(error.code).toBe("capability_denied");
     expect(local).toHaveLength(1);
-    expect(remote).toHaveLength(0);
   }).pipe(Effect.provide(layer));
 });
 

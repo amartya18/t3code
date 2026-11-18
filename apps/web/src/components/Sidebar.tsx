@@ -147,11 +147,14 @@ import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
 import {
+  useEnvironment,
   useEnvironmentIdentities,
   useConnectedEnvironmentIds,
   useEnvironmentMachines,
   usePrimaryEnvironmentId,
 } from "../state/environments";
+import { homeWorkspaceRootsAtom, isProjectInHomeFolder, userHomeAtom } from "../state/home";
+import { userHomeThreadRef } from "@t3tools/client-runtime/state/home";
 import {
   readThreadShell,
   useAllEnvironmentProjectSnapshotsReady,
@@ -162,11 +165,7 @@ import {
   useThreadShell,
 } from "../state/entities";
 import { environmentPresentations } from "../state/presentation";
-import {
-  primaryServerConfigAtom,
-  primaryServerKeybindingsAtom,
-  primaryServerSettingsAtom,
-} from "../state/server";
+import { primaryServerKeybindingsAtom } from "../state/server";
 import { environmentProjects } from "../state/projects";
 import { threadEnvironment } from "../state/threads";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../state/olderSettledShelf";
@@ -182,7 +181,7 @@ import {
   resolveThreadRouteTarget,
 } from "../threadRoutes";
 import type { SidebarThreadSummary } from "../types";
-import { isHomeProject, isScratchProject } from "@t3tools/client-runtime/state/projects";
+import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { cn } from "~/lib/utils";
 import { ProjectEnvironmentBadge } from "./ProjectEnvironmentBadge";
 import { ProjectRowActions } from "./ProjectComboboxRow";
@@ -858,22 +857,15 @@ function useSidebarLookups() {
   const projectGroupByScopeKey = new Map(
     projectGroups.map((project) => [project.projectKey, project] as const),
   );
-  const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const homeWorkspaceRoot = useAtomValue(
-    primaryServerConfigAtom,
-    (config) => config?.homeWorkspaceRoot ?? null,
-  );
+  const homeWorkspaceRoots = useAtomValue(homeWorkspaceRootsAtom);
   const projectScopeItems = [
     { value: "all", label: "All projects" },
     // Home's folder is not a project to scope to.
     ...pickableProjectGroups(projectGroups)
       .filter(
         (project) =>
-          homeWorkspaceRoot === null ||
-          !project.memberProjects.some(
-            (member) =>
-              member.environmentId === primaryEnvironmentId &&
-              isHomeProject(member, homeWorkspaceRoot),
+          !project.memberProjects.some((member) =>
+            isProjectInHomeFolder(homeWorkspaceRoots, member),
           ),
       )
       .map((project) => ({
@@ -919,11 +911,19 @@ const HOME_ROW_STATUS: Record<
  */
 function SidebarHomeRow(props: {
   threadRef: ScopedThreadRef;
+  onAnotherEnvironment: boolean;
+  inTwoPlaces: boolean;
   isActive: boolean;
   onActivate: (threadRef: ScopedThreadRef) => void;
 }) {
   const { isActive, onActivate, threadRef } = props;
   const thread = useThreadShell(threadRef);
+  const environmentLabel = useEnvironment(threadRef.environmentId)?.label ?? null;
+  const placeLabel = props.inTwoPlaces
+    ? "On in 2 places"
+    : props.onAnotherEnvironment
+      ? environmentLabel
+      : null;
   const localLastVisitedAt = useUiStateStore(
     (state) => state.threadLastVisitedAtById[scopedThreadKey(threadRef)],
   );
@@ -943,7 +943,9 @@ function SidebarHomeRow(props: {
         role="treeitem"
         tabIndex={-1}
         data-sidebar-row="home"
-        aria-label={topStatus ? `Home, ${topStatus.label}` : "Home"}
+        aria-label={["Home", placeLabel, topStatus?.label]
+          .filter((part) => part != null)
+          .join(", ")}
         aria-current={isActive ? "page" : undefined}
         data-testid="sidebar-home-row"
         className={cn(
@@ -961,6 +963,16 @@ function SidebarHomeRow(props: {
       >
         <HouseIcon aria-hidden className="size-4 shrink-0" />
         <span className="min-w-0 flex-1 truncate">Home</span>
+        {placeLabel === null ? null : (
+          <span
+            className={cn(
+              "min-w-0 max-w-[45%] shrink truncate text-xs font-normal",
+              props.inTwoPlaces ? "text-warning" : "text-muted-foreground",
+            )}
+          >
+            {placeLabel}
+          </span>
+        )}
         {topStatus ? (
           <span
             className={cn(
@@ -1112,16 +1124,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   // Row callbacks capture only the handler; the rest of the context changes with the route.
   const { handleNewThread } = newThreadContext;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const homeThreadId = useAtomValue(
-    primaryServerSettingsAtom,
-    (settings) => settings.home.threadId,
-  );
-  // The current Home thread lives on the primary environment and gets its own
-  // fixed row; older Home threads stay in the normal lists.
-  const homeThreadRef =
-    primaryEnvironmentId !== null && homeThreadId !== null
-      ? scopeThreadRef(primaryEnvironmentId, homeThreadId)
-      : null;
+  const userHome = useAtomValue(userHomeAtom);
+  // The current Home thread gets its own fixed row, on whichever environment
+  // hosts it; older Home threads stay in the normal lists.
+  const homeThreadRef = userHomeThreadRef(userHome);
   const clearSelection = useThreadSelectionStore((s) => s.clearSelection);
   const setSelectionAnchor = useThreadSelectionStore((s) => s.setAnchor);
   const toggleThreadSelection = useThreadSelectionStore((s) => s.toggleThread);
@@ -3624,6 +3630,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           <SidebarHomeRow
                             key="home"
                             threadRef={homeThreadRef}
+                            onAnotherEnvironment={
+                              homeThreadRef.environmentId !== primaryEnvironmentId
+                            }
+                            inTwoPlaces={userHome.kind === "conflict"}
                             isActive={routeThreadKey === scopedThreadKey(homeThreadRef)}
                             onActivate={navigateToThread}
                           />

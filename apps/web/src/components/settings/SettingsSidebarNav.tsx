@@ -36,12 +36,9 @@ import {
 } from "lucide-react";
 import { resolveEventKeys } from "@t3tools/shared/keybindings";
 import { useLocation, useNavigate } from "@tanstack/react-router";
-import { useAtomValue } from "@effect/atom-react";
 import { T, useGT, useMessages } from "gt-react";
 
-import { isElectron } from "../../env";
 import { cn } from "../../lib/utils";
-import { primaryServerConfigAtom } from "../../state/server";
 import { Button } from "../ui/button";
 import { Kbd } from "../ui/kbd";
 import {
@@ -141,15 +138,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const navigate = useNavigate();
   const currentHash = useLocation({ select: (location) => location.hash });
   const activePath = SETTINGS_DETAIL_PAGE_PARENTS[pathname] ?? pathname;
-  // Only a desktop app's own server can run Home.
-  const canRunHome = useAtomValue(
-    primaryServerConfigAtom,
-    (config) => isElectron && config?.homeWorkspaceRoot != null,
-  );
-  const navGroups = SETTINGS_NAV_GROUPS.map((group) => ({
-    ...group,
-    paths: group.paths.filter((to) => to !== "/settings/home" || canRunHome),
-  }));
+  const navGroups = SETTINGS_NAV_GROUPS;
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   // Below md the nav is an icon rail; searching expands it over the page.

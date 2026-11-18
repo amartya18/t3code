@@ -1,29 +1,36 @@
 import { enabledEnvironmentIds } from "@t3tools/client-runtime/state/connections";
-import { createHomeEnvironmentAtoms } from "@t3tools/client-runtime/state/home";
+import { createHomeEnvironmentAtoms, createUserHomeAtom } from "@t3tools/client-runtime/state/home";
+import { isHomeProject } from "@t3tools/client-runtime/state/projects";
 import type { EnvironmentId } from "@t3tools/contracts";
-import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 
 import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
-import { environmentShell } from "./shell";
+import { serverEnvironment } from "./server";
 
 export const homeEnvironment = createHomeEnvironmentAtoms(connectionAtomRuntime);
 
-let previousLiveEnvironmentIds: ReadonlySet<EnvironmentId> = new Set();
-/** Environments whose thread list is live, so a thread missing from it is really gone. */
-export const liveShellEnvironmentIdsAtom = Atom.make((get) => {
-  const next = new Set<EnvironmentId>();
+export const userHomeAtom = createUserHomeAtom({
+  catalogValueAtom: environmentCatalog.catalogValueAtom,
+  settingsValueAtom: serverEnvironment.settingsValueAtom,
+});
+
+let previousRoots: ReadonlyMap<EnvironmentId, string> = new Map();
+/** Each environment's Home folder. It belongs to Home alone, so pickers skip it. */
+export const homeWorkspaceRootsAtom = Atom.make((get) => {
+  const next = new Map<EnvironmentId, string>();
   for (const environmentId of enabledEnvironmentIds(get(environmentCatalog.catalogValueAtom))) {
-    const shell = get(environmentShell.stateValueAtom(environmentId));
-    if (shell.status === "live" && Option.isSome(shell.snapshot)) next.add(environmentId);
+    const root = get(serverEnvironment.configValueAtom(environmentId))?.homeWorkspaceRoot;
+    if (root !== undefined) next.set(environmentId, root);
   }
-  if (
-    next.size === previousLiveEnvironmentIds.size &&
-    [...next].every((environmentId) => previousLiveEnvironmentIds.has(environmentId))
-  ) {
-    return previousLiveEnvironmentIds;
-  }
-  previousLiveEnvironmentIds = next;
-  return next;
-}).pipe(Atom.withLabel("web-home-live-shell-environments"));
+  const unchanged =
+    next.size === previousRoots.size &&
+    [...next].every(([environmentId, root]) => previousRoots.get(environmentId) === root);
+  if (!unchanged) previousRoots = next;
+  return previousRoots;
+}).pipe(Atom.withLabel("web-home-workspace-roots"));
+
+export const isProjectInHomeFolder = (
+  roots: ReadonlyMap<EnvironmentId, string>,
+  project: { readonly environmentId: EnvironmentId; readonly workspaceRoot: string },
+) => isHomeProject(project, roots.get(project.environmentId));

@@ -101,7 +101,6 @@ import {
   type TerminalMetadataStreamEvent,
   type PullRequestRef,
   WS_METHODS,
-  HomeUnavailableError,
   WsRpcGroup,
 } from "@t3tools/contracts";
 import {
@@ -194,7 +193,6 @@ import { invalidateSettingsSecrets } from "./sourceControl/sourceControlHostSecr
 import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
-import * as FleetBroker from "./home/FleetBroker.ts";
 import * as FleetService from "./home/FleetService.ts";
 import * as HomeService from "./home/HomeService.ts";
 import { makePrepareTerminalLaunch } from "./workspace/restoreMissingWorktree.ts";
@@ -1450,8 +1448,6 @@ export const layerWsRpc = (
       const eventLoopMonitor = yield* EventLoopMonitor.EventLoopMonitor;
       const threadSearch = yield* ThreadSearch.ThreadSearch;
       const home = yield* HomeService.HomeService;
-      const fleet = yield* FleetService.FleetService;
-      const fleetBroker = yield* FleetBroker.FleetBroker;
 
       const providerSessionsV2 = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const mcpAppRequests = yield* McpAppRequests.McpAppRequests;
@@ -1906,7 +1902,7 @@ export const layerWsRpc = (
             onSome: (root) => ({ scratchWorkspaceRoot: root }),
           }),
           newProjectsRoot: managedFolders.namedProjectsRoot,
-          ...(home.available ? { homeWorkspaceRoot: yield* managedFolders.homeRoot } : {}),
+          homeWorkspaceRoot: yield* managedFolders.homeRoot,
           ...(lastEventLoopStall === undefined ? {} : { lastEventLoopStall }),
           serverTime: DateTime.formatIso(yield* DateTime.now),
         };
@@ -3265,19 +3261,6 @@ export const layerWsRpc = (
         [WS_METHODS.homeEnable]: (input) => home.enable(input),
         [WS_METHODS.homeDisable]: (_input) => home.disable,
         [WS_METHODS.homeStartFresh]: (_input) => home.startFresh,
-        [WS_METHODS.fleetInvoke]: (input) => fleet.execute(input),
-        [WS_METHODS.fleetConnect]: (input) =>
-          Stream.unwrap(
-            home.available
-              ? fleetBroker.connect(input)
-              : Effect.fail(
-                  new HomeUnavailableError({
-                    message: "Home runs only on a server the T3 Code desktop app hosts.",
-                  }),
-                ),
-          ),
-        [WS_METHODS.fleetRespond]: (input) => fleetBroker.respond(input),
-        [WS_METHODS.fleetReportWatchEvents]: (input) => home.report(input),
         [WS_METHODS.subscribePreviewEvents]: (_input) => previewManager.events,
         [WS_METHODS.deviceConfigure]: (input) => deviceService.configure(input),
         [WS_METHODS.deviceTestHost]: (input) => deviceService.testHost(input),
@@ -3595,7 +3578,6 @@ export const layer = Layer.unwrap(
     const homeLayer = Layer.mergeAll(
       Layer.succeed(HomeService.HomeService, yield* HomeService.HomeService),
       Layer.succeed(FleetService.FleetService, yield* FleetService.FleetService),
-      Layer.succeed(FleetBroker.FleetBroker, yield* FleetBroker.FleetBroker),
     );
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const npmRelease = yield* NpmRelease.NpmRelease;
