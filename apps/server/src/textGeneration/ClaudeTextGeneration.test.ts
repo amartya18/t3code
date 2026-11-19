@@ -184,6 +184,32 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
       ),
   );
 
+  it.effect("generates structured output with no tools and no MCP servers", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({ structured_output: { facts: ["one"] } }),
+        argsMustContain:
+          "--tools  --disable-slash-commands --no-session-persistence --strict-mcp-config --permission-mode dontAsk",
+        argsMustNotContain: "--allowedTools",
+        stdinMustContain: "List the facts.",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateStructured!({
+            cwd: process.cwd(),
+            prompt: "List the facts.",
+            outputSchema: Schema.Struct({ facts: Schema.Array(Schema.String) }),
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+            },
+          });
+
+          expect(generated.facts).toEqual(["one"]);
+        }),
+    ),
+  );
+
   it.effect("sends thread title instructions to the provider prompt", () =>
     withFakeClaudeEnv(
       {
