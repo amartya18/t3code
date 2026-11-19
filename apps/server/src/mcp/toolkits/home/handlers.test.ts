@@ -2,6 +2,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  type FleetInvokeInput,
   HomeUnavailableError,
   RunId,
   ThreadId,
@@ -79,8 +80,12 @@ const setup = (options: {
   readonly delivery?: OrchestratorMcpThreadSendResult["delivery"];
 }) => {
   const sent = new Map<string, ThreadManagement.ThreadManagementSendInput>();
+  const fleet: Array<FleetInvokeInput> = [];
   const shell = McpToolAccessTestkit.liveThreadShell(homeThreadId);
-  const layer = McpHttpServer.layerHomeToolkit.pipe(
+  const layer = Layer.mergeAll(
+    McpHttpServer.layerHomeToolkit,
+    McpHttpServer.layerOrchestratorToolkit,
+  ).pipe(
     Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
     Layer.provide(NodeCrypto.layer),
     Layer.provide(
@@ -92,7 +97,11 @@ const setup = (options: {
             : Effect.fail(new HomeUnavailableError({ message: offNote })),
       }),
     ),
-    Layer.provide(Layer.mock(FleetService.FleetService)({})),
+    Layer.provide(
+      Layer.mock(FleetService.FleetService)({
+        execute: (input) => Effect.sync(() => fleet.push(input)) as never,
+      }),
+    ),
     Layer.provide(
       Layer.mock(ThreadManagement.ThreadManagementService)({
         getThreadShell: () => Effect.succeed(shell),
@@ -120,15 +129,18 @@ const setup = (options: {
     Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
     Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
   );
-  return { layer, sent };
+  return { layer, sent, fleet };
 };
 
-const send = (args: Record<string, unknown>, scope = clientScope()) =>
+const call = (name: string, args: Record<string, unknown>, scope = clientScope()) =>
   McpServer.McpServer.pipe(
-    Effect.flatMap((server) => server.callTool({ name: "t3_home_send", arguments: args })),
+    Effect.flatMap((server) => server.callTool({ name, arguments: args })),
     Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
     Effect.provideService(McpSchema.McpServerClient, client),
   );
+
+const send = (args: Record<string, unknown>, scope = clientScope()) =>
+  call("t3_home_send", args, scope);
 
 it.effect.each([
   { delivery: "started", expected: "started" },
@@ -194,4 +206,35 @@ it.effect("refuses Home itself, read-only clients, other links' work, and an off
       expect(off.sent.size).toBe(0);
     }).pipe(Effect.provide(off.layer));
   }),
+);
+
+it.effect(
+  "points outside clients' thread reads and sends on Home's thread to the Home tools",
+  () => {
+    const { layer, sent, fleet } = setup({ home: "on" });
+    return Effect.gen(function* () {
+      // An old Home thread is still Home's.
+      for (const threadId of [homeThreadId, "home:old"]) {
+        expect(declaredFailure(yield* call("t3_thread_read", { threadId }))).toMatchObject({
+          code: "invalid_request",
+          message: "Home's thread is read with t3_home_read.",
+        });
+        expect(
+          declaredFailure(yield* call("t3_thread_send", { threadId, message: "Hi." })),
+        ).toMatchObject({
+          code: "invalid_request",
+          message: "Message Home with t3_home_send, which finds its thread.",
+        });
+      }
+      expect(sent.size).toBe(0);
+      // Home still reads its own thread, as it does after a context handoff.
+      yield* call("t3_thread_read", { threadId: homeThreadId }, homeScope);
+      expect(fleet).toMatchObject([
+        { request: { op: "threads.read", input: { threadId: homeThreadId } } },
+      ]);
+      const other = yield* call("t3_thread_send", { threadId: "home-launched:1", message: "Hi." });
+      expect(other.isError).toBe(false);
+      expect([...sent.values()]).toMatchObject([{ threadId: "home-launched:1", text: "Hi." }]);
+    }).pipe(Effect.provide(layer));
+  },
 );
