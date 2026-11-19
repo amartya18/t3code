@@ -10,7 +10,7 @@ import {
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2ThreadShell,
   ProviderInstanceId,
-  type ThreadId,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -37,7 +37,6 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import {
   buildCapturePrompt,
-  type CaptureItem,
   captureItemOf,
   checkCandidates,
   type ContextItem,
@@ -63,13 +62,13 @@ const DEFAULT_MODEL = createModelSelection(
 const CursorFile = Schema.Struct({
   v: Schema.Literal(1),
   startedAt: Schema.String,
-  threads: Schema.Record(Schema.String, Schema.Int),
+  threads: Schema.Record(ThreadId, Schema.Int),
 });
 const decodeCursorFile = Schema.decodeUnknownOption(Schema.fromJsonString(CursorFile));
 const encodeCursorFile = Schema.encodeEffect(Schema.fromJsonString(CursorFile));
 const RunLine = Schema.Struct({
   type: Schema.Literal("run"),
-  threadId: Schema.String,
+  threadId: ThreadId,
   batch: Schema.Struct({ to: Schema.Int }),
 });
 const decodeRunLine = Schema.decodeUnknownOption(Schema.fromJsonString(RunLine));
@@ -178,14 +177,14 @@ export const layer = Layer.effectDiscard(
           ? decodeCursorFile(yield* fs.readFileString(cursorPath))
           : Option.none();
         if (Option.isSome(saved)) {
-          const cursors = new Map(Object.entries(saved.value.threads)) as Map<ThreadId, number>;
+          const cursors = new Map(Object.entries(saved.value.threads) as Array<[ThreadId, number]>);
           const candidatesPath = path.join(dir, "candidates.jsonl");
           if (yield* fs.exists(candidatesPath)) {
             for (const line of (yield* fs.readFileString(candidatesPath)).split("\n")) {
               const run = decodeRunLine(line);
               if (Option.isNone(run)) continue;
-              const threadId = run.value.threadId as ThreadId;
-              cursors.set(threadId, Math.max(cursors.get(threadId) ?? -1, run.value.batch.to));
+              const { threadId, batch } = run.value;
+              cursors.set(threadId, Math.max(cursors.get(threadId) ?? -1, batch.to));
             }
           }
           state = {
@@ -368,10 +367,7 @@ export const layer = Layer.effectDiscard(
       }
       // Rows past the last citable item, such as inherited ones, need no model call.
       const lastRow = rows.at(-1)!.position;
-      if (
-        items.every((item: CaptureItem) => item.final) &&
-        lastRow > trial.cursors.get(shell.id)!
-      ) {
+      if (items.every((item) => item.final) && lastRow > trial.cursors.get(shell.id)!) {
         trial.cursors.set(shell.id, lastRow);
         yield* saveCursors(trial);
       }
