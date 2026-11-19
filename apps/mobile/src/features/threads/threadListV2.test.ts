@@ -939,6 +939,47 @@ describe("buildThreadListV2ListItems", () => {
     expect(threadJumpTarget(items, "thread.jump.2")?.id).toBe("settled");
     expect(threadJumpTarget(items, "thread.jump.3")).toBeNull();
   });
+
+  it("collapses pinned and active threads under Threads, keeping the selected one", () => {
+    const threads = [
+      makeThread({ id: ThreadId.make("pinned"), title: "pinned", pinnedAt: NOW }),
+      makeThread({ id: ThreadId.make("open"), title: "open" }),
+      makeThread({ id: ThreadId.make("other"), title: "other" }),
+      makeThread({
+        id: ThreadId.make("settled"),
+        title: "settled",
+        settledOverride: "settled",
+        settledAt: NOW,
+      }),
+    ];
+    const collapsed = buildThreadListV2Items({
+      threads,
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+      threadsShelfExpanded: false,
+      selectedThreadKey: `${environmentId}:open`,
+    });
+    const items = buildThreadListV2ListItems({
+      items: collapsed.items,
+      pendingTasks: [makePendingTask("queued")],
+      threadsCount: collapsed.threadsCount,
+      threadsShelfExpanded: false,
+      settledCount: collapsed.settledCount,
+      settledShelfHeaderIndex: collapsed.settledShelfHeaderIndex,
+    });
+
+    expect(
+      items.map((item) =>
+        item.type === "v2-thread"
+          ? item.item.thread.id
+          : item.type === "v2-pending"
+            ? item.pendingTask.title
+            : item.type,
+      ),
+    ).toEqual(["queued", "v2-threads-shelf", "open", "v2-settled-shelf", "settled"]);
+    expect(items[1]).toMatchObject({ count: 3, expanded: false });
+  });
 });
 
 describe("pending mobile thread moves", () => {
@@ -1797,6 +1838,7 @@ describe("Working section beta", () => {
   it("places the shelf after queued tasks and before snoozed and settled threads", () => {
     const layout = buildThreadListV2Items({
       threads: [
+        makeThread({ id: ThreadId.make("pinned"), title: "pinned", pinnedAt: NOW }),
         makeThread({ id: ThreadId.make("active"), title: "active" }),
         makeThread({ id: ThreadId.make("working"), title: "working", runtime: running }),
         makeThread({
@@ -1823,6 +1865,7 @@ describe("Working section beta", () => {
     const items = buildThreadListV2ListItems({
       items: layout.items,
       pendingTasks: [makePendingTask("queued")],
+      threadsCount: layout.threadsCount,
       workingCount: layout.workingCount,
       workingShelfExpanded: true,
       workingShelfHeaderIndex: layout.workingShelfHeaderIndex,
@@ -1842,6 +1885,8 @@ describe("Working section beta", () => {
       ),
     ).toEqual([
       "queued",
+      "v2-threads-shelf",
+      "pinned",
       "active",
       "v2-working-shelf",
       "working",

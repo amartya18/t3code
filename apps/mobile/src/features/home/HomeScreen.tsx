@@ -16,6 +16,7 @@ import { pickableProjectGroups } from "@t3tools/client-runtime/state/project-gro
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import { type EnvironmentId, type SidebarProjectGroupingMode } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
+import { userHomeThreadRef } from "@t3tools/client-runtime/state/home";
 import {
   use,
   useEffect,
@@ -68,6 +69,7 @@ import { useSearchScrollRestoration } from "../layout/workspace/useSearchScrollR
 import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
 import { usePendingThreadOrder } from "../../state/thread-order";
 import { threadListEnvironmentsAtom } from "../../state/presentation";
+import { userHomeAtom } from "../../state/home";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useQueuedThreadKeys } from "../../state/use-thread-outbox";
 import {
@@ -76,6 +78,7 @@ import {
   ThreadListV2SettledShelfHeader,
   ThreadListV2ShowMoreRow,
   ThreadListV2SnoozedShelfHeader,
+  ThreadListV2ThreadsShelfHeader,
   ThreadListV2WorkingShelfHeader,
 } from "../threads/thread-list-v2-items";
 import { useThreadRowProviderInstanceResolver } from "../threads/thread-provider-instance";
@@ -386,12 +389,35 @@ export function HomeScreen(props: HomeScreenProps) {
     loaded: shelfPreferencesLoaded,
     settledShelfExpanded,
     snoozedShelfExpanded,
+    threadsShelfExpanded,
     workingShelfEnabled,
     workingShelfExpanded,
     toggleSettledShelf,
     toggleSnoozedShelf,
+    toggleThreadsShelf,
     toggleWorkingShelf,
   } = useThreadListV2ShelfPreferences();
+  const homeThreadRef = userHomeThreadRef(useAtomValue(userHomeAtom));
+  const homeThreadKey =
+    homeThreadRef === null
+      ? null
+      : scopedThreadKey(homeThreadRef.environmentId, homeThreadRef.threadId);
+  // The Home card stands in for its thread, so the list leaves it out.
+  const listThreads = useMemo(
+    () =>
+      homeThreadKey === null
+        ? props.threads
+        : props.threads.filter(
+            (thread) => scopedThreadKey(thread.environmentId, thread.id) !== homeThreadKey,
+          ),
+    [props.threads, homeThreadKey],
+  );
+  const homeThread =
+    homeThreadKey === null
+      ? undefined
+      : props.threads.find(
+          (thread) => scopedThreadKey(thread.environmentId, thread.id) === homeThreadKey,
+        );
   const now = useThreadListNow(props.threads);
   const listEnvironments = useAtomValue(threadListEnvironmentsAtom);
   const {
@@ -414,7 +440,7 @@ export function HomeScreen(props: HomeScreenProps) {
     contentOnlyThreadKeys,
     olderSettledShelf,
   } = useThreadListV2({
-    threads: props.threads,
+    threads: listThreads,
     pendingTasks: props.pendingTasks,
     environmentId: props.selectedEnvironmentId,
     projectRefs: v2ScopedProjectGroup === null ? null : v2ScopedProjectGroup.projectRefs,
@@ -429,6 +455,7 @@ export function HomeScreen(props: HomeScreenProps) {
     now,
     pendingOrder,
     shelfPreferencesLoaded,
+    threadsShelfExpanded,
     workingShelfEnabled,
     workingShelfExpanded,
     snoozedShelfExpanded,
@@ -489,6 +516,16 @@ export function HomeScreen(props: HomeScreenProps) {
           onSwipeableWillOpen={handleSwipeableWillOpen}
           simultaneousSwipeGesture={homeScrollGesture}
           activationKey={item.key}
+        />
+      );
+    }
+    if (item.type === "v2-threads-shelf") {
+      return (
+        <ThreadListV2ThreadsShelfHeader
+          count={item.count}
+          disabled={item.disabled}
+          expanded={item.expanded}
+          onToggle={toggleThreadsShelf}
         />
       );
     }
@@ -678,28 +715,35 @@ export function HomeScreen(props: HomeScreenProps) {
   const v2ListHeader = (
     <>
       {listHeader}
-      <HomeAgentRow onOpen={props.onOpenHome} />
       {Platform.OS === "ios" && workspace ? (
-        <ThreadListFilters
-          gutter={sidebarSurface ? 8 : 0}
-          environments={props.environments}
-          projects={pickableProjectGroups(
-            sortHomeProjectScopes({
-              scopes: projectScopes,
-              threads: props.threads,
-              pendingTasks: [],
-              projectSortOrder: "updated_at",
-            }),
-          ).map((scope) => ({
-            key: scope.key,
-            label: scope.title,
-          }))}
-          selectedEnvironmentId={props.selectedEnvironmentId}
-          selectedProjectKey={props.selectedProjectKey}
-          onEnvironmentChange={props.onEnvironmentChange}
-          onProjectChange={props.onProjectChange}
-        />
+        // Above the Home card so a filter menu's dismissal morph is not covered.
+        <View style={{ zIndex: 1 }}>
+          <ThreadListFilters
+            gutter={sidebarSurface ? 8 : 0}
+            environments={props.environments}
+            projects={pickableProjectGroups(
+              sortHomeProjectScopes({
+                scopes: projectScopes,
+                threads: props.threads,
+                pendingTasks: [],
+                projectSortOrder: "updated_at",
+              }),
+            ).map((scope) => ({
+              key: scope.key,
+              label: scope.title,
+            }))}
+            selectedEnvironmentId={props.selectedEnvironmentId}
+            selectedProjectKey={props.selectedProjectKey}
+            onEnvironmentChange={props.onEnvironmentChange}
+            onProjectChange={props.onProjectChange}
+          />
+        </View>
       ) : null}
+      <HomeAgentRow
+        thread={homeThread}
+        environments={props.environments}
+        onOpen={props.onOpenHome}
+      />
     </>
   );
 
