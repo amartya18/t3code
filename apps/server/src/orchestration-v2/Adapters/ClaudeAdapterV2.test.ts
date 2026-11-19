@@ -36,6 +36,7 @@ import {
   CheckpointId,
   ClaudeSettings,
   EnvironmentId,
+  HOME_THREAD_ID_PREFIX,
   MessageId,
   type ModelSelection,
   NodeId,
@@ -3562,6 +3563,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly offer?: (message: SDKUserMessage) => Effect.Effect<void>;
     readonly promptSuggestions?: boolean;
     readonly routeModelCatalog?: ClaudeAdapterV2.ClaudeAdapterV2Options["routeModelCatalog"];
+    readonly threadId?: ThreadId;
   }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -3743,7 +3745,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assertComplete: Effect.void,
         },
       });
-      const threadId = ThreadId.make("thread-claude-wake");
+      const threadId = options?.threadId ?? ThreadId.make("thread-claude-wake");
       const runtime = yield* adapter.openSession({
         threadId,
         providerSessionId: ProviderSessionId.make("provider-session-claude-wake"),
@@ -6081,6 +6083,252 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         ),
       ),
     ),
+  );
+
+  it.effect.each([
+    { thread: "Home", threadId: ThreadId.make(`${HOME_THREAD_ID_PREFIX}claude-wake`) },
+    { thread: "other", threadId: undefined },
+  ] as const)("steers a foreground subagent's turn on the $thread thread", ({ threadId }) =>
+    Effect.gen(function* () {
+      const backgroundMoves: Array<string> = [];
+      const harness = yield* makeWakeHarnessWithOptions({
+        ...(threadId === undefined ? {} : { threadId }),
+        backgroundTasks: (toolUseId) =>
+          Effect.sync(() => backgroundMoves.push(toolUseId)).pipe(Effect.as(true)),
+      });
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const input = makeClaudeTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("attempt-steer-subagent"),
+        text: "Audit with a subagent.",
+        attachments: [],
+      });
+      yield* harness.runtime.startTurn(input);
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "task_started",
+          task_id: "steer-subagent-task",
+          tool_use_id: "steer-subagent-tool",
+          description: "Audit",
+          subagent_type: "general-purpose",
+          is_backgrounded: false,
+          task_type: "local_agent",
+          prompt: "Audit.",
+          uuid: "00000000-0000-4000-8000-000000002401",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      yield* harness.runtime.steerTurn({
+        threadId: harness.threadId,
+        runId: input.runId,
+        providerThread: harness.providerThread,
+        providerTurnId: idAllocator.derive.providerTurn({
+          driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+          nativeTurnId: `turn:${input.attemptId}`,
+        }),
+        message: {
+          createdBy: "user",
+          creationSource: "web",
+          messageId: MessageId.make("message-steer-subagent"),
+          text: "Also check the footer.",
+          attachments: [],
+        },
+      });
+      // Only a "now" steer cancels foreground tools, so only it moves subagents out of the way.
+      if (threadId === undefined) {
+        assert.equal(harness.offeredMessages[1]?.priority, "now");
+        assert.deepEqual(backgroundMoves, ["steer-subagent-tool"]);
+      } else {
+        assert.equal(harness.offeredMessages[1]?.priority, "next");
+        assert.deepEqual(backgroundMoves, []);
+      }
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  // Claude runs a "next" steer that no tool boundary reached as its next CLI turn.
+  it.effect.each([
+    { steers: 1, foldedMidTurn: false },
+    { steers: 3, foldedMidTurn: false },
+    { steers: 1, foldedMidTurn: true },
+  ] as const)(
+    "settles a Home run once for $steers steers (folded mid-turn: $foldedMidTurn)",
+    ({ steers, foldedMidTurn }) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({
+          threadId: ThreadId.make(`${HOME_THREAD_ID_PREFIX}claude-wake`),
+        });
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const attemptId = RunAttemptId.make("attempt-home-steer");
+        const input = makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId,
+          text: "List the open threads.",
+          attachments: [],
+        });
+        yield* harness.runtime.startTurn(input);
+        const messageIds = Array.from({ length: steers }, (_, index) =>
+          MessageId.make(`message-home-steer-${index}`),
+        );
+        for (const messageId of messageIds) {
+          yield* harness.runtime.steerTurn({
+            threadId: harness.threadId,
+            runId: input.runId,
+            providerThread: harness.providerThread,
+            providerTurnId: idAllocator.derive.providerTurn({
+              driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+              nativeTurnId: `turn:${attemptId}`,
+            }),
+            message: {
+              createdBy: "user",
+              creationSource: "web",
+              messageId,
+              text: `Note ${messageId}`,
+              attachments: [],
+            },
+          });
+        }
+        const offeredSteers = harness.offeredMessages.slice(1);
+        assert.deepEqual(
+          offeredSteers.map((message) => [
+            message.priority,
+            String(message.message.content).split("\n").at(-1),
+          ]),
+          messageIds.map((messageId) => ["next", `Note ${messageId}`]),
+        );
+        const steerUuids = messageIds.map((_, index) => harness.promptUuid(index + 1));
+        const steerStatuses = () =>
+          Object.fromEntries(
+            messageIds.map((messageId) => [
+              messageId,
+              harness.events.flatMap((event) =>
+                event.type === "steer.updated" && event.messageId === messageId
+                  ? [event.status]
+                  : [],
+              ),
+            ]),
+          );
+        const result = (uuid: string, text: string, echoed: ReadonlyArray<string>) =>
+          claudeSdkFrame({
+            ...makeResultFrame({
+              uuid,
+              result: text,
+              usage: {
+                input_tokens: 10,
+                output_tokens: 20,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
+              },
+            }),
+            user_message_uuids: echoed,
+          });
+
+        const listReply = "Three threads are open.";
+        yield* harness.offerAndWait(
+          makeAssistantTextFrame({ uuid: "00000000-0000-4000-8000-000000002411", text: listReply }),
+        );
+        if (foldedMidTurn) {
+          for (const [index, uuid] of steerUuids.entries()) {
+            yield* harness.offerAndWait(
+              claudeSdkFrame({
+                type: "command_lifecycle",
+                command_uuid: uuid,
+                state: "started",
+                uuid: `00000000-0000-4000-8000-00000000242${index}`,
+                session_id: WAKE_NATIVE_SESSION,
+              }),
+            );
+          }
+          yield* harness.offerAndWait(
+            result("00000000-0000-4000-8000-000000002412", listReply, [
+              harness.promptUuid(0),
+              ...steerUuids,
+            ]),
+          );
+        } else {
+          yield* harness.offerAndWait(
+            result("00000000-0000-4000-8000-000000002412", listReply, [harness.promptUuid(0)]),
+          );
+          yield* harness.offerAndWait(
+            makeAssistantTextFrame({
+              uuid: "00000000-0000-4000-8000-000000002413",
+              text: "Noted.",
+            }),
+          );
+          // Events arrive in order, so a terminal for the first result would be recorded by now.
+          yield* harness.until(
+            () =>
+              harness.terminalEvents().length > 0 ||
+              harness.events.some(
+                (event) => event.type === "message.updated" && event.message.text === "Noted.",
+              ),
+          );
+          assert.lengthOf(harness.terminalEvents(), 0);
+          assert.deepEqual(
+            steerStatuses(),
+            Object.fromEntries(messageIds.map((messageId) => [messageId, ["pending"]])),
+          );
+          yield* harness.offerAndWait(
+            result("00000000-0000-4000-8000-000000002414", "Noted.", steerUuids),
+          );
+        }
+
+        yield* harness.awaitTerminal(1);
+        assert.deepEqual(
+          harness.terminalEvents().map((event) => event.status),
+          ["completed"],
+        );
+        assert.deepEqual(
+          steerStatuses(),
+          Object.fromEntries(messageIds.map((messageId) => [messageId, ["pending", "completed"]])),
+        );
+        assert.deepEqual(
+          [
+            ...new Set(
+              harness.events.flatMap((event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "assistant_message" &&
+                event.turnItem.text === listReply
+                  ? [event.turnItem.status]
+                  : [],
+              ),
+            ),
+          ],
+          ["completed"],
+        );
+        const completed = harness.events.findLast(
+          (event) => event.type === "provider_turn.updated",
+        );
+        const usage =
+          completed?.type === "provider_turn.updated"
+            ? completed.providerTurn.turnTokenUsage
+            : undefined;
+        assert.equal(usage?.outputTokens, foldedMidTurn ? 20 : 40);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
   );
 
   // regression: #34393 a provider switch replayed a $skill from the handoff history

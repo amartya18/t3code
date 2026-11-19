@@ -7,6 +7,7 @@ import * as Schema from "effect/Schema";
 
 import {
   EnvironmentId,
+  MessageId,
   NonNegativeInt,
   ProjectId,
   RuntimeRequestId,
@@ -402,3 +403,22 @@ export const HomeStatusResult = Schema.Struct({
   ),
 });
 export type HomeStatusResult = typeof HomeStatusResult.Type;
+
+export const HomeSendInput = Schema.Struct({
+  environmentId: environmentIdField,
+  message: OrchestratorMcpThreadSendInput.fields.message,
+  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+});
+export type HomeSendInput = typeof HomeSendInput.Type;
+
+export const HomeSendResult = Schema.Struct({
+  /** The environment whose Home received the message. */
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+  link: Schema.String,
+  messageId: MessageId,
+  runId: RunId,
+  /** `folded`: the message joins Home's running turn at its next tool call. */
+  delivery: Schema.Literals(["started", "folded", "queued"]),
+});
+export type HomeSendResult = typeof HomeSendResult.Type;

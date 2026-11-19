@@ -1285,7 +1285,9 @@ const layerThemeToolkit = toolkitRegistration(ThemeToolkit, ThemeHandlers.layer)
 
 export const layerProjectRegistration = toolkitRegistration(ProjectToolkit, ProjectHandlers.layer);
 
-const layerHomeToolkit = toolkitRegistration(HomeToolkit, HomeHandlersLive);
+export const layerHomeToolkit = toolkitRegistration(HomeToolkit, HomeHandlersLive).pipe(
+  Layer.provide(OrchestratorMcpService.layer),
+);
 
 export const layerAttachmentToolkit = toolkitRegistration(
   AttachmentToolkit,

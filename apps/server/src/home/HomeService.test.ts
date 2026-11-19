@@ -349,6 +349,25 @@ it.effect("status lists where else to ask while Home is off here", () => {
   }).pipe(Effect.provide(layer));
 });
 
+it.effect("Home's live thread follows Home being turned off and on", () => {
+  const { layer } = makeHome();
+  return Effect.gen(function* () {
+    const home = yield* HomeService.HomeService;
+    const off = yield* home.liveThreadId.pipe(Effect.flip);
+    expect(off.message).toBe(
+      "Home is off on laptop13. It may run in a linked environment: retry with environmentId set to one of box (box), mac (mac).",
+    );
+    expect((yield* home.status({ link: () => "link" })).note).toBe(off.message);
+
+    const { threadId: first } = yield* home.enable({ modelSelection });
+    expect(yield* home.liveThreadId).toBe(first);
+    yield* home.disable;
+    const { threadId: second } = yield* home.enable({ modelSelection });
+    expect(second).not.toBe(first);
+    expect(yield* home.liveThreadId).toBe(second);
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect("status reads the threads Home launched, and only the newest settled ones", () => {
   const { layer, listed, snapshotRequests, launched, sent, dispatched, messages } = makeHome();
   const settledAt = DateTime.makeUnsafe(0);
