@@ -18,6 +18,7 @@ import {
 } from "./baseSchemas.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import {
+  clampedPositiveInt,
   OrchestratorMcpClientRequestId,
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpProviderCapability,
@@ -372,13 +373,22 @@ export const AgentStatusChildren = Schema.Struct({
 });
 export type AgentStatusChildren = typeof AgentStatusChildren.Type;
 
-export const HomeStatusInput = Schema.Struct({
-  environmentId: environmentIdField,
+export const HomeReadInput = Schema.Struct({
+  limit: Schema.optional(clampedPositiveInt(50)).annotate({ description: "Max 50." }),
+  beforePosition: Schema.optional(NonNegativeInt),
   fullChildren: Schema.optional(Schema.Boolean),
 });
-export type HomeStatusInput = typeof HomeStatusInput.Type;
+export type HomeReadInput = typeof HomeReadInput.Type;
 
-export const HomeStatusResult = Schema.Struct({
+export const HomeMessage = Schema.Struct({
+  position: NonNegativeInt,
+  from: Schema.Literals(["user", "home"]),
+  at: IsoDateTime,
+  text: Schema.String,
+});
+export type HomeMessage = typeof HomeMessage.Type;
+
+export const HomeReadResult = Schema.Struct({
   /** The environment that answered: where Home runs, when it is on. */
   environmentId: EnvironmentId,
   environmentLabel: Schema.String,
@@ -389,27 +399,18 @@ export const HomeStatusResult = Schema.Struct({
       link: Schema.String,
       status: OrchestrationV2ShellThreadStatus,
       attention: AgentAttention,
-      /** Whole, up to 20,000 characters. */
-      latestReply: Schema.NullOr(Schema.String),
+      /** The newest page, oldest to newest, each whole up to 20,000 characters. */
+      messages: Schema.Array(HomeMessage),
+      /** Pass as `beforePosition` for older messages; null when there are none. */
+      earlierPosition: Schema.NullOr(NonNegativeInt),
       children: AgentStatusChildren,
     }),
   ),
   note: Schema.optional(Schema.String),
-  /** Only when Home is off here: where else to ask. */
-  linkedEnvironments: Schema.optional(
-    Schema.Array(
-      Schema.Struct({
-        environmentId: EnvironmentId,
-        label: Schema.String,
-        connected: Schema.Boolean,
-      }),
-    ),
-  ),
 });
-export type HomeStatusResult = typeof HomeStatusResult.Type;
+export type HomeReadResult = typeof HomeReadResult.Type;
 
 export const HomeSendInput = Schema.Struct({
-  environmentId: environmentIdField,
   message: OrchestratorMcpThreadSendInput.fields.message,
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
 });

@@ -32,8 +32,7 @@ import * as McpToolAccessTestkit from "../../McpToolAccess.testkit.ts";
 
 const environmentId = EnvironmentId.make("hub");
 const homeThreadId = ThreadId.make("home:1");
-const offNote =
-  "Home is off on hub. It may run in a linked environment: retry with environmentId set to one of box (box).";
+const offNote = "Home is off on hub.";
 
 const client = McpSchema.McpServerClient.of({
   clientId: 1,

@@ -3,7 +3,6 @@ import {
   EnvironmentId,
   type HomeWatchEvent,
   ProjectId,
-  type PeerLinkSummary,
   ProviderInstanceId,
   ThreadId,
   type OrchestrationV2ConversationMessage,
@@ -20,7 +19,6 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
-import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as HomeService from "./HomeService.ts";
@@ -44,6 +42,11 @@ const makeHome = () => {
   const messages = new Map<
     string,
     Array<Pick<OrchestrationV2ConversationMessage, "runId" | "role" | "text">>
+  >();
+  // Each thread's visible messages, oldest first; an item's position is its index.
+  const timeline = new Map<
+    string,
+    Array<{ readonly type: "user_message" | "assistant_message"; readonly text: string }>
   >();
   const shell = (threadId: ThreadId) =>
     ({
@@ -77,13 +80,6 @@ const makeHome = () => {
             ? D
             : never),
         }),
-        Layer.mock(PeerLinks.PeerLinks)({
-          enabled: Effect.succeed(true),
-          list: Effect.succeed([
-            { environmentId: EnvironmentId.make("box"), label: "box", status: "reachable" },
-            { environmentId: EnvironmentId.make("mac"), label: "mac", status: "unreachable" },
-          ] as unknown as ReadonlyArray<PeerLinkSummary>),
-        }),
         Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
           namedProjectsRoot: "/projects",
           ensureHomeProject: Effect.succeed({ projectId: homeProjectId, workspaceRoot: "/home" }),
@@ -105,8 +101,52 @@ const makeHome = () => {
               ),
             } as never);
           },
+          getTimelinePage: (threadId, options) => {
+            const before = (timeline.get(threadId) ?? [])
+              .map((message, position) => ({
+                position,
+                visibility: "local",
+                sourceThreadId: threadId,
+                sourceItemId: `item-${position}`,
+                item: {
+                  ...message,
+                  messageId: `message-${position}`,
+                  runId: null,
+                  status: "completed",
+                  title: null,
+                  updatedAt: DateTime.makeUnsafe(position * 1_000),
+                },
+              }))
+              .filter((row) => row.position < (options.beforePosition ?? Infinity));
+            const items = before.slice(-options.limit);
+            return Effect.succeed({
+              items: items as never,
+              totalItems: timeline.get(threadId)?.length ?? 0,
+              hasMore: false,
+              hasEarlier: before.length > items.length,
+            });
+          },
           getThreadRecords: (threadId, _fields, filter) =>
             Effect.succeed({
+              thread: {
+                ...shell(threadId),
+                title: "Home",
+                createdBy: "user",
+                creationSource: "server",
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                branch: null,
+                worktreePath: null,
+                lineage: { parentThreadId: null, relationshipToParent: null },
+                settledOverride: null,
+                settledAt: null,
+                createdAt: DateTime.makeUnsafe(0),
+                updatedAt: DateTime.makeUnsafe(0),
+              },
+              runs: [],
+              runtimeRequests: [],
+              providerTurns: [],
+              contextTransfers: [],
               subagents: [],
               messages: (messages.get(threadId) ?? []).filter(
                 (message) =>
@@ -145,6 +185,7 @@ const makeHome = () => {
     listed,
     snapshotRequests,
     messages,
+    timeline,
   };
 };
 
@@ -331,33 +372,19 @@ it.effect("starting fresh stops Home's run and starts a new session in the same 
   }).pipe(Effect.provide(layer));
 });
 
-it.effect("status lists where else to ask while Home is off here", () => {
-  const { layer, snapshotRequests } = makeHome();
-  return Effect.gen(function* () {
-    const status = yield* (yield* HomeService.HomeService).status({ link: () => "link" });
-    expect(status).toMatchObject({
-      environmentId,
-      environmentLabel: "laptop13",
-      agent: null,
-      linkedEnvironments: [
-        { environmentId: "box", label: "box", connected: true },
-        { environmentId: "mac", label: "mac", connected: false },
-      ],
-    });
-    expect(status.note).toContain("Home is off on laptop13.");
-    expect(snapshotRequests).toEqual([]);
-  }).pipe(Effect.provide(layer));
-});
-
 it.effect("Home's live thread follows Home being turned off and on", () => {
-  const { layer } = makeHome();
+  const { layer, snapshotRequests } = makeHome();
   return Effect.gen(function* () {
     const home = yield* HomeService.HomeService;
     const off = yield* home.liveThreadId.pipe(Effect.flip);
-    expect(off.message).toBe(
-      "Home is off on laptop13. It may run in a linked environment: retry with environmentId set to one of box (box), mac (mac).",
-    );
-    expect((yield* home.status({ link: () => "link" })).note).toBe(off.message);
+    expect(off.message).toBe("Home is off on laptop13.");
+    expect(yield* home.read({ link: () => "link" })).toEqual({
+      environmentId,
+      environmentLabel: "laptop13",
+      agent: null,
+      note: off.message,
+    });
+    expect(snapshotRequests).toEqual([]);
 
     const { threadId: first } = yield* home.enable({ modelSelection });
     expect(yield* home.liveThreadId).toBe(first);
@@ -368,8 +395,9 @@ it.effect("Home's live thread follows Home being turned off and on", () => {
   }).pipe(Effect.provide(layer));
 });
 
-it.effect("status reads the threads Home launched, and only the newest settled ones", () => {
-  const { layer, listed, snapshotRequests, launched, sent, dispatched, messages } = makeHome();
+it.effect("read returns Home's newest messages whole and the threads it launched", () => {
+  const { layer, listed, snapshotRequests, launched, sent, dispatched, messages, timeline } =
+    makeHome();
   const settledAt = DateTime.makeUnsafe(0);
   listed.push(
     { id: ThreadId.make("users-own"), settledOverride: null, settledAt: null },
@@ -383,33 +411,45 @@ it.effect("status reads the threads Home launched, and only the newest settled o
   return Effect.gen(function* () {
     const home = yield* HomeService.HomeService;
     const { threadId } = yield* home.enable({ modelSelection });
-    messages.set(threadId, [
-      { runId: "run:earlier" as never, role: "assistant", text: "An older run's reply." },
-      { runId: `run:${threadId}` as never, role: "assistant", text: "Checked\n\nthe fleet." },
-      { runId: `run:${threadId}` as never, role: "user", text: "Thanks." },
+    const longReply = `Checked\n\nthe fleet. ${"x".repeat(400)}`;
+    timeline.set(threadId, [
+      { type: "user_message", text: "Start the release." },
+      { type: "assistant_message", text: "Started it." },
+      { type: "user_message", text: "Status?" },
+      { type: "assistant_message", text: longReply },
+      { type: "user_message", text: "Thanks." },
+      { type: "assistant_message", text: "Anytime." },
+      { type: "user_message", text: "One more thing." },
     ]);
     messages.set("home-launched:open", [
       { runId: "run:home-launched:open" as never, role: "assistant", text: "Opened\n\nthe PR." },
     ]);
-    const status = yield* home.status({ link: (ref) => `link:${ref.threadId}` });
-    expect(status.agent).toMatchObject({
-      threadId,
-      link: `link:${threadId}`,
-      latestReply: "Checked\n\nthe fleet.",
-    });
-    expect(status.linkedEnvironments).toBeUndefined();
-    expect(snapshotRequests).toEqual([
-      [
-        "home-launched:open",
-        ...Array.from({ length: 10 }, (_, index) => `home-launched:settled-${index}`),
-      ],
+    const link = (ref: { readonly threadId: ThreadId }) => `link:${ref.threadId}`;
+    const read = yield* home.read({ link });
+    expect(read.agent).toMatchObject({ threadId, link: `link:${threadId}`, earlierPosition: 2 });
+    expect(read.agent?.messages).toEqual([
+      { position: 2, from: "user", at: "1970-01-01T00:00:02.000Z", text: "Status?" },
+      { position: 3, from: "home", at: "1970-01-01T00:00:03.000Z", text: longReply },
+      { position: 4, from: "user", at: "1970-01-01T00:00:04.000Z", text: "Thanks." },
+      { position: 5, from: "home", at: "1970-01-01T00:00:05.000Z", text: "Anytime." },
+      { position: 6, from: "user", at: "1970-01-01T00:00:06.000Z", text: "One more thing." },
     ]);
-    expect(status.agent?.children.running).toHaveLength(11);
-    expect(status.agent?.children.running[0]).toMatchObject({
+    const older = yield* home.read({ link, beforePosition: 2 });
+    expect(older.agent?.messages.map((message) => message.text)).toEqual([
+      "Start the release.",
+      "Started it.",
+    ]);
+    expect(older.agent?.earlierPosition).toBeNull();
+    expect(snapshotRequests[0]).toEqual([
+      "home-launched:open",
+      ...Array.from({ length: 10 }, (_, index) => `home-launched:settled-${index}`),
+    ]);
+    expect(read.agent?.children.running).toHaveLength(11);
+    expect(read.agent?.children.running[0]).toMatchObject({
       threadId: "home-launched:open",
       latestReply: "Opened the PR.",
     });
-    const full = yield* home.status({ link: (ref) => `link:${ref.threadId}`, fullChildren: true });
+    const full = yield* home.read({ link, fullChildren: true });
     expect(full.agent?.children.running[0]?.latestReply).toBe("Opened\n\nthe PR.");
     // Reading never wakes or changes anything.
     expect([launched.length, sent, dispatched]).toEqual([1, [], []]);

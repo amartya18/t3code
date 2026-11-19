@@ -9,8 +9,9 @@ import {
   HOME_REPORT_MESSAGE_ID_PREFIX,
   HOME_THREAD_ID_PREFIX,
   type HomeEnableInput,
+  type HomeReadInput,
+  type HomeReadResult,
   type HomeSettings,
-  type HomeStatusResult,
   type HomeThreadResult,
   HomeUnavailableError,
   isHomeLaunchedThreadId,
@@ -30,9 +31,9 @@ import * as Layer from "effect/Layer";
 import * as Semaphore from "effect/Semaphore";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { readThreadPage } from "../mcp/OrchestratorMcpService.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
-import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import {
@@ -54,7 +55,7 @@ export class HomeService extends Context.Service<
     /** Stops Home's run and starts a new provider session in the same thread. */
     readonly startFresh: Effect.Effect<HomeThreadResult, HomeUnavailableError>;
     readonly isHome: (threadId: ThreadId) => Effect.Effect<boolean>;
-    /** Home's live thread here. While Home is off, fails with where else to ask. */
+    /** Home's live thread here. Fails while Home is off. */
     readonly liveThreadId: Effect.Effect<ThreadId, HomeUnavailableError>;
     /**
      * Changes Home's watches for the Home thread `homeThreadId`. Fails when
@@ -66,14 +67,12 @@ export class HomeService extends Context.Service<
       update: (home: HomeSettings) => HomeSettings,
     ) => Effect.Effect<HomeSettings, HomeUnavailableError>;
     /**
-     * Where Home and the threads it started stand. Reads only, so it never
-     * wakes Home. When Home is off here, lists the linked environments to ask.
+     * Home's newest messages, its state, and where the threads it started
+     * stand. Reads only, so it never wakes Home.
      */
-    readonly status: (options: {
-      readonly link: ThreadLinker;
-      /** Children's whole replies instead of one-line previews. Home's own is always whole. */
-      readonly fullChildren?: boolean;
-    }) => Effect.Effect<HomeStatusResult, HomeUnavailableError>;
+    readonly read: (
+      options: HomeReadInput & { readonly link: ThreadLinker },
+    ) => Effect.Effect<HomeReadResult, HomeUnavailableError>;
     /** Wakes Home with the watched events in one message. */
     readonly report: (report: HomeWatchReport) => Effect.Effect<void, HomeUnavailableError>;
   }
@@ -166,7 +165,6 @@ const make = Effect.gen(function* () {
   const launches = yield* ThreadLaunchService.ThreadLaunchService;
   const crypto = yield* SecureRandom.SecureRandom;
   const environment = yield* ServerEnvironment.ServerEnvironment;
-  const peerLinks = yield* PeerLinks.PeerLinks;
   const lock = yield* Semaphore.make(1);
   const fail = (message: string) => new HomeUnavailableError({ message });
 
@@ -273,33 +271,9 @@ const make = Effect.gen(function* () {
       .pipe(Effect.mapError(() => fail("Home could not be woken.")));
   });
 
-  /** Undefined when the links could not be read. */
-  const linkedEnvironments = peerLinks.enabled.pipe(
-    Effect.flatMap((enabled) => (enabled ? peerLinks.list : Effect.succeed([]))),
-    Effect.map((links) =>
-      links.map((link) => ({
-        environmentId: link.environmentId,
-        label: link.label,
-        connected: link.status === "reachable",
-      })),
-    ),
-    Effect.orElseSucceed(() => undefined),
+  const offHere = environment.getDescriptor.pipe(
+    Effect.map(({ label }) => ({ label, note: `Home is off on ${label}.` })),
   );
-
-  /** Why Home is not here, naming the linked environments to ask instead. */
-  const offHere = Effect.gen(function* () {
-    const { label } = yield* environment.getDescriptor;
-    const linked = yield* linkedEnvironments;
-    const next =
-      linked === undefined
-        ? " Its linked environments could not be listed."
-        : linked.length === 0
-          ? ""
-          : ` It may run in a linked environment: retry with environmentId set to one of ${linked
-              .map((link) => `${link.environmentId} (${link.label})`)
-              .join(", ")}.`;
-    return { label, linked, note: `Home is off on ${label}.${next}` };
-  });
 
   const readFailure = () => fail("Home's threads could not be read.");
 
@@ -401,21 +375,42 @@ const make = Effect.gen(function* () {
       ),
     ),
 
-    status: Effect.fn("HomeService.status")(function* ({ link, fullChildren: full = false }) {
+    read: Effect.fn("HomeService.read")(function* ({
+      link,
+      limit = 5,
+      beforePosition,
+      fullChildren: full = false,
+    }) {
       const environmentId = yield* environment.getEnvironmentId;
       const home = yield* readHome;
       const shell = home.threadId === null ? null : yield* liveShell(home.threadId);
       if (shell === null) {
-        const { label, linked, note } = yield* offHere;
-        return {
-          environmentId,
-          environmentLabel: label,
-          agent: null,
-          note,
-          ...(linked === undefined ? {} : { linkedEnvironments: linked }),
-        };
+        const { label, note } = yield* offHere;
+        return { environmentId, environmentLabel: label, agent: null, note };
       }
       const { label } = yield* environment.getDescriptor;
+      const target = yield* threads
+        .getThreadRecords(shell.id, [
+          "runs",
+          "runtimeRequests",
+          "contextTransfers",
+          "providerTurns",
+        ])
+        .pipe(Effect.mapError(readFailure));
+      const { result: page } = yield* readThreadPage(
+        threads,
+        target,
+        {
+          threadId: shell.id,
+          view: "messages",
+          limit,
+          maxCharsPerItem: 20_000,
+          runLimit: 1,
+          ...(beforePosition === undefined ? {} : { beforePosition }),
+        },
+        environmentId,
+        { shell },
+      ).pipe(Effect.mapError((error) => fail(error.message)));
       const ids = yield* launchedThreadIds;
       const shells =
         ids.length === 0
@@ -426,8 +421,8 @@ const make = Effect.gen(function* () {
         .getThreadRecords(shell.id, ["subagents"])
         .pipe(Effect.mapError(readFailure));
       const replies = new Map(
-        yield* Effect.forEach([shell, ...shells], (thread) =>
-          readLatestReply(threads, thread, full || thread.id === shell.id).pipe(
+        yield* Effect.forEach(shells, (thread) =>
+          readLatestReply(threads, thread, full).pipe(
             Effect.mapError(readFailure),
             Effect.map((reply) => [thread.id, reply] as const),
           ),
@@ -442,7 +437,13 @@ const make = Effect.gen(function* () {
           link: link({ environmentId, threadId: shell.id }, shell.title),
           status: shell.status,
           attention: attention === "question" || attention === "approval" ? attention : null,
-          latestReply: replies.get(shell.id) ?? null,
+          messages: page.items.map((item) => ({
+            position: item.position,
+            from: item.type === "user_message" ? ("user" as const) : ("home" as const),
+            at: item.updatedAt,
+            text: item.text ?? "",
+          })),
+          earlierPosition: page.earlierPosition ?? null,
           children: groupAgentChildren({ environmentId, shells, replies, subagents, link, full }),
         },
       };
