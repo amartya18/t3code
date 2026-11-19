@@ -8,6 +8,9 @@ export const CustomModeSkillName = TrimmedNonEmptyString.check(
 );
 export type CustomModeSkillName = typeof CustomModeSkillName.Type;
 
+/** A skill can be a mode only when a `$skill` mention can carry its name. */
+export const isCustomModeSkillName = Schema.is(CustomModeSkillName);
+
 /**
  * A skill pinned to a thread so every turn keeps following it. `off` keeps the last skill so the
  * next turn can tell the agent to stop.
