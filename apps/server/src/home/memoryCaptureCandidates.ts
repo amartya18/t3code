@@ -4,6 +4,7 @@
  */
 import {
   type EnvironmentId,
+  HOME_REPORT_MESSAGE_ID_PREFIX,
   isHomeLaunchedThreadId,
   isHomeThreadId,
   type MemoryCaptureScope,
@@ -55,6 +56,8 @@ export interface CaptureItem {
   readonly senderThreadId?: ThreadId | undefined;
   /** False while the item still streams; a batch never reaches past it. */
   readonly final: boolean;
+  /** A message T3 Code sent into Home's thread, or Home's reply restating it. */
+  readonly via?: "home-report" | "home-report-reply";
 }
 
 /** Text shown before the new items for orientation; the model may not cite it. */
@@ -99,8 +102,26 @@ export function captureItemOf(
     role: itemRole(item.type, message),
     text: item.type === "proposed_plan" ? item.markdown : item.text,
     ...(message?.senderThreadId === undefined ? {} : { senderThreadId: message.senderThreadId }),
+    ...(item.type === "user_message" && item.messageId.startsWith(HOME_REPORT_MESSAGE_ID_PREFIX)
+      ? { via: "home-report" as const }
+      : {}),
     final: !OPEN_STATUSES.has(item.status),
   };
+}
+
+/**
+ * Home's replies to its watch reports restate what child threads found. Those
+ * facts are captured from the children, so the replies are context, not evidence.
+ */
+function relayHomeReportReplies(items: ReadonlyArray<CaptureItem>): ReadonlyArray<CaptureItem> {
+  let afterReport = false;
+  return items.map((item) => {
+    if (item.role !== "agent") {
+      afterReport = item.via === "home-report";
+      return item;
+    }
+    return afterReport ? { ...item, role: "relayed", via: "home-report-reply" } : item;
+  });
 }
 
 const ITEM_CLIP_THRESHOLD = 6_000;
@@ -142,8 +163,9 @@ export function planBatches(input: {
   readonly preceding: ReadonlyArray<ContextItem>;
   readonly items: ReadonlyArray<CaptureItem>;
 }): ReadonlyArray<CaptureBatch> {
-  const firstOpen = input.items.findIndex((item) => !item.final);
-  const ready = (firstOpen === -1 ? input.items : input.items.slice(0, firstOpen)).map((item) => ({
+  const relayed = relayHomeReportReplies(input.items);
+  const firstOpen = relayed.findIndex((item) => !item.final);
+  const ready = (firstOpen === -1 ? relayed : relayed.slice(0, firstOpen)).map((item) => ({
     ...item,
     text: clipItemText(item.text),
   }));
@@ -183,7 +205,9 @@ function itemLabel(item: CaptureItem): string {
     case "agent":
       return "AGENT";
     case "relayed":
-      return `RELAYED from ${item.senderThreadId ?? "another agent"}`;
+      return item.via === "home-report-reply"
+        ? "RELAYED (Home restating a watch report)"
+        : `RELAYED from ${item.senderThreadId ?? "another agent"}`;
     case "system":
       return "SYSTEM";
   }

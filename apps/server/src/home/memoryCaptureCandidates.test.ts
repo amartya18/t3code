@@ -46,7 +46,7 @@ const shell = (id: string, overrides: Partial<OrchestrationV2ThreadShell> = {}) 
 
 const row = (
   type: "user_message" | "assistant_message" | "proposed_plan" | "command_execution",
-  overrides: { visibility?: "local" | "inherited"; status?: string } = {},
+  overrides: { visibility?: "local" | "inherited"; status?: string; messageId?: string } = {},
 ) =>
   ({
     position: 4,
@@ -55,6 +55,7 @@ const row = (
     sourceItemId: "item-4",
     item: {
       type,
+      messageId: overrides.messageId ?? "message-4",
       status: overrides.status ?? "completed",
       text: "Use Haiku for capture.",
       markdown: "Plan: use Haiku.",
@@ -148,6 +149,14 @@ describe("captureItemOf", () => {
     );
     expect(captureItemOf(row("proposed_plan"), undefined)?.text).toBe("Plan: use Haiku.");
   });
+
+  it("tags a message T3 Code sent into Home's thread", () => {
+    const report = row("user_message", { messageId: "home-report:1" });
+    expect(captureItemOf(report, { createdBy: "system", creationSource: "server" })?.via).toBe(
+      "home-report",
+    );
+    expect(captureItemOf(row("user_message"), undefined)?.via).toBeUndefined();
+  });
 });
 
 describe("planBatches", () => {
@@ -169,6 +178,31 @@ describe("planBatches", () => {
     );
     expect(batches[0]!.context.map((entry) => entry.position)).toEqual([8, 9]);
     expect(batches[1]!.context.map((entry) => entry.position)).toEqual([17, 18]);
+  });
+
+  it("makes Home's reply to a watch report relayed context, not its replies to Amar", () => {
+    const report = { ...item(6, "system", "Watch report."), via: "home-report" as const };
+    const [only] = planBatches({
+      thread,
+      preceding: [],
+      items: [
+        item(5, "amar"),
+        report,
+        item(7, "agent", "The child chose X."),
+        item(8, "amar"),
+        item(9, "agent"),
+      ],
+    });
+    expect(only!.items.map((entry) => entry.role)).toEqual([
+      "amar",
+      "system",
+      "relayed",
+      "amar",
+      "agent",
+    ]);
+    expect(buildCapturePrompt(only!)).toContain(
+      "[pos 7] RELAYED (Home restating a watch report)\nThe child chose X.",
+    );
   });
 
   it("labels every item and shows the brief as context", () => {
