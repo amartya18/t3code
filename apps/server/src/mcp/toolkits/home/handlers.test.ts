@@ -227,6 +227,20 @@ it.effect(
         });
       }
       expect(sent.size).toBe(0);
+      // A side chat or fork of Home still reads Home's thread to recover its context, but sends
+      // from a thread go through t3_home_send like any other.
+      const sideChat: McpInvocationContext.McpInvocationScope = {
+        ...homeScope,
+        thread: { ...homeScope.thread!, threadId: ThreadId.make("side-chat") },
+      };
+      // Past the refusal, the reader fails on records this test does not mock.
+      const sideChatRead = yield* call("t3_thread_read", { threadId: homeThreadId }, sideChat);
+      expect(JSON.stringify(sideChatRead.content)).not.toContain("t3_home_read");
+      expect(
+        declaredFailure(
+          yield* call("t3_thread_send", { threadId: homeThreadId, message: "Hi." }, sideChat),
+        ),
+      ).toMatchObject({ message: "Message Home with t3_home_send, which finds its thread." });
       // Home still reads its own thread, as it does after a context handoff.
       yield* call("t3_thread_read", { threadId: homeThreadId }, homeScope);
       expect(fleet).toMatchObject([

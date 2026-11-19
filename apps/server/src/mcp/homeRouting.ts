@@ -117,9 +117,16 @@ const HOME_THREAD_TOOLS = {
 } as const;
 
 /** Points a client at the Home tools, which read Home's thread whole and send to its current one. */
-export const refuseHomeThread = (threadId: ThreadId, use: keyof typeof HOME_THREAD_TOOLS) =>
-  isHomeThreadId(threadId)
-    ? Effect.fail(
-        new OrchestratorMcpFailure({ code: "invalid_request", message: HOME_THREAD_TOOLS[use] }),
-      )
-    : Effect.void;
+export const refuseHomeThread = Effect.fn("mcp.refuseHomeThread")(function* (
+  threadId: ThreadId,
+  use: keyof typeof HOME_THREAD_TOOLS,
+) {
+  if (!isHomeThreadId(threadId)) return;
+  // A side chat or fork of Home recovers its context by reading Home's thread.
+  if (use === "read" && (yield* McpInvocationContext.McpInvocationContext).thread !== undefined)
+    return;
+  return yield* new OrchestratorMcpFailure({
+    code: "invalid_request",
+    message: HOME_THREAD_TOOLS[use],
+  });
+});
