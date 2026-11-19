@@ -5,6 +5,7 @@ import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as FleetService from "./FleetService.ts";
 import * as HomeService from "./HomeService.ts";
 import * as HomeWatcher from "./HomeWatcher.ts";
+import * as MemoryCapture from "./MemoryCapture.ts";
 
 /** Home and fleet services, shared by the WebSocket and MCP transports. */
 export const HomeLayer = Layer.mergeAll(
@@ -13,4 +14,5 @@ export const HomeLayer = Layer.mergeAll(
     Layer.provideMerge(HomeService.layer.pipe(Layer.provide(PeerLinks.layer))),
   ),
   FleetService.layer.pipe(Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry)),
+  MemoryCapture.layer,
 );
