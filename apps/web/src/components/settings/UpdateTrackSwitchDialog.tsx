@@ -150,7 +150,7 @@ function SwitchPlan({
                     "Could not install update",
                     `This app downloaded ${downloadedVersion ?? "nothing"}, not ${release.version} or newer.`,
                   );
-                  return false;
+                  return;
                 }
                 return installLocalUpdate(bridge, reportError, downloadedVersion);
               },
