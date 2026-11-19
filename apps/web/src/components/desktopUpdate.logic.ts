@@ -1,4 +1,8 @@
-import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
+import type {
+  DesktopBridge,
+  DesktopUpdateActionResult,
+  DesktopUpdateState,
+} from "@t3tools/contracts";
 
 export type DesktopUpdateButtonAction = "download" | "install" | "none";
 
@@ -140,6 +144,36 @@ export function getDesktopUpdateActionError(result: DesktopUpdateActionResult): 
 
 export function shouldToastDesktopUpdateActionResult(result: DesktopUpdateActionResult): boolean {
   return getDesktopUpdateActionError(result) !== null;
+}
+
+export type DesktopUpdateInstallOutcome =
+  | { readonly status: "refused"; readonly state: DesktopUpdateState }
+  | { readonly status: "failed"; readonly message: string };
+
+/**
+ * Settles only when the update does not install; on success the app quits first. macOS checks
+ * the update's signature after quitAndInstall returns, so an accepted install can still fail.
+ */
+export async function installDesktopUpdate(
+  bridge: Pick<DesktopBridge, "installUpdate" | "onUpdateState">,
+  expectedVersion?: string,
+): Promise<DesktopUpdateInstallOutcome> {
+  let reportFailure: (message: string) => void = () => {};
+  const failure = new Promise<string>((resolve) => {
+    reportFailure = resolve;
+  });
+  const unsubscribe = bridge.onUpdateState((state) => {
+    if (state.errorContext === "install") {
+      reportFailure(state.message ?? "The update could not be installed.");
+    }
+  });
+  try {
+    const result = await bridge.installUpdate(expectedVersion);
+    if (!result.accepted) return { status: "refused", state: result.state };
+    return { status: "failed", message: getDesktopUpdateActionError(result) ?? (await failure) };
+  } finally {
+    unsubscribe();
+  }
 }
 
 export function canCheckForUpdate(state: DesktopUpdateState | null): boolean {

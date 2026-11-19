@@ -104,7 +104,7 @@ export function useUpdateEverything(
       installLocal,
     }: {
       downloadLocal?: (reportError: ReportLocalUpdateError) => Promise<boolean>;
-      installLocal?: (reportError: ReportLocalUpdateError) => Promise<boolean>;
+      installLocal?: (reportError: ReportLocalUpdateError) => Promise<void>;
     }) => {
       const localFailures: Array<string> = [];
       const reportLocalError: ReportLocalUpdateError = (title, description) => {
@@ -244,7 +244,7 @@ export function useUpdateEverything(
               (run) => run && { ...run, phase: "installing", restartAt: null },
             );
             saveUpdateEverythingResult({ ...result(finishedServers), localVersion });
-            if (await installLocal(reportLocalError)) return;
+            await installLocal(reportLocalError);
             clearSavedUpdateEverythingResult();
           }
         }

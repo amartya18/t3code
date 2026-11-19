@@ -3,6 +3,7 @@ import type { DesktopUpdateState } from "@t3tools/contracts";
 
 import {
   canCheckForUpdate,
+  installDesktopUpdate,
   getDesktopUpdateButtonTooltip,
   getDesktopUpdateReleaseHistoryUrl,
   getDesktopUpdateReleaseUrl,
@@ -104,5 +105,42 @@ describe("canCheckForUpdate", () => {
         downloadedVersion: "1.1.0",
       }),
     ).toBe(true);
+  });
+});
+
+describe("installDesktopUpdate", () => {
+  it("reports an install that fails after the desktop accepted it", async () => {
+    const downloaded: DesktopUpdateState = {
+      ...baseState,
+      status: "downloaded",
+      availableVersion: "1.1.0",
+      downloadedVersion: "1.1.0",
+    };
+    const listeners = new Set<(state: DesktopUpdateState) => void>();
+    const outcome = installDesktopUpdate({
+      onUpdateState: (listener) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      installUpdate: async () => {
+        queueMicrotask(() => {
+          for (const listener of listeners) {
+            listener({
+              ...downloaded,
+              message: "code has no resources but signature indicates they must be present",
+              errorContext: "install",
+              canRetry: true,
+            });
+          }
+        });
+        return { accepted: true, completed: false, state: downloaded };
+      },
+    });
+
+    await expect(outcome).resolves.toEqual({
+      status: "failed",
+      message: "code has no resources but signature indicates they must be present",
+    });
+    expect(listeners.size).toBe(0);
   });
 });

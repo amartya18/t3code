@@ -22,6 +22,7 @@ import {
   getDesktopUpdateDownloadedVersion,
   getDesktopUpdateIdleTooltip,
   getDesktopUpdateInstallConfirmationMessage,
+  installDesktopUpdate,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
   shouldShowArm64IntelBuildWarning,
@@ -166,29 +167,24 @@ export async function downloadLocalUpdate(
   }
 }
 
+/** Returns only when the update did not install; otherwise the app quits first. */
 export async function installLocalUpdate(
   bridge: DesktopBridge,
   reportError: ReportLocalUpdateError = toastUpdateError,
   expectedVersion?: string,
-): Promise<boolean> {
+): Promise<void> {
   try {
-    const result = await bridge.installUpdate(expectedVersion);
-    if (!result.accepted) {
-      showDesktopUpdateDownloadedToast(bridge, result.state);
-      return false;
+    const outcome = await installDesktopUpdate(bridge, expectedVersion);
+    if (outcome.status === "refused") {
+      showDesktopUpdateDownloadedToast(bridge, outcome.state);
+      return;
     }
-    const actionError = shouldToastDesktopUpdateActionResult(result)
-      ? getDesktopUpdateActionError(result)
-      : null;
-    if (!actionError) return true;
-    reportError("Could not install update", actionError);
-    return false;
+    reportError("Could not install update", outcome.message);
   } catch (error) {
     reportError(
       "Could not install update",
       error instanceof Error ? error.message : "An unexpected error occurred.",
     );
-    return false;
   }
 }
 
@@ -448,9 +444,8 @@ function SidebarUpdateControl() {
                     failures: [],
                     restarting: [],
                   });
-                  if (!(await installLocalUpdate(window.desktopBridge!))) {
-                    clearSavedUpdateEverythingResult();
-                  }
+                  await installLocalUpdate(window.desktopBridge!);
+                  clearSavedUpdateEverythingResult();
                 },
               }
             : {})}
