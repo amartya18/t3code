@@ -11,6 +11,7 @@ import * as Option from "effect/Option";
 import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 import { DEFAULT_HOME_SETTINGS, HomeSettings } from "./home.ts";
+import { DEFAULT_MEMORY_CAPTURE_SETTINGS, MemoryCaptureSettings } from "./memoryCapture.ts";
 import * as Struct from "effect/Struct";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import {
@@ -1517,6 +1518,10 @@ export const ServerSettings = Schema.Struct({
    * Server-managed: the WebSocket settings update drops client patches to it.
    */
   home: HomeSettings.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_HOME_SETTINGS))),
+  /** Fork-only thread memory capture. Set in settings.json only; no client sends it. */
+  memoryCapture: MemoryCaptureSettings.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_MEMORY_CAPTURE_SETTINGS)),
+  ),
   /** Null inherits t3.json, then local; omit it on the wire for older clients requiring a literal. */
   defaultThreadEnvMode: OmittedWhenNull(ThreadEnvMode),
   newWorktreesStartFromOrigin: Schema.Boolean.pipe(

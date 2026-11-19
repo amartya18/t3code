@@ -1,6 +1,7 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import type * as Schema from "effect/Schema";
 import type { ModelSelection, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
 import {
   isProviderAvailable,
@@ -11,7 +12,10 @@ import * as DateTime from "effect/DateTime";
 import { exhaustedUsageWindow } from "@t3tools/shared/usageLimits";
 import { fallbackTextGenerationModelSelection } from "@t3tools/shared/serverSettings";
 import * as ServerSettings from "../serverSettings.ts";
-import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
+import type {
+  ProviderTextGeneration,
+  StructuredGenerationInput,
+} from "@t3tools/provider-core/server/textGeneration";
 import { TextGenerationError } from "@t3tools/contracts";
 
 import * as ProviderInstallationGate from "../provider/ProviderInstallationGate.ts";
@@ -31,6 +35,7 @@ export type {
   PrContentGenerationResult,
   ReviewGuideGenerationInput,
   ReviewGuideGenerationResult,
+  StructuredGenerationInput,
   ThreadTitleGenerationInput,
   ThreadTitleGenerationResult,
   TranscriptionPostProcessingInput,
@@ -47,7 +52,8 @@ type TextGenerationOp =
   | "generateBranchName"
   | "generateThreadTitle"
   | "generateReviewGuide"
-  | "generateTranscriptionPostProcessing";
+  | "generateTranscriptionPostProcessing"
+  | "generateStructured";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
@@ -77,14 +83,14 @@ export const make = Effect.gen(function* () {
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const installationGate = yield* ProviderInstallationGate.ProviderInstallationGate;
   const textGenerators = yield* TextGenerators.TextGenerators;
-  const generate = Effect.fn("TextGeneration.generate")(function* <A>(
+  const generate = Effect.fn("TextGeneration.generate")(function* <A, R = never>(
     operation: TextGenerationOp,
     selection: ModelSelection,
     projectId: ProjectId | null | undefined,
     invoke: (
       service: ProviderTextGeneration,
       modelSelection: ModelSelection,
-    ) => Effect.Effect<A, TextGenerationError>,
+    ) => Effect.Effect<A, TextGenerationError, R>,
   ) {
     const textGenerator = yield* textGenerators.runner(selection.instanceId);
     // A review guide reaches a text generator only through a fallback; it needs an agent instead.
@@ -201,6 +207,24 @@ export const make = Effect.gen(function* () {
         null,
         (service, modelSelection) =>
           service.generateTranscriptionPostProcessing({ ...input, modelSelection }),
+      );
+    }),
+    generateStructured: Effect.fn("TextGeneration.generateStructured")(function <
+      S extends Schema.Top,
+    >(input: StructuredGenerationInput<S>) {
+      return generate(
+        "generateStructured",
+        input.modelSelection,
+        input.projectId,
+        (service, modelSelection) =>
+          service.generateStructured === undefined
+            ? Effect.fail(
+                new TextGenerationError({
+                  operation: "generateStructured",
+                  detail: `Provider instance '${modelSelection.instanceId}' cannot generate structured output.`,
+                }),
+              )
+            : service.generateStructured({ ...input, modelSelection }),
       );
     }),
     generateThreadTitle: Effect.fn("TextGeneration.generateThreadTitle")(function (input) {
