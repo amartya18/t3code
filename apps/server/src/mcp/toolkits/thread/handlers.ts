@@ -7,6 +7,7 @@ import {
   type RunId,
   OrchestratorMcpFailure,
   type OrchestrationV2Command,
+  activeCustomModeSkill,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -235,7 +236,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
     ),
   ),
   t3_thread_configure: McpToolAccess.either(
-    (input) => input.modelSelection === undefined,
+    (input) => input.modelSelection === undefined && input.customMode === undefined,
     McpToolAccess.reads((input) =>
       Effect.gen(function* () {
         const {
@@ -246,21 +247,40 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           modelSelection: thread.modelSelection,
           runtimeMode: thread.runtimeMode,
           interactionMode: thread.interactionMode,
+          customMode: activeCustomModeSkill(thread.customMode),
         };
       }),
     ),
     writesThread((input) =>
       Effect.gen(function* () {
-        const modelSelection = yield* required(input.modelSelection, "modelSelection");
         const {
           threads,
           projection: { thread },
         } = yield* readThread(input.threadId);
-        const type = modelSelectionCommandType(thread.providerInstanceId, modelSelection);
-        const result = yield* threads
-          .dispatch({ type, threadId: thread.id, commandId: yield* newCommandId(), modelSelection })
-          .pipe(Effect.mapError(dispatchFailure));
-        return { sequence: result.sequence };
+        let sequence = 0;
+        if (input.modelSelection !== undefined) {
+          const modelSelection = input.modelSelection;
+          const type = modelSelectionCommandType(thread.providerInstanceId, modelSelection);
+          ({ sequence } = yield* threads
+            .dispatch({
+              type,
+              threadId: thread.id,
+              commandId: yield* newCommandId(),
+              modelSelection,
+            })
+            .pipe(Effect.mapError(dispatchFailure)));
+        }
+        if (input.customMode !== undefined) {
+          ({ sequence } = yield* threads
+            .dispatch({
+              type: "thread.custom-mode.set",
+              threadId: thread.id,
+              commandId: yield* newCommandId(),
+              skill: input.customMode,
+            })
+            .pipe(Effect.mapError(dispatchFailure)));
+        }
+        return { sequence };
       }),
     ),
   ),
