@@ -205,6 +205,7 @@ export function resolveSidebarThreadSection(input: {
 const SIDEBAR_MARKER_PREFIX = "sidebar-marker-";
 
 export type SidebarListMarker =
+  | "threads-header"
   | "pinned-header"
   | "active-placeholder"
   | "settled-placeholder"
@@ -248,6 +249,7 @@ export function resolveSidebarDropTarget(
   items: readonly SidebarListItem[],
   activeKey: string,
   overId: string,
+  threadsExpanded = true,
 ): SidebarDropTarget | null {
   const activeIndex = items.findIndex((item) => sidebarListItemId(item) === activeKey);
   const overIndex = items.findIndex((item) => sidebarListItemId(item) === overId);
@@ -256,6 +258,7 @@ export function resolveSidebarDropTarget(
   moved.splice(overIndex, 0, items[activeIndex]!);
   const section = sectionAtSidebarSlot(moved, overIndex);
   if (section === "working" || section === "snoozed") return null;
+  if (!threadsExpanded && section !== "settled") return null;
   const pinnedOrder: string[] = [];
   const activeOrder: string[] = [];
   let currentSection: SidebarSection = "pinned";

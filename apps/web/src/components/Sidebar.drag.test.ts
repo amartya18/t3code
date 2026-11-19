@@ -355,6 +355,7 @@ describe("sidebar drag projection", () => {
 
   it("opens label space below each pinned boundary while dragging", () => {
     const items = [
+      marker("threads-header"),
       pinnedHeader,
       thread("p", "pinned"),
       divider,
@@ -368,6 +369,7 @@ describe("sidebar drag projection", () => {
       "a2",
       "a1",
     );
+    expect(result.get(sidebarMarkerId("threads-header"))).toEqual(stationary);
     expect(result.get(sidebarMarkerId("pinned-header"))).toEqual(stationary);
     expect(result.get("p")?.y).toBe(16);
     expect(result.get(sidebarMarkerId("pinned-divider"))?.y).toBe(16);

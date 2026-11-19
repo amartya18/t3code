@@ -1159,6 +1159,19 @@ describe("Working shelf (beta)", () => {
       expect(resolveSidebarDropVerb("active", "working")).toBeNull();
     });
 
+    it("keeps Pinned first below the Threads header, and drops only into Settled while it is collapsed", () => {
+      const listed = [marker("threads-header"), ...items];
+      expect(resolveSidebarDropTarget(listed, "a1", "p1")).toEqual({
+        section: "pinned",
+        pinnedOrder: ["a1", "p1"],
+        activeOrder: ["a2"],
+      });
+      expect(resolveSidebarDropTarget(listed, "p1", "a2")?.section).toBe("active");
+      expect(resolveSidebarDropTarget(listed, "a1", "p1", false)).toBeNull();
+      expect(resolveSidebarDropTarget(listed, "p1", "a2", false)).toBeNull();
+      expect(resolveSidebarDropTarget(listed, "a1", "s1", false)?.section).toBe("settled");
+    });
+
     it.each([
       ["pinned", "p1"],
       ["active", "a2"],

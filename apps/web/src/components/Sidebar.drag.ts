@@ -172,6 +172,9 @@ export function createSidebarSortingStrategy(input: {
       if (groups[name].length > 0) projected.push(...groups[name]);
       else marker(`${name}-placeholder`);
     };
+    if (items.some((item) => item.kind === "marker" && item.marker === "threads-header")) {
+      marker("threads-header");
+    }
     marker("pinned-header");
     projected.push(...groups.pinned);
     marker("pinned-divider");
