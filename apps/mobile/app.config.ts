@@ -32,8 +32,8 @@ const FORK_IDENTITY_KEYS = [
   "T3CODE_EAS_PROJECT_ID",
 ] as const;
 
-// A fork signs with its own Apple team and Expo project. A partial override would pair one
-// account's IDs with another's credentials, which only fails later at signing.
+// A partial override would pair one account's IDs with another's credentials, which only fails
+// later at signing.
 function resolveIdentity(env: Record<string, string | undefined>) {
   const values = FORK_IDENTITY_KEYS.map((key) => env[key]?.trim() || undefined);
   if (values.every((value) => value === undefined)) return UPSTREAM_IDENTITY;
