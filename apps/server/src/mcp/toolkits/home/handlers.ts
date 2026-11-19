@@ -25,7 +25,7 @@ export const HomeHandlersLive = McpToolAccess.toLayer(HomeToolkit, {
       const home = yield* HomeService.HomeService;
       return yield* home
         .status({
-          full: input.full === true,
+          fullChildren: input.fullChildren === true,
           link: (ref, title) =>
             McpInvocationContext.threadLinkFor(
               { ...scope, environmentId: ref.environmentId },

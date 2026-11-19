@@ -71,8 +71,8 @@ export class HomeService extends Context.Service<
      */
     readonly status: (options: {
       readonly link: ThreadLinker;
-      /** Whole replies instead of one-line previews. */
-      readonly full?: boolean;
+      /** Children's whole replies instead of one-line previews. Home's own is always whole. */
+      readonly fullChildren?: boolean;
     }) => Effect.Effect<HomeStatusResult, HomeUnavailableError>;
     /** Wakes Home with the watched events in one message. */
     readonly report: (report: HomeWatchReport) => Effect.Effect<void, HomeUnavailableError>;
@@ -401,7 +401,7 @@ const make = Effect.gen(function* () {
       ),
     ),
 
-    status: Effect.fn("HomeService.status")(function* ({ link, full = false }) {
+    status: Effect.fn("HomeService.status")(function* ({ link, fullChildren: full = false }) {
       const environmentId = yield* environment.getEnvironmentId;
       const home = yield* readHome;
       const shell = home.threadId === null ? null : yield* liveShell(home.threadId);
@@ -427,7 +427,7 @@ const make = Effect.gen(function* () {
         .pipe(Effect.mapError(readFailure));
       const replies = new Map(
         yield* Effect.forEach([shell, ...shells], (thread) =>
-          readLatestReply(threads, thread, full).pipe(
+          readLatestReply(threads, thread, full || thread.id === shell.id).pipe(
             Effect.mapError(readFailure),
             Effect.map((reply) => [thread.id, reply] as const),
           ),

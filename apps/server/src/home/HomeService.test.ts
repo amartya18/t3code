@@ -389,13 +389,13 @@ it.effect("status reads the threads Home launched, and only the newest settled o
       { runId: `run:${threadId}` as never, role: "user", text: "Thanks." },
     ]);
     messages.set("home-launched:open", [
-      { runId: "run:home-launched:open" as never, role: "assistant", text: "Opened the PR." },
+      { runId: "run:home-launched:open" as never, role: "assistant", text: "Opened\n\nthe PR." },
     ]);
     const status = yield* home.status({ link: (ref) => `link:${ref.threadId}` });
     expect(status.agent).toMatchObject({
       threadId,
       link: `link:${threadId}`,
-      latestReply: "Checked the fleet.",
+      latestReply: "Checked\n\nthe fleet.",
     });
     expect(status.linkedEnvironments).toBeUndefined();
     expect(snapshotRequests).toEqual([
@@ -409,8 +409,8 @@ it.effect("status reads the threads Home launched, and only the newest settled o
       threadId: "home-launched:open",
       latestReply: "Opened the PR.",
     });
-    const full = yield* home.status({ link: (ref) => `link:${ref.threadId}`, full: true });
-    expect(full.agent?.latestReply).toBe("Checked\n\nthe fleet.");
+    const full = yield* home.status({ link: (ref) => `link:${ref.threadId}`, fullChildren: true });
+    expect(full.agent?.children.running[0]?.latestReply).toBe("Opened\n\nthe PR.");
     // Reading never wakes or changes anything.
     expect([launched.length, sent, dispatched]).toEqual([1, [], []]);
   }).pipe(Effect.provide(layer));

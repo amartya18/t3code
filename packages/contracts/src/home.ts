@@ -357,7 +357,7 @@ export const AgentStatusChild = Schema.Struct({
   status: AgentStatusKind,
   attention: AgentAttention,
   completedAt: Schema.NullOr(IsoDateTime),
-  /** A one-line preview of its latest reply, or the whole reply with `full`. */
+  /** A one-line preview of its latest reply, or the whole reply with `fullChildren`. */
   latestReply: Schema.NullOr(Schema.String),
 });
 export type AgentStatusChild = typeof AgentStatusChild.Type;
@@ -374,7 +374,7 @@ export type AgentStatusChildren = typeof AgentStatusChildren.Type;
 
 export const HomeStatusInput = Schema.Struct({
   environmentId: environmentIdField,
-  full: Schema.optional(Schema.Boolean),
+  fullChildren: Schema.optional(Schema.Boolean),
 });
 export type HomeStatusInput = typeof HomeStatusInput.Type;
 
@@ -389,6 +389,7 @@ export const HomeStatusResult = Schema.Struct({
       link: Schema.String,
       status: OrchestrationV2ShellThreadStatus,
       attention: AgentAttention,
+      /** Whole, up to 20,000 characters. */
       latestReply: Schema.NullOr(Schema.String),
       children: AgentStatusChildren,
     }),

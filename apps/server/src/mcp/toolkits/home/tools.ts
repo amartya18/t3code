@@ -43,7 +43,7 @@ const HomeStatusTool = Tool.make("t3_home_status", {
     ...homeRoutingDependencies,
   ],
   description:
-    "Read where Home stands: whether it is on, its latest reply, and the threads it started here or handed off with delegate_task. Replies are 300-character previews; `full: true` returns them whole. Read-only; it never starts a turn. To ask Home something, use t3_home_send. Threads it started in linked environments with t3_thread_launch are not tracked. If Home is off here, retry with an environmentId from linkedEnvironments.",
+    "Read where Home stands: whether it is on, its latest reply, and the threads it started here or handed off with delegate_task. Home's latestReply is whole; its threads' are 300-character previews unless `fullChildren: true`. Read-only; it never starts a turn. To ask Home something, use t3_home_send. Threads it started in linked environments with t3_thread_launch are not tracked. If Home is off here, retry with an environmentId from linkedEnvironments.",
   parameters: HomeStatusInput,
   success: HomeStatusResult,
 })
