@@ -1,4 +1,5 @@
 import { Button } from "../../components/ui/Button";
+import { Chip } from "../../components/ui/Chip";
 import * as Dialog from "../../components/ui/Dialog";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
@@ -95,6 +96,7 @@ import {
 import { useComposerTextRole } from "../settings/appearance/useScaledTextRole";
 import type { RemoteClientConnectionState } from "../../lib/connection";
 import { Menu } from "../../components/ui/Menu";
+import { useComposerCustomMode } from "./useComposerCustomMode";
 import {
   composerRunsDraftLocally,
   type ActiveTurnComposerAction,
@@ -420,6 +422,13 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     undefined,
     props.selectedThread.projectId,
   );
+  const customMode = useComposerCustomMode({
+    environmentId: props.environmentId,
+    threadId: props.selectedThread.id,
+    isDraft: props.isDraft === true,
+    draftKey: composerDraftKey,
+  });
+  const pinSkillAsMode = props.canOperateThread ? customMode.setSkill : undefined;
   const composerMenu = useComposerCommandMenu({
     draftMessage: draftMessage,
     ownerKey: composerDraftKey,
@@ -442,6 +451,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     onUsageLimits:
       usageLimitsOffered && draftAttachments.length === 0 ? openUsageLimits : undefined,
     onOpenModelPicker: settingsSheetPresentation.open,
+    onUseSkillAsMode: pinSkillAsMode,
     modelOptions: mentionModelOptions,
     modelProviders: props.serverConfig?.providers,
     ...(props.onFreshSession === undefined ? {} : { onFreshSession: props.onFreshSession }),
@@ -758,6 +768,9 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
               isLoading={composerMenu.isLoading}
               error={composerMenu.error}
               onSelect={composerMenu.onSelect}
+              onLongPressSkill={
+                pinSkillAsMode && ((item) => composerMenu.onSelect(item, { asCustomMode: true }))
+              }
             />
           </ComposerPopoverAnchor>
         ) : null}
@@ -789,6 +802,20 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
             tone="text"
             onPress={openSettings}
           />
+        ) : null}
+        {customMode.skill ? (
+          <View className="flex-row pb-1.5">
+            <Chip
+              label={customMode.skill}
+              icon="pin"
+              trailingIcon="xmark"
+              size="small"
+              selected
+              disabled={!props.canOperateThread}
+              accessibilityLabel={`Turn off custom mode ${customMode.skill}`}
+              onPress={() => customMode.setSkill(null)}
+            />
+          </View>
         ) : null}
 
         <ComposerSurface

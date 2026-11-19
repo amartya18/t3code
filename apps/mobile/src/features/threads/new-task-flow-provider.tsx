@@ -109,6 +109,7 @@ import {
 import { usePrepareTriage } from "../triage/usePrepareTriage";
 import { useEnvironmentShellReadiness } from "../../state/shell";
 import { useConnectionsReady, useWorkspaceEnvironments } from "../../state/workspace";
+import { draftCustomModeCreation } from "./useComposerCustomMode";
 
 type WorkspaceMode = "local" | "worktree";
 
@@ -796,6 +797,7 @@ export function NewTaskFlowProvider(
         ...((workspaceSelection?.startFromOrigin ?? startFromOrigin)
           ? { startFromOrigin: true }
           : {}),
+        ...draftCustomModeCreation(selectedProjectDraftKey),
       },
       createdAt: metadata.createdAt,
     };

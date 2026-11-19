@@ -9,6 +9,7 @@ import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell
 import type { ThreadFamilyRead } from "@t3tools/client-runtime/state/threads";
 import {
   CommandId,
+  CustomModeSkillName,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   EnvironmentId,
   IsoDateTime,
@@ -47,6 +48,7 @@ const QueuedThreadCreationSchema = Schema.Struct({
   worktreePath: Schema.NullOr(Schema.String),
   startFromOrigin: Schema.optional(Schema.Boolean),
   pullRequestReference: Schema.optional(Schema.String),
+  customMode: Schema.optional(CustomModeSkillName),
 });
 
 export const QueuedThreadMessageSchema = Schema.Struct({
@@ -81,6 +83,7 @@ export interface QueuedThreadCreation {
   readonly worktreePath: string | null;
   readonly startFromOrigin?: boolean;
   readonly pullRequestReference?: string;
+  readonly customMode?: CustomModeSkillName;
 }
 
 export interface QueuedThreadMessage {

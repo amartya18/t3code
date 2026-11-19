@@ -1,6 +1,7 @@
 import { threadPullRequestKeyOf } from "@t3tools/client-runtime/thread-pull-requests";
 import * as Dialog from "../../components/ui/Dialog";
 import type {
+  CustomModeSkillName,
   EnvironmentId,
   ProjectId,
   ServerProvider,
@@ -17,7 +18,7 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/model
 const EMPTY_THREAD_SHELLS: ReadonlyArray<EnvironmentThreadShell> = [];
 const EMPTY_ENVIRONMENTS: ReadonlyArray<ComposerEnvironmentCandidate> = [];
 const NO_LINKED_ENVIRONMENTS: ReadonlyMap<EnvironmentId, string> = new Map();
-import { COMPOSER_CONTEXT_MAX_RECORDS } from "@t3tools/contracts";
+import { COMPOSER_CONTEXT_MAX_RECORDS, isCustomModeSkillName } from "@t3tools/contracts";
 import {
   formatComposerContextReference,
   threadContextRecord,
@@ -268,6 +269,7 @@ export function useComposerCommandMenu({
   onChangeDraftMessage,
   onUsageLimits,
   onOpenModelPicker,
+  onUseSkillAsMode,
   modelOptions,
   modelProviders,
   onFreshSession,
@@ -294,6 +296,8 @@ export function useComposerCommandMenu({
   readonly onUsageLimits?: () => void;
   /** `/model` opens this picker instead of inserting text. */
   readonly onOpenModelPicker: () => void;
+  /** Pins a skill as the thread's custom mode instead of inserting it. */
+  readonly onUseSkillAsMode?: ((skill: CustomModeSkillName) => void) | undefined;
   readonly modelOptions?: ReadonlyArray<ModelOption>;
   readonly modelProviders?: ReadonlyArray<ServerProvider>;
   /** Arms a fresh session for the next message; absent where `/clear` is unavailable. */
@@ -562,7 +566,7 @@ export function useComposerCommandMenu({
     return [];
   })();
 
-  const onSelect = (item: ComposerCommandItem) => {
+  const onSelect = (item: ComposerCommandItem, options?: { readonly asCustomMode?: boolean }) => {
     if (!trigger) return;
     if (item.type === "environment") {
       if (!ownerKey || trigger.kind !== "path") return;
@@ -668,6 +672,16 @@ export function useComposerCommandMenu({
       onChangeDraftMessage(cleared.text);
       action();
     };
+    if (
+      options?.asCustomMode === true &&
+      item.type === "skill" &&
+      onUseSkillAsMode &&
+      isCustomModeSkillName(item.skill.name)
+    ) {
+      const skill = item.skill.name;
+      clearTriggerThen(() => onUseSkillAsMode(skill));
+      return;
+    }
     if (item.type === "slash-command" && item.command === "model") {
       clearTriggerThen(onOpenModelPicker);
       return;
