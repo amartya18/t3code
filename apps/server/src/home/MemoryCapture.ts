@@ -103,6 +103,7 @@ export const layer = Layer.effectDiscard(
     const home = yield* HostProcess.HomeDirectory;
 
     const captureLock = yield* Semaphore.make(1);
+    const stateLock = yield* Semaphore.make(1);
     const timers = yield* FiberMap.make<ThreadId>();
     const pending = new Map<ThreadId, PendingCapture>();
     let state: TrialState | null = null;
@@ -168,47 +169,51 @@ export const layer = Layer.effectDiscard(
      * candidates.jsonl so a crash between append and cursor save never repeats
      * an extraction. The first load baselines every thread at its current end.
      */
-    const loadState = Effect.fn("MemoryCapture.loadState")(function* (dir: string) {
-      if (state?.dir === dir) return state;
-      yield* fs.makeDirectory(dir, { recursive: true });
-      const cursorPath = path.join(dir, "cursors.json");
-      const saved = (yield* fs.exists(cursorPath))
-        ? decodeCursorFile(yield* fs.readFileString(cursorPath))
-        : Option.none();
-      if (Option.isSome(saved)) {
-        const cursors = new Map(Object.entries(saved.value.threads)) as Map<ThreadId, number>;
-        const candidatesPath = path.join(dir, "candidates.jsonl");
-        if (yield* fs.exists(candidatesPath)) {
-          for (const line of (yield* fs.readFileString(candidatesPath)).split("\n")) {
-            const run = decodeRunLine(line);
-            if (Option.isNone(run)) continue;
-            const threadId = run.value.threadId as ThreadId;
-            cursors.set(threadId, Math.max(cursors.get(threadId) ?? -1, run.value.batch.to));
+    const loadState = Effect.fn("MemoryCapture.loadState")(
+      function* (dir: string) {
+        if (state?.dir === dir) return state;
+        yield* fs.makeDirectory(dir, { recursive: true });
+        const cursorPath = path.join(dir, "cursors.json");
+        const saved = (yield* fs.exists(cursorPath))
+          ? decodeCursorFile(yield* fs.readFileString(cursorPath))
+          : Option.none();
+        if (Option.isSome(saved)) {
+          const cursors = new Map(Object.entries(saved.value.threads)) as Map<ThreadId, number>;
+          const candidatesPath = path.join(dir, "candidates.jsonl");
+          if (yield* fs.exists(candidatesPath)) {
+            for (const line of (yield* fs.readFileString(candidatesPath)).split("\n")) {
+              const run = decodeRunLine(line);
+              if (Option.isNone(run)) continue;
+              const threadId = run.value.threadId as ThreadId;
+              cursors.set(threadId, Math.max(cursors.get(threadId) ?? -1, run.value.batch.to));
+            }
           }
+          state = {
+            dir,
+            startedAt: saved.value.startedAt,
+            startedAtMs: DateTime.toEpochMillis(DateTime.makeUnsafe(saved.value.startedAt)),
+            cursors,
+          };
+          return state;
+        }
+        const startedAtMs = yield* nowMs;
+        const listed = yield* threads.listProjectThreads({ includeSubagents: true });
+        const cursors = new Map<ThreadId, number>();
+        for (const entry of listed) {
+          cursors.set(entry.id, (yield* newestPosition(entry.id, "activity"))?.position ?? -1);
         }
         state = {
           dir,
-          startedAt: saved.value.startedAt,
-          startedAtMs: DateTime.toEpochMillis(DateTime.makeUnsafe(saved.value.startedAt)),
+          startedAtMs,
+          startedAt: DateTime.formatIso(DateTime.makeUnsafe(startedAtMs)),
           cursors,
         };
+        yield* saveCursors(state);
         return state;
-      }
-      const startedAtMs = yield* nowMs;
-      const listed = yield* threads.listProjectThreads({ includeSubagents: true });
-      const cursors = new Map<ThreadId, number>();
-      for (const entry of listed) {
-        cursors.set(entry.id, (yield* newestPosition(entry.id, "activity"))?.position ?? -1);
-      }
-      state = {
-        dir,
-        startedAtMs,
-        startedAt: DateTime.formatIso(DateTime.makeUnsafe(startedAtMs)),
-        cursors,
-      };
-      yield* saveCursors(state);
-      return state;
-    });
+      },
+      // One loader at a time, so a start-up sweep and a settings change never baseline twice.
+      (effect) => stateLock.withPermits(1)(effect),
+    );
 
     /** A thread seen for the first time starts at its end, unless it began after the trial did. */
     const cursorFor = Effect.fn("MemoryCapture.cursorFor")(function* (
@@ -487,6 +492,28 @@ export const layer = Layer.effectDiscard(
       sweep().pipe(
         Effect.catchCause((cause) => Effect.logWarning("memory capture sweep failed", cause)),
         Effect.repeat(Schedule.spaced(SWEEP_EVERY)),
+      ),
+    );
+    // Turning trial on while the server runs baselines and sweeps at once, so
+    // activity from that moment on is captured.
+    yield* forkParked(
+      settings.streamChanges.pipe(
+        Stream.map(({ memoryCapture }) =>
+          memoryCapture.mode === "trial" ? trialDirOf(memoryCapture) : null,
+        ),
+        Stream.changes,
+        Stream.runForEach((dir) =>
+          dir === null || state?.dir === dir
+            ? Effect.void
+            : sweep().pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("memory capture sweep failed", cause),
+                ),
+              ),
+        ),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("memory capture settings stream failed", cause),
+        ),
       ),
     );
     yield* forkParked(

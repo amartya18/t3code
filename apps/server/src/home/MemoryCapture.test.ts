@@ -94,12 +94,18 @@ const makeWorld = Effect.fn("makeWorld")(function* (input: {
   const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
   const ended = new Map<string, Queue.Queue<void>>();
   for (const name of SPANS) ended.set(name, yield* Queue.unbounded<void>());
-  const memoryCapture: MemoryCaptureSettings = {
+  let memoryCapture: MemoryCaptureSettings = {
     ...DEFAULT_MEMORY_CAPTURE_SETTINGS,
     mode: "trial",
     trialDir: input.dir,
     excludeProjectIds: [excludedProjectId],
     ...input.settings,
+  };
+  const settingsChanges = yield* Queue.unbounded<typeof DEFAULT_SERVER_SETTINGS>();
+  /** Changes the settings the way an edit to settings.json does, and announces it. */
+  const setCapture = (patch: Partial<MemoryCaptureSettings>) => {
+    memoryCapture = { ...memoryCapture, ...patch };
+    Queue.offerUnsafe(settingsChanges, { ...DEFAULT_SERVER_SETTINGS, memoryCapture });
   };
 
   const addThread = (id: string, overrides: Partial<OrchestrationV2ThreadShell> = {}) => {
@@ -201,6 +207,7 @@ const makeWorld = Effect.fn("makeWorld")(function* (input: {
     }),
     Layer.mock(ServerSettings.ServerSettingsService)({
       getSettings: Effect.sync(() => ({ ...DEFAULT_SERVER_SETTINGS, memoryCapture })),
+      streamChanges: Stream.fromQueue(settingsChanges),
     }),
     Layer.mock(TextGeneration.TextGeneration)({ generateStructured }),
     Layer.mock(ProjectService.ProjectService)({
@@ -245,6 +252,7 @@ const makeWorld = Effect.fn("makeWorld")(function* (input: {
     addThread,
     updateThread,
     addMessage,
+    setCapture,
     requests,
     start,
     send,
@@ -329,6 +337,28 @@ describe("MemoryCapture", () => {
           "cursors.json",
         ]);
       }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("baselines the moment trial is turned on, then captures what follows", () =>
+    Effect.gen(function* () {
+      const dir = yield* trialDir();
+      const world = yield* makeWorld({ dir, settings: { mode: "off" } });
+      const threadId = world.addThread("thread-a");
+      world.addMessage(threadId, "user", "Design memory capture.");
+      world.addMessage(threadId, "assistant", "Here is a plan.");
+      yield* world.start();
+
+      world.setCapture({ mode: "trial" });
+      yield* world.swept;
+      expect((yield* readCursors(dir)).threads[threadId]).toBe(1);
+      world.addMessage(threadId, "user", "Use Haiku for capture.");
+      world.addMessage(threadId, "assistant", "Done.");
+      yield* world.send(event(threadId, "completed"));
+      yield* TestClock.adjust(Duration.minutes(13));
+      yield* world.captured;
+      expect(world.requests).toHaveLength(1);
+      expect(world.requests[0]!.prompt).toContain("[pos 2] AMAR\nUse Haiku for capture.");
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("captures at once when a thread with a pending timer is settled", () =>
