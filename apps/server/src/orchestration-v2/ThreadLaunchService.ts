@@ -1,7 +1,7 @@
 import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
-import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { resolveNewThreadEnvMode, resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
   type ChatAttachment,
@@ -19,6 +19,7 @@ import {
   type RunId,
   type RuntimeMode,
   type ScheduledTaskId,
+  type ServerSettingsError,
   TextGenerationError,
   ThreadId,
 } from "@t3tools/contracts";
@@ -48,6 +49,7 @@ import { parseGitCloneProgressLine } from "../project/gitCloneProgress.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
+import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
@@ -224,6 +226,15 @@ export class ThreadLaunchService extends Context.Service<
     >;
     /** True only when the project's folder is known not to be a Git repository. */
     readonly isNonGitProject: (projectId: ProjectId) => Effect.Effect<boolean>;
+    /** The project's default branch, on its primary remote when that has it. */
+    readonly defaultWorktreeBaseRef: (workspaceRoot: string) => Effect.Effect<string>;
+    /** The workspace for a launch that names none: the project's New threads setting, as the composer reads it. */
+    readonly defaultWorkspaceStrategy: (
+      projectId: ProjectId,
+    ) => Effect.Effect<
+      ThreadLaunchWorkspaceStrategy,
+      ServerSettingsError | ThreadManagement.ThreadManagementError
+    >;
     readonly retryPreparation: (
       input: ThreadLaunchPreparationInput,
     ) => Effect.Effect<
@@ -262,6 +273,7 @@ const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const eventSink = yield* EventSink.EventSinkV2;
   const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
+  const projectFiles = yield* T3ProjectFileLoader.T3ProjectFileLoader;
   // A project-folder launch that names no branch records the folder's checkout, as the composer does.
   const launchBranch = (strategy: ThreadLaunchWorkspaceStrategy, workspaceRoot: string) =>
     strategy.type === "root" && strategy.branch === undefined
@@ -450,6 +462,63 @@ const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => false),
     );
   });
+
+  const defaultWorktreeBaseRef: ThreadLaunchService["Service"]["defaultWorktreeBaseRef"] =
+    Effect.fn("ThreadLaunchService.defaultWorktreeBaseRef")(function* (cwd) {
+      const refExists = (refName: string) =>
+        git.hasCommit({ cwd, refName }).pipe(Effect.orElseSucceed(() => false));
+      const remoteName = yield* git
+        .resolvePrimaryRemoteName(cwd)
+        .pipe(Effect.orElseSucceed(() => null));
+      const conventional = ["main", "master"];
+      if (remoteName !== null) {
+        const remoteDefault = yield* git
+          .resolveDefaultBranchName(cwd, remoteName)
+          .pipe(Effect.orElseSucceed(() => null));
+        // Fetch does not update a recorded HEAD, so it can outlive the branch it names.
+        for (const branch of remoteDefault === null
+          ? conventional
+          : [remoteDefault, ...conventional]) {
+          // Launch resolves a bare name through a local branch's upstream, or else assumes `origin`.
+          if (yield* refExists(`refs/remotes/${remoteName}/${branch}`)) {
+            return `${remoteName}/${branch}`;
+          }
+        }
+      }
+      // Local-only repositories, or a remote with neither a usable HEAD nor a conventional branch.
+      for (const branch of conventional) {
+        if (yield* refExists(`refs/heads/${branch}`)) return branch;
+      }
+      return "main";
+    });
+
+  const defaultWorkspaceStrategy: ThreadLaunchService["Service"]["defaultWorkspaceStrategy"] =
+    Effect.fn("ThreadLaunchService.defaultWorkspaceStrategy")(function* (projectId) {
+      const project = yield* projects.getById(projectId).pipe(
+        Effect.map(Option.getOrUndefined),
+        Effect.orElseSucceed(() => undefined),
+      );
+      if (project === undefined || (yield* isNonGitProject(projectId))) return { type: "root" };
+      const projectSettings = resolveProjectSettings(
+        yield* serverSettings.getSettings,
+        projectId,
+        project,
+        Option.getOrNull(yield* projectFiles.load(project.workspaceRoot)),
+      );
+      const envMode = resolveNewThreadEnvMode({
+        projectSettings,
+        workspaceRoot: project.workspaceRoot,
+        newProjectsRoot: managedFolders.namedProjectsRoot,
+        projectHasThreads:
+          (yield* threads.listProjectThreads({ projectId, includeSubagents: false })).length > 0,
+      });
+      if (envMode === "local") return { type: "root" };
+      return {
+        type: "worktree",
+        baseRef: yield* defaultWorktreeBaseRef(project.workspaceRoot),
+        startFromOrigin: projectSettings.settings.newWorktreesStartFromOrigin,
+      };
+    });
 
   /**
    * A recorded worktree strategy can outlive the ref it names: tasks saved before
@@ -1528,6 +1597,8 @@ const make = Effect.gen(function* () {
     launch,
     checkWorktreeBase,
     isNonGitProject,
+    defaultWorktreeBaseRef,
+    defaultWorkspaceStrategy,
     retryPreparation,
     prepareRun,
   });

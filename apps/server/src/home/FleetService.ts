@@ -281,7 +281,11 @@ const make = Effect.gen(function* () {
           modelSelection,
           runtimeMode: input.runtimeMode ?? current.defaultRuntimeMode,
           interactionMode: input.interactionMode ?? "default",
-          workspaceStrategy: input.workspaceStrategy ?? { type: "root" },
+          workspaceStrategy:
+            input.workspaceStrategy ??
+            (yield* launches
+              .defaultWorkspaceStrategy(projectId)
+              .pipe(Effect.mapError(orchestrationError))),
           ...(input.message === undefined
             ? {}
             : {

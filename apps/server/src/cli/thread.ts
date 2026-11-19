@@ -795,7 +795,7 @@ const threadStartCommand = Command.make("start", {
   ),
   worktree: Flag.String("worktree").pipe(
     Flag.withDescription(
-      "Run in a new git worktree based on this branch, tag, or commit, instead of the project folder.",
+      "Run in a new git worktree based on this branch, tag, or commit. Without it, the project's New threads setting decides.",
     ),
     Flag.optional,
   ),

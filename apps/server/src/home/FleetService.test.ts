@@ -61,6 +61,8 @@ const shell = (
     ...overrides,
   }) as unknown as OrchestrationV2ThreadShell;
 
+const projectDefault = { type: "worktree", baseRef: "origin/main", startFromOrigin: true } as const;
+
 const setup = () => {
   const fleetShells = [
     // The test clock starts at 0, so this one wakes in a minute.
@@ -73,6 +75,7 @@ const setup = () => {
   ];
   const dispatched: Array<OrchestrationV2ServerCommand> = [];
   const launched: Array<string> = [];
+  const workspaces: Array<ThreadLaunch.ThreadLaunchWorkspaceStrategy> = [];
   const layer = FleetService.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -97,8 +100,10 @@ const setup = () => {
             Effect.succeed(candidate === "/home" || candidate.startsWith("/home/")),
         }),
         Layer.mock(ThreadLaunch.ThreadLaunchService)({
+          defaultWorkspaceStrategy: () => Effect.succeed(projectDefault),
           launch: (input) => {
             launched.push(input.commandId);
+            workspaces.push(input.workspaceStrategy);
             return Effect.succeed({
               threadId: input.threadId,
               projection: { thread: shell(String(input.threadId), "a", 1), runs: [] },
@@ -137,7 +142,7 @@ const setup = () => {
       ),
     ),
   );
-  return { layer, dispatched, launched };
+  return { layer, dispatched, launched, workspaces };
 };
 
 it.effect("lists threads from every project, newest first, with snooze state", () => {
@@ -306,6 +311,29 @@ it.effect("a retried Home launch keeps its command, so it replays", () => {
     yield* launch;
     expect(launched).toHaveLength(2);
     expect(launched[1]).toBe(launched[0]);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("a Home launch that names no workspace gets the project's default", () => {
+  const { layer, workspaces } = setup();
+  return Effect.gen(function* () {
+    const fleet = yield* FleetService.FleetService;
+    const launch = (workspaceStrategy?: ThreadLaunch.ThreadLaunchWorkspaceStrategy) =>
+      fleet.execute({
+        actor,
+        request: {
+          op: "threads.launch",
+          input: {
+            projectId: ProjectId.make("a"),
+            title: "Worker",
+            modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+            ...(workspaceStrategy === undefined ? {} : { workspaceStrategy }),
+          },
+        },
+      });
+    yield* launch();
+    yield* launch({ type: "root" });
+    expect(workspaces).toEqual([projectDefault, { type: "root" }]);
   }).pipe(Effect.provide(layer));
 });
 

@@ -9,7 +9,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as ServerConfig from "../config.ts";
 import { createPendingAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ThreadMessageIntake from "./ThreadMessageIntake.ts";
-import { assert, it, vi } from "@effect/vitest";
+import { assert, describe, it, vi } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import {
   ChatAttachmentId,
@@ -26,6 +26,7 @@ import {
   OrchestrationV2ThreadProjectionJson,
   ScheduledTaskId,
   type ServerProvider,
+  type T3ProjectFile,
   ThreadId,
   TextGenerationError,
   ServerSettingsError,
@@ -52,6 +53,7 @@ import * as ProjectStore from "./ProjectStore.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
+import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import * as ProviderRegistryMock from "../provider/testUtils/providerRegistryMock.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ScheduledTasks from "../scheduledTasks/ScheduledTaskService.ts";
@@ -139,6 +141,7 @@ interface HarnessOptions {
   readonly providers?: ReadonlyArray<ServerProvider>;
   readonly git?: Partial<GitWorkflow.GitWorkflowService["Service"]>;
   readonly isGitRepository?: CheckpointStore.CheckpointStore["Service"]["isGitRepository"];
+  readonly projectFile?: T3ProjectFile;
 }
 
 function makeHarness(options: HarnessOptions = {}) {
@@ -191,6 +194,9 @@ function makeHarness(options: HarnessOptions = {}) {
     Layer.mock(TerminalManager.TerminalManager)({ close: closeTerminal }),
     Layer.mock(CheckpointStore.CheckpointStore)({
       isGitRepository: options.isGitRepository ?? (() => Effect.succeed(true)),
+    }),
+    Layer.mock(T3ProjectFileLoader.T3ProjectFileLoader)({
+      load: () => Effect.succeed(Option.fromUndefinedOr(options.projectFile)),
     }),
     Layer.succeed(ProjectService.ProjectService, {
       create: () => Effect.die("unused"),
@@ -1181,6 +1187,194 @@ it.effect("records the checkout's branch on a root launch that names none", () =
     const { thread } = yield* threads.getThreadProjection(launched.threadId);
     assert.equal(thread.branch, "fix/checkout-total");
   }).pipe(Effect.provide(harness.layer));
+});
+
+describe("a launch that names no workspace", () => {
+  const onDefaultBranch = {
+    type: "worktree",
+    baseRef: "origin/main",
+    startFromOrigin: true,
+  } as const;
+  const worktreeSetting = { defaultThreadEnvMode: "worktree" } as const;
+  const defaultFor = (options: HarnessOptions) =>
+    ThreadLaunch.ThreadLaunchService.pipe(
+      Effect.flatMap((launches) => launches.defaultWorkspaceStrategy(projectId)),
+      Effect.provide(
+        makeHarness({
+          hasCommit: ({ refName }) => Effect.succeed(refName === "refs/remotes/origin/main"),
+          ...options,
+        }).layer,
+      ),
+    );
+
+  it.effect.each<{
+    readonly name: string;
+    readonly options: HarnessOptions;
+    readonly expected: ThreadLaunch.ThreadLaunchWorkspaceStrategy;
+  }>([
+    {
+      name: "the worktree setting starts a worktree on the default branch",
+      options: { serverSettings: worktreeSetting },
+      expected: onDefaultBranch,
+    },
+    {
+      name: "the new-worktree setting decides whether it starts from origin",
+      options: {
+        serverSettings: { ...worktreeSetting, newWorktreesStartFromOrigin: false },
+      },
+      expected: { ...onDefaultBranch, startFromOrigin: false },
+    },
+    {
+      name: "the local setting stays in the project folder",
+      options: { serverSettings: { defaultThreadEnvMode: "local" } },
+      expected: { type: "root" },
+    },
+    {
+      name: "a project set to local stays in its folder",
+      options: {
+        serverSettings: {
+          ...worktreeSetting,
+          projectSettingsFolded: true,
+          projectSettingsOverrides: { [projectId]: { defaultThreadEnvMode: "local" } },
+        },
+      },
+      expected: { type: "root" },
+    },
+    {
+      name: "t3.json decides when the setting inherits",
+      options: { projectFile: { defaultThreadEnvMode: "worktree" } },
+      expected: onDefaultBranch,
+    },
+    {
+      name: "a folder that is not a Git repository stays in its folder",
+      options: { serverSettings: worktreeSetting, isGitRepository: () => Effect.succeed(false) },
+      expected: { type: "root" },
+    },
+  ])("$name", ({ options, expected }) =>
+    Effect.gen(function* () {
+      assert.deepEqual(yield* defaultFor(options), expected);
+    }),
+  );
+
+  it.effect("a new project folder's first thread stays in the folder, as in the composer", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({
+        serverSettings: worktreeSetting,
+        hasCommit: ({ refName }) => Effect.succeed(refName === "refs/remotes/origin/main"),
+        managedFolders: Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+          namedProjectsRoot: "/",
+          isScratchProject: () => Effect.succeed(false),
+          folderForThread: () => Effect.succeedNone,
+        }),
+      });
+      yield* Effect.gen(function* () {
+        const launches = yield* ThreadLaunch.ThreadLaunchService;
+        assert.deepEqual(yield* launches.defaultWorkspaceStrategy(projectId), { type: "root" });
+        yield* launches.launch(
+          launchInput({ command: "command:launch:first", thread: "thread:launch:first" }),
+        );
+        assert.deepEqual(yield* launches.defaultWorkspaceStrategy(projectId), onDefaultBranch);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect.each([
+    {
+      name: "no remote, only master",
+      remote: null,
+      remoteDefault: null,
+      refs: ["refs/heads/master"],
+      baseRef: "master",
+    },
+    {
+      name: "no remote, main and master",
+      remote: null,
+      remoteDefault: null,
+      refs: ["refs/heads/master", "refs/heads/main"],
+      baseRef: "main",
+    },
+    {
+      name: "no remote, neither main nor master",
+      remote: null,
+      remoteDefault: null,
+      refs: ["refs/heads/develop"],
+      baseRef: "main",
+    },
+    {
+      name: "no recorded HEAD, remote main and a stale local master",
+      remote: "origin",
+      remoteDefault: null,
+      refs: ["refs/heads/master", "refs/remotes/origin/main"],
+      baseRef: "origin/main",
+    },
+    {
+      name: "no recorded HEAD, master only on the remote",
+      remote: "origin",
+      remoteDefault: null,
+      refs: ["refs/remotes/origin/master"],
+      baseRef: "origin/master",
+    },
+    {
+      name: "no recorded HEAD, local main and master only on the remote",
+      remote: "origin",
+      remoteDefault: null,
+      refs: ["refs/heads/main", "refs/remotes/origin/master"],
+      baseRef: "origin/master",
+    },
+    {
+      name: "no recorded HEAD, nothing conventional on the remote, local main",
+      remote: "origin",
+      remoteDefault: null,
+      refs: ["refs/heads/main", "refs/remotes/origin/develop"],
+      baseRef: "main",
+    },
+    {
+      name: "a recorded HEAD whose branch is gone",
+      remote: "origin",
+      remoteDefault: "main",
+      refs: ["refs/heads/main", "refs/remotes/origin/master"],
+      baseRef: "origin/master",
+    },
+    {
+      name: "a remote not called origin",
+      remote: "upstream",
+      remoteDefault: "develop",
+      refs: ["refs/remotes/upstream/develop"],
+      baseRef: "upstream/develop",
+    },
+    {
+      name: "a remote not called origin, no recorded HEAD",
+      remote: "upstream",
+      remoteDefault: null,
+      refs: ["refs/remotes/upstream/main"],
+      baseRef: "upstream/main",
+    },
+  ])("$name starts from $baseRef", ({ remote, remoteDefault, refs, baseRef }) =>
+    Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService.pipe(
+        Effect.provide(
+          makeHarness({
+            hasCommit: ({ refName }) => Effect.succeed(refs.includes(refName)),
+            git: {
+              resolvePrimaryRemoteName: (cwd) =>
+                remote === null
+                  ? Effect.fail(
+                      new GitCommandError({
+                        operation: "GitVcsDriver.test",
+                        command: "git",
+                        cwd,
+                        detail: "No git remote is configured.",
+                      }),
+                    )
+                  : Effect.succeed(remote),
+              resolveDefaultBranchName: () => Effect.succeed(remoteDefault),
+            },
+          }).layer,
+        ),
+      );
+      assert.equal(yield* launches.defaultWorktreeBaseRef(project.workspaceRoot), baseRef);
+    }),
+  );
 });
 
 it.effect("launches a worktree request for Scratch at the root, in its own folder", () => {
@@ -2486,6 +2680,7 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
     };
     const failed = yield* ThreadMessageIntake.launchThread(input).pipe(
       Effect.provideService(ThreadLaunch.ThreadLaunchService, {
+        ...launches,
         launch: (request) =>
           launches.launch(request).pipe(
             Effect.andThen(
@@ -2497,10 +2692,6 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
               }),
             ),
           ),
-        checkWorktreeBase: launches.checkWorktreeBase,
-        isNonGitProject: launches.isNonGitProject,
-        retryPreparation: launches.retryPreparation,
-        prepareRun: launches.prepareRun,
       }),
       Effect.flip,
     );
