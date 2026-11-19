@@ -1,13 +1,14 @@
 /** Where an agent's threads stand, shared by Home's watcher and its status read. */
-import type {
-  AgentStatusChild,
-  AgentStatusChildren,
-  AgentStatusKind,
-  EnvironmentId,
-  HomeWatchEvent,
-  OrchestrationV2Subagent,
-  OrchestrationV2ThreadShell,
-  ThreadId,
+import {
+  isLiveSubagentShell,
+  type AgentStatusChild,
+  type AgentStatusChildren,
+  type AgentStatusKind,
+  type EnvironmentId,
+  type HomeWatchEvent,
+  type OrchestrationV2Subagent,
+  type OrchestrationV2ThreadShell,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -61,21 +62,13 @@ export type ThreadLinker = (
   title: string,
 ) => string;
 
-const ACTIVE_SHELL_STATUSES: ReadonlySet<OrchestrationV2ThreadShell["status"]> = new Set([
-  "queued",
-  "preparing",
-  "starting",
-  "running",
-  "waiting",
-]);
-
 function shellStatus(
   shell: OrchestrationV2ThreadShell,
   attention: ReturnType<typeof attentionOf>,
 ): AgentStatusKind {
   if (attention?.kind === "question" || attention?.kind === "approval") return "waiting";
   if (attention?.kind === "failed") return "failed";
-  if (shell.activeRunId !== null || ACTIVE_SHELL_STATUSES.has(shell.status)) return "running";
+  if (shell.activeRunId !== null || isLiveSubagentShell(shell)) return "running";
   if (shell.status === "completed") return "finished";
   // A thread that never ran waits for its first message.
   if (shell.status === "idle") return "waiting";

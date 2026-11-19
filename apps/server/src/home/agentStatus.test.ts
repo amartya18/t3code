@@ -82,6 +82,12 @@ describe("groupAgentChildren", () => {
         ...asking("refreshing", "auth_refresh"),
         activeRunId: liveThreadShell(ThreadId.make("r")).activeRunId,
       },
+      // Its own run ended, but the sub-agents it started are still working.
+      shell("activity", { activityRunStatus: "running", latestRunCompletedAt: at(3_000) }),
+      shell("background", {
+        pendingBackgroundTasks: [{ kind: "subagent", taskId: "task-1" }],
+        latestRunCompletedAt: at(3_000),
+      } as Partial<OrchestrationV2ThreadShell>),
       shell("failed", { status: "failed", latestRunCompletedAt: at(2_000) }),
       shell("idle", { status: "idle" }),
       shell("done", { latestRunCompletedAt: at(1_000) }),
@@ -91,6 +97,8 @@ describe("groupAgentChildren", () => {
       running: [
         ["running", null],
         ["refreshing", null],
+        ["activity", null],
+        ["background", null],
       ],
       waiting: [
         ["question", "question"],
