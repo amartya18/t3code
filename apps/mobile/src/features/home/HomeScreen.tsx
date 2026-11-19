@@ -715,32 +715,35 @@ export function HomeScreen(props: HomeScreenProps) {
   const v2ListHeader = (
     <>
       {listHeader}
+      {Platform.OS === "ios" && workspace ? (
+        // Above the Home card so a filter menu's dismissal morph is not covered.
+        <View style={{ zIndex: 1 }}>
+          <ThreadListFilters
+            gutter={sidebarSurface ? 8 : 0}
+            environments={props.environments}
+            projects={pickableProjectGroups(
+              sortHomeProjectScopes({
+                scopes: projectScopes,
+                threads: props.threads,
+                pendingTasks: [],
+                projectSortOrder: "updated_at",
+              }),
+            ).map((scope) => ({
+              key: scope.key,
+              label: scope.title,
+            }))}
+            selectedEnvironmentId={props.selectedEnvironmentId}
+            selectedProjectKey={props.selectedProjectKey}
+            onEnvironmentChange={props.onEnvironmentChange}
+            onProjectChange={props.onProjectChange}
+          />
+        </View>
+      ) : null}
       <HomeAgentRow
         thread={homeThread}
         environments={props.environments}
         onOpen={props.onOpenHome}
       />
-      {Platform.OS === "ios" && workspace ? (
-        <ThreadListFilters
-          gutter={sidebarSurface ? 8 : 0}
-          environments={props.environments}
-          projects={pickableProjectGroups(
-            sortHomeProjectScopes({
-              scopes: projectScopes,
-              threads: props.threads,
-              pendingTasks: [],
-              projectSortOrder: "updated_at",
-            }),
-          ).map((scope) => ({
-            key: scope.key,
-            label: scope.title,
-          }))}
-          selectedEnvironmentId={props.selectedEnvironmentId}
-          selectedProjectKey={props.selectedProjectKey}
-          onEnvironmentChange={props.onEnvironmentChange}
-          onProjectChange={props.onProjectChange}
-        />
-      ) : null}
     </>
   );
 
