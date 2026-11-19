@@ -43,8 +43,9 @@ The trial dir defaults to `$XDG_DATA_HOME/t3-capture/trial`, or
    Is the attribution right? Is it worth keeping?
 3. Compare it with the current wiki pages and pending inbox notes (`read_page` and `search`
    return both). Mark it a duplicate or new.
-4. Two models from different families grade independently. Each appends one entry to the
-   candidate's `grades` array:
+4. Two models grade independently, such as Claude Opus 5.5 and Claude Fable 5.2 in separate
+   threads, without seeing each other's grades. Each appends one entry to the candidate's
+   `grades` array:
    `{ "grader", "true", "attributionCorrect", "worthKeeping", "duplicate", "note"? }`.
    The review thread reads the wiki but never writes to it.
 5. Run `node scripts/memory-capture-rates.ts <graded.jsonl>`. It prints strict rates (every
