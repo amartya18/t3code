@@ -49,6 +49,7 @@ const remoteTask = (
 const group = (
   shells: ReadonlyArray<OrchestrationV2ThreadShell>,
   subagents: ReadonlyArray<OrchestrationV2Subagent> = [],
+  full = false,
 ) =>
   groupAgentChildren({
     environmentId: hub,
@@ -56,6 +57,7 @@ const group = (
     replies: new Map([[ThreadId.make("done"), "Fixed the build."]]),
     subagents,
     link: (ref, title) => `[${title}](${ref.environmentId}/${ref.threadId})`,
+    full,
   });
 
 const summary = (children: ReturnType<typeof group>) =>
@@ -139,5 +141,14 @@ describe("groupAgentChildren", () => {
       link: "[Task followed-up](box/followed-up)",
     });
     expect(children.recentlyFinished[0]?.latestReply).toHaveLength(300);
+  });
+
+  it("returns a linked task's whole result with full, up to the cap", () => {
+    const whole = `Done.\n\n${"x".repeat(400)}`;
+    const reply = (result: string) =>
+      group([], [remoteTask("answered", "completed", 1_000, result)], true).recentlyFinished[0]
+        ?.latestReply;
+    expect(reply(whole)).toBe(whole);
+    expect(reply("x".repeat(30_000))).toHaveLength(20_000);
   });
 });

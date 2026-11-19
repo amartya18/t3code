@@ -71,6 +71,8 @@ export class HomeService extends Context.Service<
      */
     readonly status: (options: {
       readonly link: ThreadLinker;
+      /** Whole replies instead of one-line previews. */
+      readonly full?: boolean;
     }) => Effect.Effect<HomeStatusResult, HomeUnavailableError>;
     /** Wakes Home with the watched events in one message. */
     readonly report: (report: HomeWatchReport) => Effect.Effect<void, HomeUnavailableError>;
@@ -399,7 +401,7 @@ const make = Effect.gen(function* () {
       ),
     ),
 
-    status: Effect.fn("HomeService.status")(function* ({ link }) {
+    status: Effect.fn("HomeService.status")(function* ({ link, full = false }) {
       const environmentId = yield* environment.getEnvironmentId;
       const home = yield* readHome;
       const shell = home.threadId === null ? null : yield* liveShell(home.threadId);
@@ -425,7 +427,7 @@ const make = Effect.gen(function* () {
         .pipe(Effect.mapError(readFailure));
       const replies = new Map(
         yield* Effect.forEach([shell, ...shells], (thread) =>
-          readLatestReply(threads, thread).pipe(
+          readLatestReply(threads, thread, full).pipe(
             Effect.mapError(readFailure),
             Effect.map((reply) => [thread.id, reply] as const),
           ),
@@ -441,7 +443,7 @@ const make = Effect.gen(function* () {
           status: shell.status,
           attention: attention === "question" || attention === "approval" ? attention : null,
           latestReply: replies.get(shell.id) ?? null,
-          children: groupAgentChildren({ environmentId, shells, replies, subagents, link }),
+          children: groupAgentChildren({ environmentId, shells, replies, subagents, link, full }),
         },
       };
     }),

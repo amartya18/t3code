@@ -1334,7 +1334,7 @@ export const readThreadPage = Effect.fn("OrchestratorMcp.readThreadPage")(functi
   viewer: {
     readonly client?: McpInvocationScope["client"];
     readonly shell?: OrchestrationV2ThreadShell;
-    /** Client callers (the CLI, older linked environments) page forward from a cursorless read. */
+    /** Linked environments page forward from a cursorless read, as their older versions expect. */
     readonly pagesForward?: boolean;
   } = {},
 ) {
@@ -3385,7 +3385,7 @@ const make = Effect.gen(function* () {
         target,
         input,
         scope.environmentId,
-        { client: scope.client, shell, pagesForward: scope.thread === undefined },
+        { client: scope.client, shell, pagesForward: scope.client?.linked === true },
       );
       const { items } = result;
       const returnedRunIds = new Set(

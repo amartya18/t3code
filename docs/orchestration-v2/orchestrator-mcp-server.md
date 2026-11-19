@@ -372,11 +372,10 @@ the environment by thread ID. A deleted thread returns `thread_not_found`. The
 default `messages` view returns user messages, assistant
 messages, and proposed plans. The `activity` view also returns summarized tool,
 reasoning, checkpoint, handoff, and runtime-request items. Large item text is
-bounded and reports whether it was truncated. An agent in a T3 thread that
-reads without a cursor gets the newest items, and `beforePosition=earlierPosition`
-reads older ones. Client callers (the CLI, linked environments, outside MCP
-clients) start at the oldest item instead, because the CLI and linked
-environments on older versions read that way and follow only `hasMore`.
+bounded and reports whether it was truncated. A read without a cursor gets the
+newest items, and `beforePosition=earlierPosition` reads older ones. Linked
+environments start at the oldest item instead, because older versions read that
+way and follow only `hasMore`.
 `afterPosition=-1` starts any read at the oldest item, and
 `afterPosition=nextPosition` reads newer items. The server stops adding items once the result reaches about 30,000 characters and
 reports the rest through `earlierPosition` or `hasMore`. Claude Code saves MCP

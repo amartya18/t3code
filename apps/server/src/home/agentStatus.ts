@@ -15,6 +15,8 @@ import * as Effect from "effect/Effect";
 import type * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 
 const REPLY_PREVIEW_LENGTH = 300;
+/** A `full` reply stops here, the most `t3_thread_read` returns of one item. */
+const FULL_REPLY_LENGTH = 20_000;
 /** Failed and finished threads past this many, newest first, are left out. */
 const RECENT_LIMIT = 5;
 
@@ -32,18 +34,18 @@ export function attentionOf(
   return null;
 }
 
-/** One line of at most 300 characters. */
-function replyPreview(text: string): string {
-  const line = text.replace(/\s+/g, " ").trim();
-  return line.length <= REPLY_PREVIEW_LENGTH
-    ? line
-    : `${line.slice(0, REPLY_PREVIEW_LENGTH - 1).trimEnd()}…`;
+/** One line of at most 300 characters, or with `full` the reply as written. */
+function replyPreview(text: string, full = false): string {
+  const line = full ? text.trim() : text.replace(/\s+/g, " ").trim();
+  const max = full ? FULL_REPLY_LENGTH : REPLY_PREVIEW_LENGTH;
+  return line.length <= max ? line : `${line.slice(0, max - 1).trimEnd()}…`;
 }
 
-/** The last assistant reply of the thread's latest run, previewed. Reads that run's messages only. */
+/** The last assistant reply of the thread's latest run, previewed unless `full`. Reads that run's messages only. */
 export const readLatestReply = Effect.fn("agentStatus.readLatestReply")(function* (
   threads: Pick<ThreadManagementService.ThreadManagementService["Service"], "getThreadRecords">,
   shell: Pick<OrchestrationV2ThreadShell, "id" | "latestRunId">,
+  full = false,
 ) {
   if (shell.latestRunId === null) return null;
   const { messages } = yield* threads.getThreadRecords(shell.id, ["messages"], {
@@ -51,7 +53,7 @@ export const readLatestReply = Effect.fn("agentStatus.readLatestReply")(function
     messageRoles: ["assistant"],
   });
   const reply = messages.findLast((message) => message.text.trim() !== "");
-  return reply === undefined ? null : replyPreview(reply.text);
+  return reply === undefined ? null : replyPreview(reply.text, full);
 });
 
 export type ThreadLinker = (
@@ -119,6 +121,7 @@ const TASK_STATUS: Record<OrchestrationV2Subagent["status"], AgentStatusKind> = 
 function remoteTaskChild(
   task: OrchestrationV2Subagent,
   link: ThreadLinker,
+  full: boolean,
 ): ReadonlyArray<AgentStatusChild> {
   const remote = task.remoteChild;
   if (task.origin !== "app_owned" || remote === undefined) return [];
@@ -133,7 +136,7 @@ function remoteTaskChild(
       // Its questions and approvals are answered where it runs; which one is not known here.
       attention: null,
       completedAt: task.completedAt === null ? null : DateTime.formatIso(task.completedAt),
-      latestReply: task.result === null ? null : replyPreview(task.result),
+      latestReply: task.result === null ? null : replyPreview(task.result, full),
     },
   ];
 }
@@ -152,6 +155,7 @@ export function groupAgentChildren(input: {
   readonly replies: ReadonlyMap<ThreadId, string | null>;
   readonly subagents: ReadonlyArray<OrchestrationV2Subagent>;
   readonly link: ThreadLinker;
+  readonly full: boolean;
 }): AgentStatusChildren {
   const byThread = new Map<string, AgentStatusChild>();
   const add = (child: AgentStatusChild) => {
@@ -165,7 +169,8 @@ export function groupAgentChildren(input: {
     (left, right) =>
       DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
   );
-  for (const child of newestTasks.flatMap((task) => remoteTaskChild(task, input.link))) add(child);
+  const tasks = newestTasks.flatMap((task) => remoteTaskChild(task, input.link, input.full));
+  for (const child of tasks) add(child);
   const children = [...byThread.values()];
   const having = (status: AgentStatusKind) => children.filter((child) => child.status === status);
   return {

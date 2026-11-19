@@ -357,7 +357,7 @@ export const AgentStatusChild = Schema.Struct({
   status: AgentStatusKind,
   attention: AgentAttention,
   completedAt: Schema.NullOr(IsoDateTime),
-  /** A one-line preview of its latest reply. */
+  /** A one-line preview of its latest reply, or the whole reply with `full`. */
   latestReply: Schema.NullOr(Schema.String),
 });
 export type AgentStatusChild = typeof AgentStatusChild.Type;
@@ -372,7 +372,10 @@ export const AgentStatusChildren = Schema.Struct({
 });
 export type AgentStatusChildren = typeof AgentStatusChildren.Type;
 
-export const HomeStatusInput = Schema.Struct({ environmentId: environmentIdField });
+export const HomeStatusInput = Schema.Struct({
+  environmentId: environmentIdField,
+  full: Schema.optional(Schema.Boolean),
+});
 export type HomeStatusInput = typeof HomeStatusInput.Type;
 
 export const HomeStatusResult = Schema.Struct({

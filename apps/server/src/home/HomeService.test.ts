@@ -409,6 +409,8 @@ it.effect("status reads the threads Home launched, and only the newest settled o
       threadId: "home-launched:open",
       latestReply: "Opened the PR.",
     });
+    const full = yield* home.status({ link: (ref) => `link:${ref.threadId}`, full: true });
+    expect(full.agent?.latestReply).toBe("Checked\n\nthe fleet.");
     // Reading never wakes or changes anything.
     expect([launched.length, sent, dispatched]).toEqual([1, [], []]);
   }).pipe(Effect.provide(layer));
