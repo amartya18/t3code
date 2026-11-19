@@ -53,6 +53,8 @@ export class HomeService extends Context.Service<
     /** Stops Home's run and starts a new provider session in the same thread. */
     readonly startFresh: Effect.Effect<HomeThreadResult, HomeUnavailableError>;
     readonly isHome: (threadId: ThreadId) => Effect.Effect<boolean>;
+    /** Home's live thread here. While Home is off, fails with where else to ask. */
+    readonly liveThreadId: Effect.Effect<ThreadId, HomeUnavailableError>;
     /**
      * Changes Home's watches for the Home thread `homeThreadId`. Fails when
      * that thread is no longer Home, so a run of a Home that was turned off
@@ -258,6 +260,21 @@ const make = Effect.gen(function* () {
     Effect.orElseSucceed(() => undefined),
   );
 
+  /** Why Home is not here, naming the linked environments to ask instead. */
+  const offHere = Effect.gen(function* () {
+    const { label } = yield* environment.getDescriptor;
+    const linked = yield* linkedEnvironments;
+    const next =
+      linked === undefined
+        ? " Its linked environments could not be listed."
+        : linked.length === 0
+          ? ""
+          : ` It may run in a linked environment: retry with environmentId set to one of ${linked
+              .map((link) => `${link.environmentId} (${link.label})`)
+              .join(", ")}.`;
+    return { label, linked, note: `Home is off on ${label}.${next}` };
+  });
+
   const readFailure = () => fail("Home's threads could not be read.");
 
   /** Unsettled threads Home launched here, and the newest settled ones. */
@@ -341,6 +358,12 @@ const make = Effect.gen(function* () {
       ),
     ),
 
+    liveThreadId: Effect.gen(function* () {
+      const { threadId } = yield* readHome;
+      if (threadId !== null && (yield* liveShell(threadId)) !== null) return threadId;
+      return yield* fail((yield* offHere).note);
+    }).pipe(Effect.withSpan("HomeService.liveThreadId")),
+
     updateWatches: Effect.fn("HomeService.updateWatches")((homeThreadId, update) =>
       withLock(
         Effect.gen(function* () {
@@ -354,25 +377,19 @@ const make = Effect.gen(function* () {
 
     status: Effect.fn("HomeService.status")(function* ({ link }) {
       const environmentId = yield* environment.getEnvironmentId;
-      const { label } = yield* environment.getDescriptor;
       const home = yield* readHome;
       const shell = home.threadId === null ? null : yield* liveShell(home.threadId);
       if (shell === null) {
-        const linked = yield* linkedEnvironments;
-        const next =
-          linked === undefined
-            ? " Its linked environments could not be listed."
-            : linked.length === 0
-              ? ""
-              : " It may run in a linked environment: retry with environmentId set to one of linkedEnvironments.";
+        const { label, linked, note } = yield* offHere;
         return {
           environmentId,
           environmentLabel: label,
           agent: null,
-          note: `Home is off on ${label}.${next}`,
+          note,
           ...(linked === undefined ? {} : { linkedEnvironments: linked }),
         };
       }
+      const { label } = yield* environment.getDescriptor;
       const ids = yield* launchedThreadIds;
       const shells =
         ids.length === 0
