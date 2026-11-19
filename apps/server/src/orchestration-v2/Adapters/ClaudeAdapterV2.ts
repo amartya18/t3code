@@ -99,6 +99,7 @@ import {
   TrimmedNonEmptyString,
   defaultInstanceIdForDriver,
   isCompactionCommandMessage,
+  isHomeThreadId,
   parseGoalCommand,
   type MessageId,
   type ModelSelection,
@@ -5053,6 +5054,7 @@ interface ActiveClaudeTurnContext {
       readonly messageId: MessageId;
       readonly text: string;
       readonly liveQuery: ClaudeLiveQueryContext;
+      readonly waitsForToolBoundary: boolean;
     }
   >;
   // Claude may settle a turn with a result that echoes only a steer's uuid.
@@ -11737,6 +11739,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               );
               return;
             }
+            // A boundary-waiting steer no tool boundary reached runs as Claude's next turn, which settles this one.
+            if (
+              !interrupted &&
+              !message.is_error &&
+              terminalStatusFromResult(message) === "completed" &&
+              [...context.pendingSteers.values()].some((steer) => steer.waitsForToolBoundary)
+            ) {
+              context.steeredSegmentUsage.push(message.usage);
+              context.steeredLedgerUsage = addClaudeLedgerUsage(
+                context.steeredLedgerUsage,
+                resultLedgerUsage.get(message),
+              );
+              return;
+            }
             yield* Ref.update(steeredTurns, (current) => {
               const next = new Set(current);
               next.delete(context.providerTurnId);
@@ -13594,6 +13610,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 detail: `Claude provider turn ${turnInput.providerTurnId} is not the active turn.`,
               });
             }
+            // Home coordinates, so its steers wait for the next tool boundary instead of cutting off its reply.
+            const waitsForToolBoundary = isHomeThreadId(turnInput.threadId);
             // Claude echoes this uuid once it accepts the steer.
             const steerUuid = yield* random.uuidV4().pipe(
               Effect.filterOrFail(isClaudePromptUuid),
@@ -13639,7 +13657,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ).promptEffort,
               ),
               attachments: turnInput.message.attachments,
-              priority: "now",
+              priority: waitsForToolBoundary ? "next" : "now",
               uuid: steerUuid,
               attachmentsDir,
               fileSystem,
@@ -13649,7 +13667,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
               Effect.provideService(Path.Path, path),
             );
-            yield* backgroundForegroundSubagents(existing, backgroundDeadline);
+            if (!waitsForToolBoundary) {
+              yield* backgroundForegroundSubagents(existing, backgroundDeadline);
+            }
             if (liveSteerSelection !== undefined) {
               yield* applySelectionLive(existing, liveSteerSelection);
             }
@@ -13674,6 +13694,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               messageId,
               text: turnInput.message.text,
               liveQuery: existing,
+              waitsForToolBoundary,
             });
             yield* Ref.update(steeredTurns, (current) => {
               const next = new Set(current);
