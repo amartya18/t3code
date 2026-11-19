@@ -1,51 +1,126 @@
 import { useAtomValue } from "@effect/atom-react";
+import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import { userHomeThreadRef } from "@t3tools/client-runtime/state/home";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { Pressable, View } from "react-native";
 
+import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
-import { useEnvironments } from "../../state/environments";
+import { cn } from "../../lib/cn";
 import { userHomeAtom } from "../../state/home";
+import type { WorkspaceEnvironment } from "../../state/workspaceModel";
+import { threadListEnvironmentsAtom } from "../../state/presentation";
+import { DONE_STATUS_LABEL, STATUS_LABEL_BY_STATUS } from "../threads/thread-list-v2-items";
+import { resolveThreadListV2RowStatus, threadHasUnseenCompletion } from "../threads/threadListV2";
+import type { HomeListFilterMenuEnvironment } from "./home-list-filter-menu";
+
+const UNREACHABLE_PHASES: ReadonlySet<EnvironmentConnectionPhase> = new Set([
+  "offline",
+  "reconnecting",
+  "error",
+  "unsupported",
+]);
+
+function homeStatus(thread: EnvironmentThreadShell | undefined) {
+  if (thread === undefined) return undefined;
+  const status = resolveThreadListV2RowStatus(thread);
+  const presentation =
+    STATUS_LABEL_BY_STATUS[status] ??
+    (status === "ready" && threadHasUnseenCompletion(thread) ? DONE_STATUS_LABEL : undefined);
+  if (presentation === undefined) return undefined;
+  return {
+    ...presentation,
+    label: presentation.label ?? (status === "waiting" ? "Waiting" : "Working"),
+  };
+}
 
 /** The user's one Home, pinned above the thread list on whichever environment runs it. */
 export function HomeAgentRow(props: {
+  readonly thread: EnvironmentThreadShell | undefined;
+  readonly environments: ReadonlyArray<
+    HomeListFilterMenuEnvironment & Pick<WorkspaceEnvironment, "connectionState">
+  >;
   readonly onOpen: (params: { environmentId: string; threadId: string }) => void;
 }) {
   const userHome = useAtomValue(userHomeAtom);
-  const { environments } = useEnvironments();
+  const { machineByEnvironmentId } = useAtomValue(threadListEnvironmentsAtom);
   const ref = userHomeThreadRef(userHome);
   if (ref === null) return null;
-  const place =
-    userHome.kind === "conflict"
-      ? "On in 2 places"
-      : (environments.find((environment) => environment.environmentId === ref.environmentId)
-          ?.label ?? null);
+  const environment = props.environments.find(
+    (candidate) => candidate.environmentId === ref.environmentId,
+  );
+  const conflict = userHome.kind === "conflict";
+  const place = conflict
+    ? `On in ${userHome.hosts.length} places`
+    : (environment?.label ?? "another environment");
+  const offline =
+    !conflict && environment !== undefined && UNREACHABLE_PHASES.has(environment.connectionState);
+  const status = offline
+    ? {
+        label: "Offline",
+        icon: "wifi.slash" as const,
+        className: "text-thread-selected-foreground-muted",
+        iconTintClassName: "accent-thread-selected-foreground-muted",
+      }
+    : homeStatus(props.thread);
+  const machine = machineByEnvironmentId.get(ref.environmentId);
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={place === null ? "Home" : `Home, ${place}`}
+      accessibilityLabel={["Home", place, status?.label].filter(Boolean).join(", ")}
       onPress={() =>
         props.onOpen({ environmentId: String(ref.environmentId), threadId: String(ref.threadId) })
       }
-      className="mx-4 mt-2 flex-row items-center gap-3 rounded-lg border border-border px-3 py-2.5"
+      className="mx-4 mt-2 gap-1 rounded-xl bg-thread-selected px-3 py-2.5"
       style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
     >
-      <SymbolView name="house" size={16} tintColorClassName="accent-foreground" type="monochrome" />
-      <Text className="flex-1 text-sm font-t3-medium text-foreground">Home</Text>
-      {place === null ? null : (
-        <View className="max-w-[55%]">
-          <Text
-            numberOfLines={1}
-            className={
-              userHome.kind === "conflict"
-                ? "text-xs text-warning-foreground"
-                : "text-xs text-foreground-muted"
-            }
-          >
-            {place}
-          </Text>
-        </View>
-      )}
+      <View className="flex-row items-center gap-2.5">
+        <SymbolView
+          name="house"
+          size={16}
+          tintColorClassName="accent-thread-selected-foreground"
+          type="monochrome"
+        />
+        <Text className="flex-1 text-sm font-t3-medium text-thread-selected-foreground">Home</Text>
+        {status === undefined ? null : (
+          <View className="flex-row items-center gap-1">
+            <SymbolView
+              name={status.icon}
+              size={13}
+              tintColorClassName={status.iconTintClassName}
+              type="monochrome"
+              weight="semibold"
+            />
+            <Text className={cn("text-xs font-t3-bold", status.className)}>{status.label}</Text>
+          </View>
+        )}
+      </View>
+      <View className="flex-row items-center gap-1.5">
+        <Text
+          numberOfLines={1}
+          className={cn(
+            "flex-1 text-xs",
+            conflict ? "text-warning-foreground" : "text-thread-selected-foreground-muted",
+          )}
+        >
+          {place}
+        </Text>
+        {conflict ? (
+          <SymbolView
+            name="exclamationmark.triangle"
+            size={13}
+            tintColorClassName="accent-warning-foreground"
+            type="monochrome"
+          />
+        ) : machine === undefined ? null : (
+          <EnvironmentMachineSymbol
+            kind={machine}
+            size={13}
+            tintColorClassName="accent-thread-selected-foreground-muted"
+          />
+        )}
+      </View>
     </Pressable>
   );
 }

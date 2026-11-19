@@ -66,6 +66,7 @@ import {
   ThreadListV2SettledShelfHeader,
   ThreadListV2ShowMoreRow,
   ThreadListV2SnoozedShelfHeader,
+  ThreadListV2ThreadsShelfHeader,
   ThreadListV2WorkingShelfHeader,
 } from "./thread-list-v2-items";
 import { useThreadRowProviderInstanceResolver } from "./thread-provider-instance";
@@ -243,10 +244,12 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     loaded: shelfPreferencesLoaded,
     settledShelfExpanded,
     snoozedShelfExpanded,
+    threadsShelfExpanded,
     workingShelfEnabled,
     workingShelfExpanded,
     toggleSettledShelf,
     toggleSnoozedShelf,
+    toggleThreadsShelf,
     toggleWorkingShelf,
   } = useThreadListV2ShelfPreferences();
   const now = useThreadListNow(threads);
@@ -286,6 +289,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     now,
     pendingOrder,
     shelfPreferencesLoaded,
+    threadsShelfExpanded,
     workingShelfEnabled,
     workingShelfExpanded,
     snoozedShelfExpanded,
@@ -484,6 +488,16 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
           />
         );
       }
+      case "v2-threads-shelf":
+        return (
+          <ThreadListV2ThreadsShelfHeader
+            count={item.count}
+            disabled={item.disabled}
+            expanded={item.expanded}
+            onToggle={toggleThreadsShelf}
+            pane="sidebar"
+          />
+        );
       case "v2-working-shelf":
         return (
           <ThreadListV2WorkingShelfHeader
