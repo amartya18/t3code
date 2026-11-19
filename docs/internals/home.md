@@ -47,9 +47,10 @@ Home cannot answer approvals there; only Home on its own host can.
 Home is woken by watched thread changes on its host, not by polling.
 `HomeWatcher` reads the orchestrator's domain events, batches the threads they
 touch, diffs their shells with the desktop-notification transitions, and calls
-`HomeService.report`, which sends one message into Home's thread with
-`mode: "auto"`. Threads in linked environments are not watched; Home waits on
-them over the link.
+`HomeService.report`, which queues one notification message in Home's thread
+behind its current turn. Clients show it as a status row, and the provider gets
+the full report as its turn. Threads in linked environments are not watched;
+Home waits on them over the link.
 
 Watches live in `ServerSettings.home`. Threads Home launches are watched with
 reason `launched`. A thread the watcher first sees was either created after the
