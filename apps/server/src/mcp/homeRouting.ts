@@ -3,7 +3,9 @@ import {
   type FleetOperation,
   type FleetRequest,
   type FleetResult,
+  isHomeThreadId,
   OrchestratorMcpFailure,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -107,4 +109,24 @@ export const routeHome = Effect.fn("mcp.routeHome")(function* <Op extends FleetO
 ) {
   if (yield* callerIsHome()) return Option.some(yield* runAsHome(op, input));
   return Option.none<FleetResult<Op>>();
+});
+
+const HOME_THREAD_TOOLS = {
+  read: "Home's thread is read with t3_home_read.",
+  send: "Message Home with t3_home_send, which finds its thread.",
+} as const;
+
+/** Points a client at the Home tools, which read Home's thread whole and send to its current one. */
+export const refuseHomeThread = Effect.fn("mcp.refuseHomeThread")(function* (
+  threadId: ThreadId,
+  use: keyof typeof HOME_THREAD_TOOLS,
+) {
+  if (!isHomeThreadId(threadId)) return;
+  // A side chat or fork of Home recovers its context by reading Home's thread.
+  if (use === "read" && (yield* McpInvocationContext.McpInvocationContext).thread !== undefined)
+    return;
+  return yield* new OrchestratorMcpFailure({
+    code: "invalid_request",
+    message: HOME_THREAD_TOOLS[use],
+  });
 });

@@ -49,6 +49,7 @@ const remoteTask = (
 const group = (
   shells: ReadonlyArray<OrchestrationV2ThreadShell>,
   subagents: ReadonlyArray<OrchestrationV2Subagent> = [],
+  full = false,
 ) =>
   groupAgentChildren({
     environmentId: hub,
@@ -56,6 +57,7 @@ const group = (
     replies: new Map([[ThreadId.make("done"), "Fixed the build."]]),
     subagents,
     link: (ref, title) => `[${title}](${ref.environmentId}/${ref.threadId})`,
+    full,
   });
 
 const summary = (children: ReturnType<typeof group>) =>
@@ -80,6 +82,12 @@ describe("groupAgentChildren", () => {
         ...asking("refreshing", "auth_refresh"),
         activeRunId: liveThreadShell(ThreadId.make("r")).activeRunId,
       },
+      // Its own run ended, but the sub-agents it started are still working.
+      shell("activity", { activityRunStatus: "running", latestRunCompletedAt: at(3_000) }),
+      shell("background", {
+        pendingBackgroundTasks: [{ kind: "subagent", taskId: "task-1" }],
+        latestRunCompletedAt: at(3_000),
+      } as Partial<OrchestrationV2ThreadShell>),
       shell("failed", { status: "failed", latestRunCompletedAt: at(2_000) }),
       shell("idle", { status: "idle" }),
       shell("done", { latestRunCompletedAt: at(1_000) }),
@@ -89,6 +97,8 @@ describe("groupAgentChildren", () => {
       running: [
         ["running", null],
         ["refreshing", null],
+        ["activity", null],
+        ["background", null],
       ],
       waiting: [
         ["question", "question"],
@@ -139,5 +149,14 @@ describe("groupAgentChildren", () => {
       link: "[Task followed-up](box/followed-up)",
     });
     expect(children.recentlyFinished[0]?.latestReply).toHaveLength(300);
+  });
+
+  it("returns a linked task's whole result with full, up to the cap", () => {
+    const whole = `Done.\n\n${"x".repeat(400)}`;
+    const reply = (result: string) =>
+      group([], [remoteTask("answered", "completed", 1_000, result)], true).recentlyFinished[0]
+        ?.latestReply;
+    expect(reply(whole)).toBe(whole);
+    expect(reply("x".repeat(30_000))).toHaveLength(20_000);
   });
 });

@@ -19,12 +19,13 @@ const DELIVERY = {
 } as const;
 
 export const HomeHandlersLive = McpToolAccess.toLayer(HomeToolkit, {
-  t3_home_status: McpToolAccess.reads(() =>
+  t3_home_read: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
       const { scope } = yield* readCaller();
       const home = yield* HomeService.HomeService;
       return yield* home
-        .status({
+        .read({
+          ...input,
           link: (ref, title) =>
             McpInvocationContext.threadLinkFor(
               { ...scope, environmentId: ref.environmentId },

@@ -375,13 +375,26 @@ it.effect("--wait reports its run's result when a later run is the one waiting",
 const timelineTools = (types: ReadonlyArray<string>) => {
   const items = types.map((type, position) => ({ position, itemId: `item-${position}`, type }));
   const served: Array<number> = [];
+  const inView = (item: (typeof items)[number]) =>
+    ["user_message", "assistant_message", "proposed_plan"].includes(item.type);
   const call = ((_tool: string, input: unknown) => {
     const args = input as { readonly afterPosition?: number; readonly limit: number };
+    if (args.afterPosition === undefined) {
+      // Without a cursor the server returns the newest page.
+      const page = items.filter(inView).slice(-args.limit);
+      served.push(page.length);
+      return Effect.succeed({
+        thread: { itemCount: items.length },
+        items: page,
+        nextPosition: page.at(-1)?.position ?? null,
+        hasMore: false,
+      });
+    }
     // Scanning one match past the page keeps reads of huge fixtures linear.
     const matching: typeof items = [];
-    for (let position = (args.afterPosition ?? -1) + 1; position < items.length; position++) {
+    for (let position = args.afterPosition + 1; position < items.length; position++) {
       const item = items[position]!;
-      if (["user_message", "assistant_message", "proposed_plan"].includes(item.type)) {
+      if (inView(item)) {
         matching.push(item);
         if (matching.length > args.limit) break;
       }

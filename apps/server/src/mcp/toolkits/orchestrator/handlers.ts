@@ -2,7 +2,7 @@ import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { callerIsHome, routeHome } from "../../homeRouting.ts";
+import { callerIsHome, refuseHomeThread, routeHome } from "../../homeRouting.ts";
 import { OrchestratorToolkit } from "./tools.ts";
 
 import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
@@ -180,6 +180,7 @@ const handlers = {
     Effect.gen(function* () {
       const routed = yield* routeHome("threads.read", input);
       if (Option.isSome(routed)) return routed.value;
+      yield* refuseHomeThread(input.threadId, "read");
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
       return yield* service.readThread(scope, input);
@@ -218,6 +219,7 @@ const handlers = {
       (input) => [input.threadId],
       (input) =>
         Effect.gen(function* () {
+          yield* refuseHomeThread(input.threadId, "send");
           const scope = yield* McpInvocationContext.McpInvocationContext;
           const service = yield* OrchestratorMcpService.OrchestratorMcpService;
           return yield* service.sendToThread(scope, input);
