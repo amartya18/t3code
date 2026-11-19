@@ -338,6 +338,15 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             )?.supportedRuntimeModes,
           });
         }
+        // A linked environment's delegated task runs in the project checkout.
+        const workspaceStrategy =
+          strategy ??
+          (input.delegatedFrom === undefined
+            ? yield* ThreadLaunch.ThreadLaunchService.pipe(
+                Effect.flatMap((launches) => launches.defaultWorkspaceStrategy(projectId)),
+                Effect.mapError(unavailable),
+              )
+            : { type: "root" as const });
         if (homeThreadId !== undefined)
           yield* watchLaunched(homeThreadId, scope.environmentId, threadId);
         const result = yield* ThreadMessageIntake.launchThread({
@@ -348,7 +357,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           modelSelection,
           runtimeMode: startedRuntimeMode,
           interactionMode,
-          workspaceStrategy: strategy ?? { type: "root" },
+          workspaceStrategy,
           ...(input.message === undefined && attachments.length === 0
             ? {}
             : {

@@ -5,7 +5,6 @@ import {
   CommandId,
   ContextTransferId,
   EnvironmentId,
-  GitCommandError,
   MessageId,
   NodeId,
   ORCHESTRATOR_MCP_RUNNING_TASK_NEXT,
@@ -3426,14 +3425,12 @@ describe("OrchestratorMcpService provider resolution", () => {
       saved: ScheduledTask = tasks[0]!,
     ) =>
       OrchestratorMcpService.layer.pipe(
-        Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
         Layer.provide(
-          Layer.mock(GitVcsDriver.GitVcsDriver)({
-            resolvePrimaryRemoteName: () => Effect.succeed("origin"),
-            resolveDefaultBranchName: () => Effect.succeed("main"),
-            resolveCommit: () => Effect.succeed({ commitSha: "abc123" }),
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+            defaultWorktreeBaseRef: () => Effect.succeed("origin/main"),
           }),
         ),
+        Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
         Layer.provide(
           Layer.mergeAll(
             NodeServices.layer,
@@ -3651,7 +3648,6 @@ describe("OrchestratorMcpService provider resolution", () => {
       issuedAt: 1,
     };
     const service = (
-      git: Partial<GitVcsDriver.GitVcsDriver["Service"]>,
       saved: Ref.Ref<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>,
       task: ScheduledTask = existing,
       inputs?: Ref.Ref<ReadonlyArray<ScheduledTaskUpsertInput>>,
@@ -3661,8 +3657,13 @@ describe("OrchestratorMcpService provider resolution", () => {
       } = { project: existing.modelSelection },
     ) =>
       OrchestratorMcpService.layer.pipe(
-        Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
-        Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)(git)),
+        Layer.provide(
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+            defaultWorktreeBaseRef: (cwd) =>
+              Effect.succeed(cwd === workspaceRoot ? "origin/master" : "main"),
+          }),
+        ),
+        Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
         Layer.provide(
           Layer.mergeAll(
             NodeServices.layer,
@@ -3704,19 +3705,13 @@ describe("OrchestratorMcpService provider resolution", () => {
           ),
         ),
       );
-    const masterRepository: Partial<GitVcsDriver.GitVcsDriver["Service"]> = {
-      resolvePrimaryRemoteName: () => Effect.succeed("origin"),
-      resolveDefaultBranchName: (cwd, remoteName) =>
-        Effect.succeed(cwd === workspaceRoot && remoteName === "origin" ? "master" : null),
-      resolveCommit: () => Effect.succeed({ commitSha: "abc123" }),
-    };
     const schedule = { type: "interval", everyMs: 3_600_000 } as const;
 
     it.effect("starts from the project's default branch", () =>
       Effect.gen(function* () {
         const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]);
         const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
-          Effect.provide(service(masterRepository, saved)),
+          Effect.provide(service(saved)),
         );
         yield* mcp.scheduleTask(client, { projectId, prompt: "Check the build", schedule });
         assert.deepEqual(yield* Ref.get(saved), [
@@ -3735,7 +3730,6 @@ describe("OrchestratorMcpService provider resolution", () => {
         const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
           Effect.provide(
             service(
-              masterRepository,
               yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]),
               existing,
               inputs,
@@ -3768,7 +3762,6 @@ describe("OrchestratorMcpService provider resolution", () => {
         const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
           Effect.provide(
             service(
-              masterRepository,
               yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]),
               existing,
               inputs,
@@ -3789,7 +3782,6 @@ describe("OrchestratorMcpService provider resolution", () => {
         const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
           Effect.provide(
             service(
-              masterRepository,
               yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]),
               { ...existing, threadMode: "fresh_session" },
               inputs,
@@ -3819,7 +3811,6 @@ describe("OrchestratorMcpService provider resolution", () => {
           const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
             Effect.provide(
               service(
-                masterRepository,
                 yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]),
                 {
                   ...existing,
@@ -3847,7 +3838,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]);
         const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
           Effect.provide(
-            service(masterRepository, saved, {
+            service(saved, {
               ...existing,
               threadId: ThreadId.make("thread:scheduled-base"),
               threadMode: "continue",
@@ -3868,114 +3859,13 @@ describe("OrchestratorMcpService provider resolution", () => {
       Effect.gen(function* () {
         const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]);
         const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
-          Effect.provide(service(masterRepository, saved)),
+          Effect.provide(service(saved)),
         );
         yield* mcp.updateScheduledTask(client, {
           scheduledTaskId: existing.id,
           bindToCurrentThread: false,
         });
         assert.deepEqual(yield* Ref.get(saved), [{ type: "root" }]);
-      }),
-    );
-
-    it.effect.each([
-      {
-        name: "no remote, only master",
-        remote: null,
-        remoteDefault: null,
-        refs: ["refs/heads/master"],
-        baseRef: "master",
-      },
-      {
-        name: "no remote, main and master",
-        remote: null,
-        remoteDefault: null,
-        refs: ["refs/heads/master", "refs/heads/main"],
-        baseRef: "main",
-      },
-      {
-        name: "no remote, neither main nor master",
-        remote: null,
-        remoteDefault: null,
-        refs: ["refs/heads/develop"],
-        baseRef: "main",
-      },
-      {
-        name: "no recorded HEAD, remote main and a stale local master",
-        remote: "origin",
-        remoteDefault: null,
-        refs: ["refs/heads/master", "refs/remotes/origin/main"],
-        baseRef: "origin/main",
-      },
-      {
-        name: "no recorded HEAD, master only on the remote",
-        remote: "origin",
-        remoteDefault: null,
-        refs: ["refs/remotes/origin/master"],
-        baseRef: "origin/master",
-      },
-      {
-        name: "no recorded HEAD, local main and master only on the remote",
-        remote: "origin",
-        remoteDefault: null,
-        refs: ["refs/heads/main", "refs/remotes/origin/master"],
-        baseRef: "origin/master",
-      },
-      {
-        name: "no recorded HEAD, nothing conventional on the remote, local main",
-        remote: "origin",
-        remoteDefault: null,
-        refs: ["refs/heads/main", "refs/remotes/origin/develop"],
-        baseRef: "main",
-      },
-      {
-        name: "a recorded HEAD whose branch is gone",
-        remote: "origin",
-        remoteDefault: "main",
-        refs: ["refs/heads/main", "refs/remotes/origin/master"],
-        baseRef: "origin/master",
-      },
-      {
-        name: "a remote not called origin",
-        remote: "upstream",
-        remoteDefault: "develop",
-        refs: ["refs/remotes/upstream/develop"],
-        baseRef: "upstream/develop",
-      },
-      {
-        name: "a remote not called origin, no recorded HEAD",
-        remote: "upstream",
-        remoteDefault: null,
-        refs: ["refs/remotes/upstream/main"],
-        baseRef: "upstream/main",
-      },
-    ])("$name starts from $baseRef", ({ remote, remoteDefault, refs, baseRef }) =>
-      Effect.gen(function* () {
-        const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]);
-        const gitFailure = (cwd: string, detail: string) =>
-          new GitCommandError({ operation: "GitVcsDriver.test", command: "git", cwd, detail });
-        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
-          Effect.provide(
-            service(
-              {
-                resolvePrimaryRemoteName: (cwd) =>
-                  remote === null
-                    ? Effect.fail(gitFailure(cwd, "No git remote is configured."))
-                    : Effect.succeed(remote),
-                resolveDefaultBranchName: () => Effect.succeed(remoteDefault),
-                resolveCommit: ({ cwd, revision }) =>
-                  refs.includes(revision)
-                    ? Effect.succeed({ commitSha: "abc123" })
-                    : Effect.fail(gitFailure(cwd, "Needed a single revision")),
-              },
-              saved,
-            ),
-          ),
-        );
-        yield* mcp.scheduleTask(client, { projectId, prompt: "Check the build", schedule });
-        assert.deepEqual(yield* Ref.get(saved), [
-          { type: "worktree", baseRef, startFromOrigin: true },
-        ]);
       }),
     );
   });

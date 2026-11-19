@@ -149,8 +149,9 @@ t3 thread list
 
 `.` means the project that contains the current folder, or a git worktree of
 its repository; a project id also works. A new thread uses the project's
-default model and permission mode, and runs in the project folder unless you
-pass `--worktree <base-branch>`. `send` never interrupts: a busy thread gets
+default model and permission mode. It runs in the project folder or a new
+worktree, as your **New threads** setting says, unless you pass
+`--worktree <base-branch>`. `send` never interrupts: a busy thread gets
 the message as its next turn. Pass `-` as the message to read it from stdin.
 
 `--wait` prints the agent's reply. It exits 1 when the run fails or stops, and

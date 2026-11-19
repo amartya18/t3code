@@ -342,8 +342,10 @@ without a prompt remain idle. `create_threads` is local-only: `target.environmen
 Launches one ordinary top-level thread through the app's launch service. Use an
 explicit `workspaceStrategy` to create a new worktree (`worktree` with `baseRef`),
 attach an existing checkout (`existing_worktree` with `worktreePath`), or use the
-project root (`root`, also the default). The thread is bound to that workspace
-before the agent starts. Creating a worktree in the task prompt does not update
+project root (`root`). Omitted, it follows the project's New threads setting, as the
+composer does: the project root, or a new worktree on the default branch. A linked
+environment's delegated task gets the project root. The thread is bound to that
+workspace before the agent starts. Creating a worktree in the task prompt does not update
 this binding.
 
 Pass the task in `message`. Project, model, and modes inherit when omitted;
