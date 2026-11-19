@@ -59,6 +59,7 @@ import {
   latestNativeContextUsage,
 } from "@t3tools/provider-core/server/handoffBudget";
 import { deliverContextHandoffs, withInlineContext } from "./ContextHandoffDelivery.ts";
+import { customModeTurnForRun, renderCustomModeTurn } from "./threadCustomMode.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -1026,6 +1027,19 @@ export const layer: Layer.Layer<
         restartCancelledWork.length === 0
           ? ""
           : restartCancelledBackgroundWorkNote(restartCancelledWork);
+      // Only a turn that sends the user's own prompt carries mode text.
+      const customModeText = renderCustomModeTurn(
+        goalCommand ||
+          isCompactionCommandMessage(providerMessage) ||
+          attempt.reason === "steering_restart" ||
+          (manualResume && unsentResumeMessage === undefined)
+          ? { kind: "none" }
+          : customModeTurnForRun({
+              customMode: projection.thread.customMode,
+              run,
+              runs: projection.runs,
+            }),
+      );
       const tokenCap = yield* handoffTokenCapConfig.pipe(
         Effect.orElseSucceed(() => DEFAULT_HANDOFF_TOKEN_CAP),
       );
@@ -1992,7 +2006,7 @@ export const layer: Layer.Layer<
             sideChatHandoff === undefined || compact || goalCommand
               ? ""
               : sideChatHandoff.summaryText;
-          const context = [delivery.context, sideChatContext, restartNote]
+          const context = [delivery.context, sideChatContext, restartNote, customModeText.context]
             .filter((part) => part !== "")
             .join("\n\n");
           const { restartContinuationOfRunId: _resumedRunId, ...promptedInput } = turnInput;
@@ -2011,7 +2025,8 @@ export const layer: Layer.Layer<
           // A resume that must be prompted still needs a request, or the agent has nothing to do.
           const requestText =
             turnInput.resume && prompted && userText === "" ? RESUME_PROMPT : userText;
-          const text = goalCommand ? userText : withInlineContext(context, requestText);
+          const promptText = `${customModeText.prefix}${requestText}`;
+          const text = goalCommand ? userText : withInlineContext(context, promptText);
           const operation =
             turnInput.resume && !prompted && session.resumeTurn !== undefined
               ? session.resumeTurn({ ...resumeInput, messageId: resumeMessage.messageId })
@@ -2024,9 +2039,9 @@ export const layer: Layer.Layer<
                       ? {}
                       : { attachments: [...missedAttachments, ...turnInput.message.attachments] }),
                   },
-                  ...(text === userText
+                  ...(text === promptText
                     ? {}
-                    : { inlineContextLength: text.length - userText.length }),
+                    : { inlineContextLength: text.length - promptText.length }),
                 });
           yield* operation.pipe(
             // Clear pending handoff markers for refused prompts so the next turn retains the native session.
@@ -2087,6 +2102,7 @@ export const layer: Layer.Layer<
         retryHandoff.attachments.length === 0 &&
         sideChatHandoff === undefined &&
         restartNote === "" &&
+        customModeText.context === "" &&
         !noteContinuation
           ? session
           : makeDeliverySession(session, startWithHandoffs);

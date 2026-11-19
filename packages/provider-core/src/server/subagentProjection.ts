@@ -99,6 +99,8 @@ export function makeSubagentChildThread(input: {
     autoSettleDisabledAt: null,
     // A guest link belongs to the thread it was made for.
     guestShare: null,
+    // A parent passes its mode on through the task brief, not by inheritance.
+    customMode: null,
     lastVisitedAt: null,
     deletedAt: null,
   };

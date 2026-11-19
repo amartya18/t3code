@@ -5,6 +5,7 @@ import { resolveNewThreadEnvMode, resolveProjectSettings } from "@t3tools/shared
 import {
   CommandId,
   type ChatAttachment,
+  type CustomModeSkillName,
   type MessageId,
   type ModelSelection,
   type OrchestrationV2Actor,
@@ -100,6 +101,7 @@ export interface ThreadLaunchInput {
   readonly modelSelection: ModelSelection;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
+  readonly customMode?: CustomModeSkillName;
   readonly workspaceStrategy: ThreadLaunchWorkspaceStrategy;
   readonly initialMessage?: ThreadLaunchInitialMessage;
   readonly importedNativeThread?: {
@@ -1446,6 +1448,7 @@ const make = Effect.gen(function* () {
                 interactionMode: input.interactionMode,
                 branch: initialBranch,
                 worktreePath: initialWorktreePath,
+                ...(input.customMode === undefined ? {} : { customMode: input.customMode }),
                 ...(input.importedNativeThread === undefined
                   ? {}
                   : { importedNativeThread: input.importedNativeThread }),
