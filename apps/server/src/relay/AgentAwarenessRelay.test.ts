@@ -43,6 +43,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as AgentAwarenessRelay from "./AgentAwarenessRelay.ts";
+import * as DirectAgentActivity from "./DirectAgentActivity.ts";
 
 const THREAD_ID = ThreadId.make("relay-thread");
 const SECOND_THREAD_ID = ThreadId.make("relay-thread-2");
@@ -274,6 +275,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     readonly authorization: string | null;
     readonly state: RelayAgentActivityState | null;
   }> = [];
+  const directStates: Array<RelayAgentActivityState | null> = [];
   const fetch: typeof globalThis.fetch = Object.assign(
     (
       input: Parameters<typeof globalThis.fetch>[0],
@@ -333,9 +335,23 @@ const makeTestRelay = Effect.fnUntraced(function* (
       getById: () => Effect.succeedSome(project),
     }),
     Effect.provideService(FetchHttpClient.Fetch, fetch),
+    Effect.provideService(DirectAgentActivity.DirectAgentActivity, {
+      publish: ({ state }) => Effect.sync(() => void directStates.push(state)),
+      registerLiveActivity: () => Effect.die("unused"),
+      drain: Effect.void,
+    }),
     Effect.provide(NodeCrypto.layer),
   );
-  return { relay, secrets, secretReads, currentShell, shellReads, publications, catchUp };
+  return {
+    relay,
+    secrets,
+    secretReads,
+    currentShell,
+    shellReads,
+    publications,
+    directStates,
+    catchUp,
+  };
 });
 
 describe("AgentAwarenessRelay", () => {
@@ -349,7 +365,7 @@ describe("AgentAwarenessRelay", () => {
       );
       const setShell = (next: OrchestrationV2ThreadShell) =>
         Ref.update(shells, (current) => new Map(current).set(next.id, next));
-      const { relay, publications } = yield* makeTestRelay({
+      const { relay, publications, directStates } = yield* makeTestRelay({
         readShell: (threadId) =>
           Ref.get(shells).pipe(Effect.map((current) => current.get(threadId) ?? null)),
       });
@@ -380,6 +396,11 @@ describe("AgentAwarenessRelay", () => {
       yield* relay.drain;
       assert.equal(publications.length, 4);
       assert.equal(publications[3]?.state?.phase, "completed");
+      // Direct APNs pushes see exactly what the relay is sent.
+      assert.deepStrictEqual(
+        directStates,
+        publications.map((publication) => publication.state),
+      );
     }),
   );
 

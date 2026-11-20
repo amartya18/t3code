@@ -54,6 +54,7 @@ import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.t
 import { isSnoozed } from "../orchestration-v2/ThreadSettlementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { forkParked } from "../serverActivation.ts";
+import * as DirectAgentActivity from "./DirectAgentActivity.ts";
 
 export class AgentAwarenessRelay extends Context.Service<
   AgentAwarenessRelay,
@@ -428,6 +429,7 @@ export const make = Effect.gen(function* () {
   const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const projects = yield* ProjectService.ProjectService;
+  const directAgentActivity = yield* DirectAgentActivity.DirectAgentActivity;
   const random = yield* SecureRandom.SecureRandom;
   const signingKey = yield* EnvironmentSigningKey;
   const scope = yield* Effect.scope;
@@ -536,6 +538,8 @@ export const make = Effect.gen(function* () {
       readonly state: RelayAgentActivityState | null;
       readonly reason: string;
     }) {
+      // The relay's APNs key cannot reach a fork's bundle, so the server also pushes itself.
+      yield* directAgentActivity.publish({ threadId, state: input.state });
       if (cachedRelayClient === undefined) {
         cachedRelayClient = yield* makeRelayClient(relayConfig);
       }

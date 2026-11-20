@@ -264,6 +264,8 @@ import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReact
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as OtlpEndpointCheck from "./observability/OtlpEndpointCheck.ts";
 import * as TextGenerators from "./textGeneration/TextGenerators.ts";
+import * as DirectAgentActivity from "./relay/DirectAgentActivity.ts";
+import * as DirectApnsDevices from "./relay/DirectApnsDevices.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as SourceControlSignIn from "./sourceControl/SourceControlSignIn.ts";
 import * as SourceControlBuiltInDrivers from "./sourceControl/builtInDrivers.ts";
@@ -1588,6 +1590,8 @@ export const layerWsRpc = (
       const secretCheck = yield* SecretCheck.SecretCheck;
       const otlpEndpointCheck = yield* OtlpEndpointCheck.OtlpEndpointCheck;
       const textGenerators = yield* TextGenerators.TextGenerators;
+      const directApnsDevices = yield* DirectApnsDevices.DirectApnsDevices;
+      const directAgentActivity = yield* DirectAgentActivity.DirectAgentActivity;
       const sourceControlRepositories =
         yield* SourceControlRepositoryService.SourceControlRepositoryService;
       const sourceControlSignIn = yield* SourceControlSignIn.SourceControlSignIn;
@@ -2755,6 +2759,20 @@ export const layerWsRpc = (
         [WS_METHODS.serverListTextGeneratorModels]: (input) => textGenerators.listModels(input),
         [WS_METHODS.serverPrepareTriage]: (input) => triage.prepare(input),
         [WS_METHODS.serverSignalProcess]: (input) => processDiagnostics.signal(input),
+        [WS_METHODS.notificationsRegisterDevice]: (input) =>
+          directApnsDevices.register(input).pipe(
+            Effect.tapError((cause) =>
+              Effect.logWarning("push device registration failed", { cause }),
+            ),
+            Effect.orDie,
+          ),
+        [WS_METHODS.notificationsRegisterLiveActivity]: (input) =>
+          directAgentActivity.registerLiveActivity(input).pipe(
+            Effect.tapError((cause) =>
+              Effect.logWarning("live activity registration failed", { cause }),
+            ),
+            Effect.orDie,
+          ),
         [WS_METHODS.serverReportClientActivity]: (input, metadata) =>
           Ref.update(rpcClientIds, (clientIds) => {
             const next = new Set(clientIds);

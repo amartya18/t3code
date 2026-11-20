@@ -1892,6 +1892,16 @@ export function createServerEnvironmentAtoms<R, E>(
         key: ({ environmentId }) => environmentId,
       },
     }),
+    // Mobile registers its APNs tokens with the environments it talks to so the
+    // server can push directly, independent of the T3 Connect relay.
+    registerPushDevice: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:register-push-device",
+      tag: WS_METHODS.notificationsRegisterDevice,
+    }),
+    registerPushLiveActivity: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:register-push-live-activity",
+      tag: WS_METHODS.notificationsRegisterLiveActivity,
+    }),
     checkOtlpEndpoint: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:check-otlp-endpoint",
       tag: WS_METHODS.serverCheckOtlpEndpoint,
