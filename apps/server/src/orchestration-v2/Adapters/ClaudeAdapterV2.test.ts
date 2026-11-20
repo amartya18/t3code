@@ -6369,14 +6369,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           attachments: [],
         },
       });
-      // Only a "now" steer cancels foreground tools, so only it moves subagents out of the way.
-      if (threadId === undefined) {
-        assert.equal(harness.offeredMessages[1]?.priority, "now");
-        assert.deepEqual(backgroundMoves, ["steer-subagent-tool"]);
-      } else {
-        assert.equal(harness.offeredMessages[1]?.priority, "next");
-        assert.deepEqual(backgroundMoves, []);
-      }
+      assert.equal(harness.offeredMessages[1]?.priority, "next");
+      // Home's steer waits for the next tool boundary, so it leaves its subagents in the foreground.
+      assert.deepEqual(backgroundMoves, threadId === undefined ? ["steer-subagent-tool"] : []);
     }).pipe(
       Effect.scoped,
       Effect.provide(
