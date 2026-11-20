@@ -51,7 +51,7 @@ import {
   SettingsRow,
   SettingsSection,
 } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 
 const HOME_DESCRIPTION =
   "One agent that acts across your projects on the environment it runs on and the environments it links to. It can answer questions and approve requests for you there.";
@@ -181,6 +181,7 @@ function EnvironmentSelect(props: {
 }
 
 function HomeOffRows() {
+  const searchableSetting = useSearchableSetting();
   const candidates = useHomeCandidates();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const [chosen, setChosen] = useState<EnvironmentId | null>(null);
@@ -258,6 +259,7 @@ function HomeTurnOnRow({ environmentId }: { environmentId: EnvironmentId }) {
 }
 
 function HomeOnRows({ host }: { host: HomeHost }) {
+  const searchableSetting = useSearchableSetting();
   const { environmentId, threadId } = host;
   const thread = useThreadShell(scopeThreadRef(environmentId, threadId));
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -562,6 +564,7 @@ function MoveHomeDialogPopup(props: {
 
 /** Home on in two places, after a move that half failed. The user keeps one. */
 function HomeConflictRows({ hosts }: { hosts: ReadonlyArray<HomeHost> }) {
+  const searchableSetting = useSearchableSetting();
   const { environments } = useEnvironments();
   const disable = useAtomCommand(homeEnvironment.disable, { reportFailure: false });
   const [pending, setPending] = useState(false);
