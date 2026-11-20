@@ -1,6 +1,7 @@
 name: Fork release
 
-# macOS arm64 desktop, Linux x64 desktop and Linux x64 CLI release for forks.
+# macOS arm64 desktop, Linux x64 desktop and Linux x64 CLI release for forks,
+# then the same commit to the fork's iOS preview app (fork-ios-preview.sh).
 # The macOS app must be Developer ID signed and notarized, or Squirrel.Mac
 # refuses to install updates; the release fails rather than ship it unsigned.
 # release.yml only runs in pingdotgg/t3code. X.Y.Z and X.Y.Z-fork.N become the
@@ -300,3 +301,30 @@ jobs:
           if [[ "$PRERELEASE" == "true" ]]; then flags=(--prerelease --latest=false); fi
           gh release create "$TAG" --draft --target "$REF" --title "$TAG" --generate-notes "${flags[@]}" "${files[@]}"
           gh release edit "$TAG" --draft=false "${flags[@]}"
+
+  # Ships the release to the fork's ad hoc iOS preview app: an OTA update, or a new
+  # build when native code changed. A failure here never fails the release.
+  ios_preview:
+    name: iOS preview app
+    needs: [resolve, release]
+    if: github.repository != 'pingdotgg/t3code'
+    continue-on-error: true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.resolve.outputs.ref }}
+
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          install-args: --filter=@t3tools/mobile...
+
+      - name: Update or build the iOS preview app
+        env:
+          TAG: ${{ needs.resolve.outputs.tag }}
+        run: .github/scripts/fork-ios-preview.sh --message "$TAG ($(git rev-parse --short HEAD))"
