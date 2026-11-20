@@ -229,7 +229,7 @@ export async function installDesktopUpdate(
   });
   const unsubscribe = bridge.onUpdateState((state) => {
     if (state.errorContext === "install") {
-      reportFailure(state.message ?? "The update could not be installed.");
+      reportFailure(state.message ?? m(msg("The update could not be installed.")));
     }
   });
   try {

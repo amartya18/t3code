@@ -5,6 +5,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { msg, useGT } from "gt-react-native";
 import { useState } from "react";
 import { Alert } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -12,6 +13,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ListChoiceRow } from "../../components/ui/ListChoiceRow";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
+import { m } from "../../i18n/messages";
 import { type EnvironmentPresentation, useEnvironments } from "../../state/environments";
 import { homeEnvironment, userHomeAtom } from "../../state/home";
 import { serverEnvironment } from "../../state/server";
@@ -21,7 +23,7 @@ import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
 
 function reportFailure(title: string, error: unknown) {
-  Alert.alert(title, error instanceof Error ? error.message : "An error occurred.");
+  Alert.alert(title, error instanceof Error ? error.message : m(msg("An error occurred.")));
 }
 
 /** Connected environments that can host Home. Older servers do not report a Home folder. */
@@ -65,6 +67,7 @@ function useOpenHome() {
 }
 
 function HomeOff() {
+  const gt = useGT();
   const { environments } = useEnvironments();
   const candidates = homeCandidates(environments);
   const [chosen, setChosen] = useState<EnvironmentId | null>(null);
@@ -75,11 +78,13 @@ function HomeOff() {
   return (
     <>
       <SettingsSection
-        title="Runs on"
+        title={gt("Runs on")}
         footer={
           candidates.length === 0
-            ? "No connected environment can run Home."
-            : "One agent that acts across your projects on the environment it runs on and the environments it links to. Home always runs in full access."
+            ? gt("No connected environment can run Home.")
+            : gt(
+                "One agent that acts across your projects on the environment it runs on and the environments it links to. Home always runs in full access.",
+              )
         }
       >
         {candidates.map((candidate, index) => (
@@ -100,6 +105,7 @@ function HomeOff() {
 }
 
 function HomeTurnOn({ environmentId }: { environmentId: EnvironmentId }) {
+  const gt = useGT();
   const model = useAtomValue(
     serverEnvironment.settingsValueAtom(environmentId),
     (settings) => settings?.defaultModelSelection ?? null,
@@ -115,7 +121,7 @@ function HomeTurnOn({ environmentId }: { environmentId: EnvironmentId }) {
     setPending(false);
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
-        reportFailure("Could not turn on Home", squashAtomCommandFailure(result));
+        reportFailure(m(msg("Could not turn on Home")), squashAtomCommandFailure(result));
       }
       return;
     }
@@ -126,13 +132,15 @@ function HomeTurnOn({ environmentId }: { environmentId: EnvironmentId }) {
     <SettingsSection
       footer={
         model === null
-          ? "This environment has no default model. Set one there, or turn Home on from desktop or web to pick a model."
-          : `Starts with ${model.model}, the environment's default model.`
+          ? gt(
+              "This environment has no default model. Set one there, or turn Home on from desktop or web to pick a model.",
+            )
+          : gt("Starts with {model}, the environment's default model.", { model: model.model })
       }
     >
       <SettingsRow
         icon="house"
-        label="Turn on Home"
+        label={gt("Turn on Home")}
         disabled={pending || model === null}
         onPress={() => void turnOn()}
       />
@@ -141,6 +149,7 @@ function HomeTurnOn({ environmentId }: { environmentId: EnvironmentId }) {
 }
 
 function HomeOn({ host }: { host: HomeHost }) {
+  const gt = useGT();
   const { environments } = useEnvironments();
   const label =
     environments.find((environment) => environment.environmentId === host.environmentId)?.label ??
@@ -156,7 +165,7 @@ function HomeOn({ host }: { host: HomeHost }) {
     setPending(false);
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
-        reportFailure("Could not start a fresh Home", squashAtomCommandFailure(result));
+        reportFailure(m(msg("Could not start a fresh Home")), squashAtomCommandFailure(result));
       }
       return;
     }
@@ -164,17 +173,17 @@ function HomeOn({ host }: { host: HomeHost }) {
   };
 
   const turnOff = () =>
-    Alert.alert("Turn off Home?", "Home stops. Its threads stay.", [
-      { text: "Cancel", style: "cancel" },
+    Alert.alert(m(msg("Turn off Home?")), m(msg("Home stops. Its threads stay.")), [
+      { text: m(msg("Cancel")), style: "cancel" },
       {
-        text: "Turn off",
+        text: m(msg("Turn off")),
         style: "destructive",
         onPress: () => {
           setPending(true);
           void disable({ environmentId: host.environmentId, input: {} }).then((result) => {
             setPending(false);
             if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-              reportFailure("Could not turn off Home", squashAtomCommandFailure(result));
+              reportFailure(m(msg("Could not turn off Home")), squashAtomCommandFailure(result));
             }
           });
         },
@@ -183,10 +192,14 @@ function HomeOn({ host }: { host: HomeHost }) {
 
   return (
     <>
-      <SettingsSection footer="To move Home to another environment, use Settings → Home on desktop or web. It copies Home's notes along.">
+      <SettingsSection
+        footer={gt(
+          "To move Home to another environment, use Settings → Home on desktop or web. It copies Home's notes along.",
+        )}
+      >
         <SettingsRow
           icon="house"
-          label="Open Home"
+          label={gt("Open Home")}
           value={label}
           onPress={() => openHome(host.environmentId, host.threadId)}
         />
@@ -194,17 +207,18 @@ function HomeOn({ host }: { host: HomeHost }) {
       <SettingsSection>
         <SettingsRow
           icon="arrow.clockwise"
-          label="Start fresh"
+          label={gt("Start fresh")}
           disabled={pending}
           onPress={() => void runStartFresh()}
         />
-        <SettingsRow icon="xmark" label="Turn off" disabled={pending} onPress={turnOff} />
+        <SettingsRow icon="xmark" label={gt("Turn off")} disabled={pending} onPress={turnOff} />
       </SettingsSection>
     </>
   );
 }
 
 function HomeConflict({ hosts }: { hosts: ReadonlyArray<HomeHost> }) {
+  const gt = useGT();
   const { environments } = useEnvironments();
   const disable = useAtomCommand(homeEnvironment.disable, { reportFailure: false });
   const [pending, setPending] = useState(false);
@@ -219,7 +233,9 @@ function HomeConflict({ hosts }: { hosts: ReadonlyArray<HomeHost> }) {
       const result = await disable({ environmentId: host.environmentId, input: {} });
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         reportFailure(
-          `Could not turn off Home on ${labelOf(host.environmentId)}`,
+          m(msg("Could not turn off Home on {environment}"), {
+            environment: labelOf(host.environmentId),
+          }),
           squashAtomCommandFailure(result),
         );
       }
@@ -229,14 +245,14 @@ function HomeConflict({ hosts }: { hosts: ReadonlyArray<HomeHost> }) {
 
   return (
     <SettingsSection
-      title="Keep one Home"
-      footer="Home is on in more than one place. The others turn off and their threads stay."
+      title={gt("Keep one Home")}
+      footer={gt("Home is on in more than one place. The others turn off and their threads stay.")}
     >
       {hosts.map((host) => (
         <SettingsRow
           key={host.environmentId}
           icon="checkmark.circle"
-          label={`Keep ${labelOf(host.environmentId)}`}
+          label={gt("Keep {environment}", { environment: labelOf(host.environmentId) })}
           disabled={pending}
           onPress={() => void keep(host)}
         />

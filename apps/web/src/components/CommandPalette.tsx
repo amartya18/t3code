@@ -1793,7 +1793,7 @@ function OpenCommandPaletteDialog(props: {
       kind: "action",
       value: "action:home",
       searchTerms: ["home", "fleet", "all projects"],
-      title: "Open Home",
+      title: gt("Open Home"),
       icon: <HouseIcon className={ITEM_ICON_CLASS} />,
       shortcutCommand: "home.open",
       run: async () => {

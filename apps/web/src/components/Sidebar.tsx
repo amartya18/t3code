@@ -1,6 +1,6 @@
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { msg, T, useGT, useMessages } from "gt-react";
-import { m } from "../i18n/messages";
+import { m, type MessageResolver } from "../i18n/messages";
 import { attachSidebarTree } from "../lib/sidebarTree";
 import {
   type EnvironmentId,
@@ -929,19 +929,51 @@ const HOME_ROW_STATUS: Record<
   Exclude<SidebarThreadStatus, "ready"> | "done",
   { readonly label: string; readonly Icon: LucideIcon; readonly className: string }
 > = {
-  preparing: { label: "Preparing", Icon: CircleDashedIcon, className: "text-info-foreground" },
-  working: { label: "Working", Icon: CircleDashedIcon, className: "text-info-foreground" },
-  waiting: { label: "Waiting", Icon: CircleDotDashedIcon, className: "text-muted-foreground" },
-  approval: { label: "Approval", Icon: ShieldQuestionIcon, className: "text-warning-foreground" },
+  preparing: {
+    label: msg("Preparing", { $context: "thread status" }),
+    Icon: CircleDashedIcon,
+    className: "text-info-foreground",
+  },
+  working: {
+    label: msg("Working", { $context: "thread status" }),
+    Icon: CircleDashedIcon,
+    className: "text-info-foreground",
+  },
+  waiting: {
+    label: msg("Waiting", { $context: "thread status" }),
+    Icon: CircleDotDashedIcon,
+    className: "text-muted-foreground",
+  },
+  approval: {
+    label: msg("Approval", { $context: "thread status" }),
+    Icon: ShieldQuestionIcon,
+    className: "text-warning-foreground",
+  },
   input: {
-    label: "Input",
+    label: msg("Input", { $context: "thread status, waiting for user input" }),
     Icon: MessageCircleQuestionIcon,
     className: "text-indigo-600 dark:text-indigo-300",
   },
-  request: { label: "Request", Icon: UserRoundIcon, className: "text-guest-foreground" },
-  limited: { label: "Limited", Icon: CircleAlertIcon, className: "text-warning-foreground" },
-  failed: { label: "Failed", Icon: CircleAlertIcon, className: "text-error-foreground" },
-  done: { label: "Done", Icon: CircleCheckIcon, className: "text-success-foreground" },
+  request: {
+    label: msg("Request", { $context: "thread status" }),
+    Icon: UserRoundIcon,
+    className: "text-guest-foreground",
+  },
+  limited: {
+    label: msg("Limited", { $context: "thread status" }),
+    Icon: CircleAlertIcon,
+    className: "text-warning-foreground",
+  },
+  failed: {
+    label: msg("Failed", { $context: "thread status" }),
+    Icon: CircleAlertIcon,
+    className: "text-error-foreground",
+  },
+  done: {
+    label: msg("Done", { $context: "thread status" }),
+    Icon: CircleCheckIcon,
+    className: "text-success-foreground",
+  },
 };
 
 /** Where the user's one Home runs, as seen from this client. */
@@ -969,6 +1001,7 @@ function SidebarHomeRow(props: {
   onActivate: (threadRef: ScopedThreadRef) => void;
 }) {
   const { isActive, onActivate, threadRef } = props;
+  const gt = useGT();
   const thread = useThreadShell(threadRef);
   const environment = useEnvironment(threadRef.environmentId);
   const place: HomePlace =
@@ -977,7 +1010,7 @@ function SidebarHomeRow(props: {
       : props.onAnotherEnvironment
         ? {
             kind: "elsewhere",
-            label: environment?.label ?? "another environment",
+            label: environment?.label ?? gt("another environment"),
             machine: resolveEnvironmentMachineKind(environment?.serverConfig ?? null),
             reachable: !UNREACHABLE_PHASES.has(environment?.connection.phase ?? "connected"),
           }
@@ -1009,11 +1042,14 @@ function HomeRowStatus(props: {
   topStatus: (typeof HOME_ROW_STATUS)[keyof typeof HOME_ROW_STATUS] | null;
 }) {
   const { place, topStatus } = props;
+  const m = useMessages();
   if (place.kind === "elsewhere" && !place.reachable) {
     return (
       <span className="ml-auto inline-flex shrink-0 items-center gap-1 text-xs font-medium text-muted-foreground">
         <UnplugIcon aria-hidden className="size-4 shrink-0" />
-        <span>Offline</span>
+        <T>
+          <span>Offline</span>
+        </T>
       </span>
     );
   }
@@ -1026,31 +1062,35 @@ function HomeRowStatus(props: {
       )}
     >
       <topStatus.Icon aria-hidden className="size-4 shrink-0" />
-      <span role="status">{topStatus.label}</span>
+      <span role="status">{m(topStatus.label)}</span>
     </span>
   );
 }
 
-function homePlaceLabel(place: HomePlace) {
+function homePlaceLabel(place: HomePlace, resolve: MessageResolver = m) {
   return place.kind === "here"
-    ? "This device"
+    ? resolve(msg("This device"))
     : place.kind === "conflict"
-      ? `On in ${place.labels.length} places`
+      ? resolve(msg("On in {count} places"), { count: place.labels.length })
       : place.label;
 }
 
-function homePlaceDescription(place: HomePlace) {
+function homePlaceDescription(place: HomePlace, resolve: MessageResolver = m) {
   return place.kind === "here"
-    ? "Runs on this device"
+    ? resolve(msg("Runs on this device"))
     : place.kind === "conflict"
-      ? `Home is on in ${place.labels.length} places: ${place.labels.join(", ")}`
+      ? resolve(msg("Home is on in {count} places: {places}"), {
+          count: place.labels.length,
+          places: place.labels.join(", "),
+        })
       : place.reachable
-        ? `Runs on ${place.label}`
-        : `${place.label} is offline`;
+        ? resolve(msg("Runs on {environment}"), { environment: place.label })
+        : resolve(msg("{environment} is offline"), { environment: place.label });
 }
 
 function HomePlaceLine(props: { place: HomePlace }) {
   const { place } = props;
+  const messages = useMessages();
   return (
     <div
       className={cn(
@@ -1058,14 +1098,14 @@ function HomePlaceLine(props: { place: HomePlace }) {
         place.kind === "conflict" ? "text-warning-foreground" : "text-secondary-label",
       )}
     >
-      <span className="min-w-0 flex-1 truncate">{homePlaceLabel(place)}</span>
+      <span className="min-w-0 flex-1 truncate">{homePlaceLabel(place, messages)}</span>
       {place.kind === "here" ? null : (
         <Tooltip>
           <TooltipTrigger
             render={
               <span
                 role="img"
-                aria-label={homePlaceDescription(place)}
+                aria-label={homePlaceDescription(place, messages)}
                 className={cn(
                   "inline-flex shrink-0 items-center",
                   place.kind === "elsewhere" && "text-sidebar-muted-foreground/70",
@@ -1079,7 +1119,7 @@ function HomePlaceLine(props: { place: HomePlace }) {
               <EnvironmentMachineIcon aria-hidden kind={place.machine} className="size-3.5" />
             )}
           </TooltipTrigger>
-          <TooltipPopup side="top">{homePlaceDescription(place)}</TooltipPopup>
+          <TooltipPopup side="top">{homePlaceDescription(place, messages)}</TooltipPopup>
         </Tooltip>
       )}
     </div>
@@ -1093,13 +1133,18 @@ function SidebarHomeRowView(props: {
   onActivate: () => void;
 }) {
   const { place, topStatus, isActive, onActivate } = props;
+  const messages = useMessages();
   return (
     <li className="list-none">
       <div
         role="treeitem"
         tabIndex={-1}
         data-sidebar-row="home"
-        aria-label={["Home", homePlaceLabel(place), topStatus?.label]
+        aria-label={[
+          "Home",
+          homePlaceLabel(place, messages),
+          topStatus && messages(topStatus.label),
+        ]
           .filter((part) => part != null)
           .join(", ")}
         aria-current={isActive ? "page" : undefined}
@@ -3897,7 +3942,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               <SidebarSectionHeader
                                 key="threads-shelf-header"
                                 marker="threads-header"
-                                label="Threads"
+                                label={gt("Threads", { $context: "thread list section" })}
                                 count={pinnedThreads.length + activeThreads.length}
                                 toggle={{
                                   expanded: threadsShelfExpanded,
