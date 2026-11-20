@@ -506,30 +506,26 @@ export const make = Effect.gen(function* () {
 
   const publishThreadUnsafe = Effect.fn("publishThreadUnsafe")(function* (threadId: ThreadId) {
     const publishAgentActivity = yield* readPublishAgentActivityEnabled;
-    if (!publishAgentActivity) {
+    const relayConfig = publishAgentActivity ? yield* readRelayConfig : null;
+    // The relay's APNs key cannot reach a fork's bundle, so the server pushes itself, relay or not.
+    if (!relayConfig && !(yield* directAgentActivity.isEnabled)) {
       yield* cancelPublishRetries;
       yield* resetPublishedConnection;
-      yield* Effect.logDebug("agent activity publish skipped; publication disabled", {
-        threadId,
-      });
-      return;
-    }
-    const relayConfig = yield* readRelayConfig;
-    if (!relayConfig) {
-      yield* cancelPublishRetries;
-      yield* resetPublishedConnection;
-      yield* Effect.logDebug("agent activity publish skipped; relay link credentials unavailable", {
-        threadId,
-      });
+      yield* Effect.logDebug(
+        publishAgentActivity
+          ? "agent activity publish skipped; relay link credentials unavailable"
+          : "agent activity publish skipped; publication disabled",
+        { threadId },
+      );
       return;
     }
     if (
-      publishedRelayConfig?.url !== relayConfig.url ||
-      publishedRelayConfig.issuer !== relayConfig.issuer ||
-      publishedRelayConfig.environmentCredential !== relayConfig.environmentCredential
+      publishedRelayConfig?.url !== relayConfig?.url ||
+      publishedRelayConfig?.issuer !== relayConfig?.issuer ||
+      publishedRelayConfig?.environmentCredential !== relayConfig?.environmentCredential
     ) {
       yield* resetPublishedConnection;
-      publishedRelayConfig = relayConfig;
+      publishedRelayConfig = relayConfig ?? undefined;
     }
     const environmentId = yield* serverEnvironment.getEnvironmentId;
 
@@ -538,8 +534,8 @@ export const make = Effect.gen(function* () {
       readonly state: RelayAgentActivityState | null;
       readonly reason: string;
     }) {
-      // The relay's APNs key cannot reach a fork's bundle, so the server also pushes itself.
       yield* directAgentActivity.publish({ threadId, state: input.state });
+      if (!relayConfig) return;
       if (cachedRelayClient === undefined) {
         cachedRelayClient = yield* makeRelayClient(relayConfig);
       }
@@ -859,22 +855,24 @@ export const make = Effect.gen(function* () {
   });
 
   const publishActiveThreadsUnsafe = Effect.gen(function* () {
+    // Direct APNs pushes need the catch-up even with no relay to publish to.
+    const directEnabled = yield* directAgentActivity.isEnabled;
     const relayUrl = yield* readSecretString(RELAY_URL_SECRET).pipe(
       Effect.orElseSucceed(() => null),
     );
-    if (!relayUrl) {
+    if (!relayUrl && !directEnabled) {
       yield* Effect.logDebug("agent activity snapshot skipped; relay link credentials unavailable");
       return "unlinked" as const;
     }
     const publishAgentActivity = yield* readPublishAgentActivityEnabled.pipe(
       Effect.orElseSucceed(() => false),
     );
-    if (!publishAgentActivity) {
+    if (!publishAgentActivity && !directEnabled) {
       yield* Effect.logDebug("agent activity snapshot skipped; publication disabled");
       return "disabled" as const;
     }
     const relayConfig = yield* readRelayConfig.pipe(Effect.orElseSucceed(() => null));
-    if (!relayConfig) {
+    if (!relayConfig && !directEnabled) {
       yield* Effect.logDebug("agent activity snapshot skipped; relay link credentials unavailable");
       return "unlinked" as const;
     }

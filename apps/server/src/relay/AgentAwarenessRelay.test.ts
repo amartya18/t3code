@@ -170,6 +170,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     readonly respond?: (attempt: number) => Response;
     readonly failSecretRead?: (name: string) => boolean;
     readonly linked?: boolean;
+    readonly directPushEnabled?: boolean;
     readonly readShell?: (threadId: ThreadId) => Effect.Effect<OrchestrationV2ThreadShell | null>;
     readonly domainEvents?: Stream.Stream<OrchestrationV2DomainEvent>;
     readonly catchUpThreads?: ReadonlyArray<OrchestrationV2ThreadShell>;
@@ -337,6 +338,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     Effect.provideService(FetchHttpClient.Fetch, fetch),
     Effect.provideService(DirectAgentActivity.DirectAgentActivity, {
       publish: ({ state }) => Effect.sync(() => void directStates.push(state)),
+      isEnabled: Effect.succeed(options.directPushEnabled ?? false),
       registerLiveActivity: () => Effect.die("unused"),
       drain: Effect.void,
     }),
@@ -681,6 +683,23 @@ describe("AgentAwarenessRelay", () => {
       yield* relay.publishThread(THREAD_ID);
       assert.equal(publications.length, 2);
       assert.equal(publications[1]?.state?.threadTitle, "Renamed thread");
+    }),
+  );
+
+  it.effect("pushes directly with no relay link, and sends the relay nothing", () =>
+    Effect.gen(function* () {
+      const { relay, currentShell, publications, directStates } = yield* makeTestRelay({
+        linked: false,
+        directPushEnabled: true,
+      });
+      yield* relay.publishThread(THREAD_ID);
+      yield* Ref.set(currentShell, shell({ title: "Renamed thread" }));
+      yield* relay.publishThread(THREAD_ID);
+      assert.equal(publications.length, 0);
+      assert.deepStrictEqual(
+        directStates.map((state) => state?.threadTitle),
+        ["Thread", "Renamed thread"],
+      );
     }),
   );
 

@@ -131,16 +131,19 @@ export const makeNodeHttp2Transport = Effect.gen(function* () {
       Effect.tryPromise({
         try: (signal) =>
           new Promise<ApnsHttp2Response>((resolve, reject) => {
-            const stream = sessionFor(request.origin).request({
+            const session = sessionFor(request.origin);
+            const stream = session.request({
               ":method": "POST",
               ":path": request.path,
               ...request.headers,
             });
             const chunks: Buffer[] = [];
             let status = 0;
-            signal.addEventListener("abort", () =>
-              stream.close(NodeHttp2.constants.NGHTTP2_CANCEL),
-            );
+            // A connection left dead by sleep or a network change never reports it, so a
+            // timed-out or failed request drops the connection and the next push reconnects.
+            const dropSession = () => session.destroy();
+            signal.addEventListener("abort", dropSession);
+            stream.on("error", dropSession);
             stream.on("response", (headers) => {
               status = Number(headers[":status"] ?? 0);
             });

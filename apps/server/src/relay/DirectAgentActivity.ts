@@ -51,6 +51,8 @@ export class DirectAgentActivity extends Context.Service<
       readonly threadId: ThreadId;
       readonly state: RelayAgentActivityState | null;
     }) => Effect.Effect<void>;
+    /** False until an APNs key is configured. */
+    readonly isEnabled: Effect.Effect<boolean>;
     readonly registerLiveActivity: (
       input: PushLiveActivityRegistration,
     ) => Effect.Effect<void, ServerSecretStore.SecretStoreError>;
@@ -193,6 +195,7 @@ const make = Effect.gen(function* () {
     publish: Effect.fn("DirectAgentActivity.publish")(function* ({ threadId, state }) {
       yield* worker.enqueue({ _tag: "publish", threadId, state });
     }),
+    isEnabled: client.isConfigured,
     registerLiveActivity: Effect.fn("DirectAgentActivity.registerLiveActivity")(function* (input) {
       const device = yield* devices.setActivityToken({
         deviceId: input.deviceId,
