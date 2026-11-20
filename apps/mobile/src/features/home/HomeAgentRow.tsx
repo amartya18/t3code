@@ -2,12 +2,14 @@ import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import { userHomeThreadRef } from "@t3tools/client-runtime/state/home";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import { msg, useGT, useMessages } from "gt-react-native";
 import { Pressable, View } from "react-native";
 
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { cn } from "../../lib/cn";
+import type { MessageResolver } from "../../i18n/messages";
 import { userHomeAtom } from "../../state/home";
 import type { WorkspaceEnvironment } from "../../state/workspaceModel";
 import { threadListEnvironmentsAtom } from "../../state/presentation";
@@ -22,7 +24,7 @@ const UNREACHABLE_PHASES: ReadonlySet<EnvironmentConnectionPhase> = new Set([
   "unsupported",
 ]);
 
-function homeStatus(thread: EnvironmentThreadShell | undefined) {
+function homeStatus(thread: EnvironmentThreadShell | undefined, resolve: MessageResolver) {
   if (thread === undefined) return undefined;
   const status = resolveThreadListV2RowStatus(thread);
   const presentation =
@@ -31,7 +33,12 @@ function homeStatus(thread: EnvironmentThreadShell | undefined) {
   if (presentation === undefined) return undefined;
   return {
     ...presentation,
-    label: presentation.label ?? (status === "waiting" ? "Waiting" : "Working"),
+    label: resolve(
+      presentation.label ??
+        (status === "waiting"
+          ? msg("Waiting", { $context: "thread status" })
+          : msg("Working", { $context: "thread status" })),
+    ),
   };
 }
 
@@ -43,6 +50,8 @@ export function HomeAgentRow(props: {
   >;
   readonly onOpen: (params: { environmentId: string; threadId: string }) => void;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const userHome = useAtomValue(userHomeAtom);
   const { machineByEnvironmentId } = useAtomValue(threadListEnvironmentsAtom);
   const ref = userHomeThreadRef(userHome);
@@ -52,18 +61,18 @@ export function HomeAgentRow(props: {
   );
   const conflict = userHome.kind === "conflict";
   const place = conflict
-    ? `On in ${userHome.hosts.length} places`
-    : (environment?.label ?? "another environment");
+    ? gt("On in {count} places", { count: userHome.hosts.length })
+    : (environment?.label ?? gt("another environment"));
   const offline =
     !conflict && environment !== undefined && UNREACHABLE_PHASES.has(environment.connectionState);
   const status = offline
     ? {
-        label: "Offline",
+        label: gt("Offline", { $context: "connection status" }),
         icon: "wifi.slash" as const,
         className: "text-thread-selected-foreground-muted",
         iconTintClassName: "accent-thread-selected-foreground-muted",
       }
-    : homeStatus(props.thread);
+    : homeStatus(props.thread, messages);
   const machine = machineByEnvironmentId.get(ref.environmentId);
   return (
     <Pressable

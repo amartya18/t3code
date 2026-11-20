@@ -8,10 +8,12 @@ import {
 import type { EnvironmentId, ModelSelection, ServerProvider, ThreadId } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { useNavigate } from "@tanstack/react-router";
+import { T, Var, msg, useGT, useMessages } from "gt-react";
 import { useState } from "react";
 
 import { useOpenInPreferredEditor } from "../../editorPreferences";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
+import { m } from "../../i18n/messages";
 import {
   getCustomModelOptionsByInstance,
   resolveAppModelSelectionForInstance,
@@ -51,10 +53,11 @@ import {
   SettingsRow,
   SettingsSection,
 } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 
-const HOME_DESCRIPTION =
-  "One agent that acts across your projects on the environment it runs on and the environments it links to. It can answer questions and approve requests for you there.";
+const HOME_DESCRIPTION = msg(
+  "One agent that acts across your projects on the environment it runs on and the environments it links to. It can answer questions and approve requests for you there.",
+);
 
 const EMPTY_PROVIDERS: ReadonlyArray<ServerProvider> = [];
 
@@ -80,7 +83,7 @@ function reportHomeFailure(title: string, error: unknown) {
   toastManager.add({
     type: "error",
     title,
-    description: error instanceof Error ? error.message : "An error occurred.",
+    description: error instanceof Error ? error.message : m(msg("An error occurred.")),
   });
 }
 
@@ -105,6 +108,7 @@ function useHomeCandidates(): ReadonlyArray<EnvironmentPresentation> {
 
 /** The model Home starts with on an environment: the user's pick, else that environment's default. */
 function useHomeModel(environmentId: EnvironmentId) {
+  const gt = useGT();
   const settings = useEnvironmentSettings(environmentId);
   const providers =
     useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_PROVIDERS;
@@ -128,7 +132,7 @@ function useHomeModel(environmentId: EnvironmentId) {
           : null;
   const picker =
     selection === null ? (
-      <span className="text-sm text-muted-foreground">No providers available.</span>
+      <span className="text-sm text-muted-foreground">{gt("No providers available.")}</span>
     ) : (
       <ProviderModelPicker
         environmentId={environmentId}
@@ -157,6 +161,7 @@ function EnvironmentSelect(props: {
   onChange: (environmentId: EnvironmentId) => void;
   disabled?: boolean;
 }) {
+  const gt = useGT();
   const current = props.candidates.find((candidate) => candidate.environmentId === props.value);
   return (
     <Select
@@ -166,8 +171,8 @@ function EnvironmentSelect(props: {
       }}
       disabled={props.disabled === true || props.candidates.length === 0}
     >
-      <SelectTrigger size="compact" className="w-48" aria-label="Environment">
-        <SelectValue>{current?.label ?? "Choose an environment"}</SelectValue>
+      <SelectTrigger size="compact" className="w-48" aria-label={gt("Environment")}>
+        <SelectValue>{current?.label ?? gt("Choose an environment")}</SelectValue>
       </SelectTrigger>
       <SelectPopup align="end" alignItemWithTrigger={false}>
         {props.candidates.map((candidate) => (
@@ -181,6 +186,9 @@ function EnvironmentSelect(props: {
 }
 
 function HomeOffRows() {
+  const gt = useGT();
+  const messages = useMessages();
+  const searchableSetting = useSearchableSetting();
   const candidates = useHomeCandidates();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const [chosen, setChosen] = useState<EnvironmentId | null>(null);
@@ -194,18 +202,22 @@ function HomeOffRows() {
     <>
       <SettingsRow
         {...searchableSetting("home")}
-        description={HOME_DESCRIPTION}
+        description={messages(HOME_DESCRIPTION)}
         control={
           candidates.length === 0 ? (
-            <span className="text-sm text-muted-foreground">No environment can run Home.</span>
+            <span className="text-sm text-muted-foreground">
+              {gt("No environment can run Home.")}
+            </span>
           ) : null
         }
       />
       {environmentId === null ? null : (
         <>
           <SettingsRow
-            title="Runs on"
-            description="The environment that hosts Home. Keep it running so Home stays reachable."
+            title={gt("Runs on")}
+            description={gt(
+              "The environment that hosts Home. Keep it running so Home stays reachable.",
+            )}
             control={
               <EnvironmentSelect
                 candidates={candidates}
@@ -222,6 +234,7 @@ function HomeOffRows() {
 }
 
 function HomeTurnOnRow({ environmentId }: { environmentId: EnvironmentId }) {
+  const gt = useGT();
   const { selection, picker } = useHomeModel(environmentId);
   const enable = useAtomCommand(homeEnvironment.enable, { reportFailure: false });
   const navigateToThread = useNavigateToThread();
@@ -234,7 +247,7 @@ function HomeTurnOnRow({ environmentId }: { environmentId: EnvironmentId }) {
     setPending(false);
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
-        reportHomeFailure("Could not turn on Home", squashAtomCommandFailure(result));
+        reportHomeFailure(m(msg("Could not turn on Home")), squashAtomCommandFailure(result));
       }
       return;
     }
@@ -243,13 +256,13 @@ function HomeTurnOnRow({ environmentId }: { environmentId: EnvironmentId }) {
 
   return (
     <SettingsRow
-      title="Model"
-      description="Home always runs in full access. Choose a model you trust with that."
+      title={gt("Model")}
+      description={gt("Home always runs in full access. Choose a model you trust with that.")}
       control={
         <div className="flex flex-wrap items-center justify-end gap-1.5">
           {picker}
           <Button size="sm" disabled={pending || selection === null} onClick={() => void turnOn()}>
-            Turn on Home
+            <T>Turn on Home</T>
           </Button>
         </div>
       }
@@ -258,6 +271,9 @@ function HomeTurnOnRow({ environmentId }: { environmentId: EnvironmentId }) {
 }
 
 function HomeOnRows({ host }: { host: HomeHost }) {
+  const gt = useGT();
+  const messages = useMessages();
+  const searchableSetting = useSearchableSetting();
   const { environmentId, threadId } = host;
   const thread = useThreadShell(scopeThreadRef(environmentId, threadId));
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -313,7 +329,7 @@ function HomeOnRows({ host }: { host: HomeHost }) {
     setPending(false);
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
-        reportHomeFailure("Could not start a fresh Home", squashAtomCommandFailure(result));
+        reportHomeFailure(m(msg("Could not start a fresh Home")), squashAtomCommandFailure(result));
       }
       return;
     }
@@ -325,7 +341,7 @@ function HomeOnRows({ host }: { host: HomeHost }) {
     const result = await disable({ environmentId, input: {} });
     setPending(false);
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      reportHomeFailure("Could not turn off Home", squashAtomCommandFailure(result));
+      reportHomeFailure(m(msg("Could not turn off Home")), squashAtomCommandFailure(result));
     }
   };
 
@@ -333,7 +349,7 @@ function HomeOnRows({ host }: { host: HomeHost }) {
     if (instructionsPath === null) return;
     const result = await openInEditor(instructionsPath);
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      reportHomeFailure("Could not open instructions", squashAtomCommandFailure(result));
+      reportHomeFailure(m(msg("Could not open instructions")), squashAtomCommandFailure(result));
     }
   };
 
@@ -341,23 +357,30 @@ function HomeOnRows({ host }: { host: HomeHost }) {
     <>
       <SettingsRow
         {...searchableSetting("home")}
-        description={HOME_DESCRIPTION}
+        description={messages(HOME_DESCRIPTION)}
         control={
           <Button
             size="sm"
             variant="outline"
             onClick={() => void navigateToThread(environmentId, threadId)}
           >
-            Open Home
+            <T>Open Home</T>
           </Button>
         }
       />
       <SettingsRow
-        title="Runs on"
+        title={gt("Runs on")}
         description={
           hostConnected
-            ? `${hostEnvironment?.label ?? "This environment"}. Moving starts a new Home there and copies its notes and instructions.`
-            : `${hostEnvironment?.label ?? "Its environment"} is offline. Home can move once it is back.`
+            ? gt(
+                "{environment}. Moving starts a new Home there and copies its notes and instructions.",
+                {
+                  environment: hostEnvironment?.label ?? gt("This environment"),
+                },
+              )
+            : gt("{environment} is offline. Home can move once it is back.", {
+                environment: hostEnvironment?.label ?? gt("Its environment"),
+              })
         }
         control={
           moveCandidates.length === 0 ? (
@@ -378,7 +401,7 @@ function HomeOnRows({ host }: { host: HomeHost }) {
                 disabled={!hostConnected || pending || target === null}
                 onClick={() => setMoveOpen(true)}
               >
-                Move
+                <T>Move</T>
               </Button>
             </div>
           )
@@ -386,13 +409,13 @@ function HomeOnRows({ host }: { host: HomeHost }) {
       />
       {modelLabel === null ? null : (
         <SettingsRow
-          title="Model"
+          title={gt("Model")}
           control={<span className="text-sm text-muted-foreground">{modelLabel}</span>}
         />
       )}
       <SettingsRow
-        title="Start fresh"
-        description="Clears Home's memory of this chat. The history stays visible."
+        title={gt("Start fresh")}
+        description={gt("Clears Home's memory of this chat. The history stays visible.")}
         control={
           <Button
             size="sm"
@@ -400,30 +423,33 @@ function HomeOnRows({ host }: { host: HomeHost }) {
             disabled={pending}
             onClick={() => void runStartFresh()}
           >
-            Start fresh
+            <T>Start fresh</T>
           </Button>
         }
       />
       {instructionsPath === null ? null : (
         <SettingsRow
-          title="Instructions"
+          title={gt("Instructions")}
           description={
             environmentId === primaryEnvironmentId
-              ? "AGENTS.md in the Home folder."
-              : `AGENTS.md in the Home folder on ${hostEnvironment?.label ?? "its environment"}: ${instructionsPath}`
+              ? gt("AGENTS.md in the Home folder.")
+              : gt("AGENTS.md in the Home folder on {environment}: {path}", {
+                  environment: hostEnvironment?.label ?? gt("its environment"),
+                  path: instructionsPath,
+                })
           }
           control={
             environmentId === primaryEnvironmentId ? (
               <Button size="sm" variant="outline" onClick={() => void editInstructions()}>
-                Edit
+                <T>Edit</T>
               </Button>
             ) : null
           }
         />
       )}
       <SettingsRow
-        title="Turn off"
-        description="Home stops. Its threads stay."
+        title={gt("Turn off")}
+        description={gt("Home stops. Its threads stay.")}
         control={
           <Button
             size="sm"
@@ -431,7 +457,7 @@ function HomeOnRows({ host }: { host: HomeHost }) {
             disabled={pending}
             onClick={() => void turnOff()}
           >
-            Turn off
+            <T>Turn off</T>
           </Button>
         }
       />
@@ -491,13 +517,13 @@ function MoveHomeDialogPopup(props: {
         : await readFolder({ environmentId: from.environmentId, input: { cwd: props.fromRoot } });
     if (snapshot?._tag === "Failure") {
       setBusy(false);
-      reportHomeFailure("Could not read Home's notes", squashAtomCommandFailure(snapshot));
+      reportHomeFailure(m(msg("Could not read Home's notes")), squashAtomCommandFailure(snapshot));
       return;
     }
     const off = await disable({ environmentId: from.environmentId, input: {} });
     if (off._tag === "Failure") {
       setBusy(false);
-      reportHomeFailure("Could not turn off Home", squashAtomCommandFailure(off));
+      reportHomeFailure(m(msg("Could not turn off Home")), squashAtomCommandFailure(off));
       return;
     }
     const on = await enable({
@@ -507,7 +533,7 @@ function MoveHomeDialogPopup(props: {
     if (on._tag === "Failure") {
       setBusy(false);
       reportHomeFailure(
-        `Home is off. It could not start on ${to.label}`,
+        m(msg("Home is off. It could not start on {environment}"), { environment: to.label }),
         squashAtomCommandFailure(on),
       );
       return;
@@ -521,11 +547,11 @@ function MoveHomeDialogPopup(props: {
     setBusy(false);
     props.onOpenChange(false);
     if (written._tag === "Failure") {
-      reportHomeFailure("Home moved without its notes", squashAtomCommandFailure(written));
+      reportHomeFailure(m(msg("Home moved without its notes")), squashAtomCommandFailure(written));
     } else if (skipped.length > 0) {
       toastManager.add({
         type: "warning",
-        title: "Home moved. Some files stayed behind",
+        title: m(msg("Home moved. Some files stayed behind")),
         description: skipped.join(", "),
       });
     }
@@ -535,25 +561,36 @@ function MoveHomeDialogPopup(props: {
   return (
     <AlertDialogPopup>
       <AlertDialogHeader>
-        <AlertDialogTitle>Move Home to {to.label}?</AlertDialogTitle>
+        <AlertDialogTitle>
+          <T>
+            Move Home to <Var>{to.label}</Var>?
+          </T>
+        </AlertDialogTitle>
         <AlertDialogDescription>
-          Home on {props.fromLabel} stops, and a new Home thread starts on {to.label}. Its notes and
-          instructions are copied over. The old thread stays in {props.fromLabel}'s history.
+          <T>
+            Home on <Var>{props.fromLabel}</Var> stops, and a new Home thread starts on{" "}
+            <Var>{to.label}</Var>. Its notes and instructions are copied over. The old thread stays
+            in <Var>{props.fromLabel}</Var>'s history.
+          </T>
         </AlertDialogDescription>
       </AlertDialogHeader>
       <div className="flex items-center justify-between gap-3 px-6 pb-2">
-        <span className="text-sm">Model on {to.label}</span>
+        <span className="text-sm">
+          <T>
+            Model on <Var>{to.label}</Var>
+          </T>
+        </span>
         {picker}
       </div>
       <AlertDialogFooter>
         <AlertDialogClose render={<Button variant="ghost" disabled={busy} />}>
-          Cancel
+          <T>Cancel</T>
         </AlertDialogClose>
         <Button
           disabled={busy || selection === null || toRoot === null}
           onClick={() => void move()}
         >
-          Move Home
+          <T>Move Home</T>
         </Button>
       </AlertDialogFooter>
     </AlertDialogPopup>
@@ -562,6 +599,8 @@ function MoveHomeDialogPopup(props: {
 
 /** Home on in two places, after a move that half failed. The user keeps one. */
 function HomeConflictRows({ hosts }: { hosts: ReadonlyArray<HomeHost> }) {
+  const gt = useGT();
+  const searchableSetting = useSearchableSetting();
   const { environments } = useEnvironments();
   const disable = useAtomCommand(homeEnvironment.disable, { reportFailure: false });
   const [pending, setPending] = useState(false);
@@ -576,7 +615,9 @@ function HomeConflictRows({ hosts }: { hosts: ReadonlyArray<HomeHost> }) {
       const result = await disable({ environmentId: host.environmentId, input: {} });
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         reportHomeFailure(
-          `Could not turn off Home on ${labelOf(host.environmentId)}`,
+          m(msg("Could not turn off Home on {environment}"), {
+            environment: labelOf(host.environmentId),
+          }),
           squashAtomCommandFailure(result),
         );
       }
@@ -588,7 +629,9 @@ function HomeConflictRows({ hosts }: { hosts: ReadonlyArray<HomeHost> }) {
     <>
       <SettingsRow
         {...searchableSetting("home")}
-        description="Home is on in more than one place. Keep one; the others turn off and their threads stay."
+        description={gt(
+          "Home is on in more than one place. Keep one; the others turn off and their threads stay.",
+        )}
       />
       {hosts.map((host) => (
         <SettingsRow
@@ -596,7 +639,7 @@ function HomeConflictRows({ hosts }: { hosts: ReadonlyArray<HomeHost> }) {
           title={labelOf(host.environmentId)}
           control={
             <Button size="sm" variant="outline" disabled={pending} onClick={() => void keep(host)}>
-              Keep this one
+              <T>Keep this one</T>
             </Button>
           }
         />
