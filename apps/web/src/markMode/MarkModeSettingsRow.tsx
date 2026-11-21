@@ -30,9 +30,9 @@ export function MarkModeSettingsRow() {
           min={0.3}
           max={10}
           step={0.1}
-          format={{ style: "unit", unit: "second", unitDisplay: "short", maximumFractionDigits: 1 }}
+          format={{ maximumFractionDigits: 1 }}
           size="sm"
-          className="w-40"
+          className="w-auto"
           onValueCommitted={(seconds) => {
             if (seconds === null) return;
             const next = Math.round(Math.min(Math.max(seconds, 0.3), 10) * 1_000);
@@ -41,7 +41,14 @@ export function MarkModeSettingsRow() {
         >
           <NumberFieldGroup>
             <NumberFieldDecrement aria-label={gt("Shorter Mark Mode pause")} />
-            <NumberFieldInput aria-label={gt("Mark Mode pause in seconds")} />
+            <NumberFieldInput
+              aria-label={gt("Mark Mode pause in seconds")}
+              size={4}
+              className="w-auto grow-0 text-right"
+            />
+            <span aria-hidden="true" className="self-center pr-2 text-xs">
+              {gt("sec", { $context: "abbreviation for seconds, shown after a number" })}
+            </span>
             <NumberFieldIncrement aria-label={gt("Longer Mark Mode pause")} />
           </NumberFieldGroup>
         </NumberField>
