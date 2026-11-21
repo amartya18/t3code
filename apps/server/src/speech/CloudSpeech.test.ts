@@ -19,7 +19,10 @@ it.effect.each(["openai", "xai"] as const)("sends only to %s using its own saved
     let resolved: string | undefined;
     let cached: string | undefined;
     const read = vi.fn(() => Effect.sync(() => [(cached ??= resolved)]));
-    const upstream = vi.fn<typeof fetch>(async () => Response.json({ text: "hello" }));
+    // Providers can add their own word timings, in seconds; only the text is read.
+    const upstream = vi.fn<typeof fetch>(async () =>
+      Response.json({ text: "hello", words: [{ text: "hello", start: 0.1, end: 0.4 }] }),
+    );
     const service = yield* CloudSpeech.CloudSpeech.pipe(
       Effect.provide(
         CloudSpeech.layer.pipe(

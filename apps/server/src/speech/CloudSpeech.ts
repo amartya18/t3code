@@ -9,7 +9,6 @@ import {
   type ServerSettingsError,
   type CloudSpeechKeys,
   type CloudSpeechProvider,
-  EnvironmentSpeechTranscriptionResult,
   type SpeechTranscriptionOptions,
 } from "@t3tools/contracts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
@@ -37,6 +36,8 @@ const OPENROUTER_CATALOG_URL =
 const isApiKey = Schema.is(CloudSpeechApiKey);
 const isModelId = Schema.is(CloudSpeechModelId);
 const sameCredential = Schema.toEquivalence(SettingsSecretValue);
+// Providers return their own word timing shapes; only the text is read.
+const CloudTranscription = Schema.Struct({ text: Schema.String });
 const OpenRouterCatalog = Schema.Struct({
   data: Schema.Array(Schema.Struct({ id: Schema.String, name: Schema.optionalKey(Schema.String) })),
 });
@@ -235,9 +236,9 @@ export const layer = Layer.effect(
                     ? "model-unavailable"
                     : "unavailable",
           });
-        const { text } = yield* HttpClientResponse.schemaBodyJson(
-          EnvironmentSpeechTranscriptionResult,
-        )(response).pipe(Effect.mapError(unavailable));
+        const { text } = yield* HttpClientResponse.schemaBodyJson(CloudTranscription)(
+          response,
+        ).pipe(Effect.mapError(unavailable));
         const corrected = applySpeechAliases(text, options.speechCustomWords);
         return (
           options.speechRemoveFillerWords
