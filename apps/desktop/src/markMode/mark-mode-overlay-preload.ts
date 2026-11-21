@@ -6,8 +6,8 @@ import { MARK_MODE_OVERLAY_CHANNEL, type MainToOverlay, type OverlayToMain } fro
 type Point = { readonly x: number; readonly y: number };
 
 const send = (message: OverlayToMain) => ipcRenderer.send(MARK_MODE_OVERLAY_CHANNEL, message);
-// The renderer stamps the audio start on this same epoch clock.
-const epochAt = (timeStamp: number) => performance.timeOrigin + timeStamp;
+// Wall clock, like the audio start: a long-lived renderer's performance clock falls behind after sleep.
+const epochAt = (timeStamp: number) => Date.now() - (performance.now() - timeStamp);
 const mid = (a: Point, b: Point): Point => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
 
 window.addEventListener("DOMContentLoaded", () => {
@@ -75,30 +75,28 @@ window.addEventListener("DOMContentLoaded", () => {
     if (!active) return;
     const { points, startedAt: strokeStartedAt } = active;
     active = null;
-    drawTail(points);
+    if (!capturing) drawTail(points);
     drawn.push(points);
-    send({
-      type: "stroke",
-      stroke: { points, startedAt: strokeStartedAt, endedAt: epochAt(performance.now()) },
-    });
+    send({ type: "stroke", stroke: { points, startedAt: strokeStartedAt, endedAt: Date.now() } });
   };
 
   canvas.addEventListener("pointerdown", (event) => {
-    if (capturing || active || event.button !== 0) return;
+    if (active || event.button !== 0) return;
     canvas.setPointerCapture(event.pointerId);
     active = {
       pointerId: event.pointerId,
       points: [{ x: event.clientX, y: event.clientY }],
       startedAt: epochAt(event.timeStamp),
     };
-    drawSegment(active.points, 0);
+    // Ink drawn while the screen is captured is kept and shown once the capture is done.
+    if (!capturing) drawSegment(active.points, 0);
     send({ type: "pen-down" });
   });
   canvas.addEventListener("pointermove", (event) => {
     if (!active || event.pointerId !== active.pointerId) return;
     for (const sample of event.getCoalescedEvents?.() ?? [event]) {
       active.points.push({ x: sample.clientX, y: sample.clientY });
-      drawSegment(active.points, active.points.length - 1);
+      if (!capturing) drawSegment(active.points, active.points.length - 1);
     }
   });
   for (const type of ["pointerup", "pointercancel", "lostpointercapture"] as const) {
@@ -127,7 +125,6 @@ window.addEventListener("DOMContentLoaded", () => {
 
   ipcRenderer.on(MARK_MODE_OVERLAY_CHANNEL, (_event, message: MainToOverlay) => {
     if (message.type === "capture") {
-      endStroke();
       capturing = true;
       drawn = [];
       redraw();
@@ -138,6 +135,7 @@ window.addEventListener("DOMContentLoaded", () => {
       );
     } else if (message.type === "captured") {
       capturing = false;
+      redraw();
       if (toolbar) toolbar.hidden = false;
     } else if (marks) {
       marks.textContent = message.label;

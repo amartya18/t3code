@@ -18,7 +18,10 @@ export const MARK_MODE_IMAGE_MAX_EDGE = 1_500;
 export const MarkModePoint = Schema.Struct({ x: Schema.Number, y: Schema.Number });
 export type MarkModePoint = typeof MarkModePoint.Type;
 
-/** Times are epoch milliseconds (`performance.timeOrigin + performance.now()`), the clock the audio start shares. */
+/**
+ * Times are wall-clock epoch milliseconds, the clock the audio start shares. Not
+ * `performance.timeOrigin`: each renderer's performance clock stops while the machine sleeps.
+ */
 export const MarkModeStroke = Schema.Struct({
   points: Schema.Array(MarkModePoint),
   startedAt: Schema.Number,

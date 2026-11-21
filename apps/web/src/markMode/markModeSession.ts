@@ -139,6 +139,8 @@ export async function startMarkMode(): Promise<void> {
     transition("failed");
     return;
   }
+  // The overlay may have finished or been discarded while it opened; don't open the microphone then.
+  if (session !== current || phase !== "starting") return;
   current.capturing = startMarkModeCapture(() => void bridge.finish()).then(
     (capture) => {
       // A finish that arrived while the microphone opened still collects this capture.

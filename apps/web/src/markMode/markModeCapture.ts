@@ -16,7 +16,13 @@ export type MarkModeAudio = {
 /** Records the preferred microphone into memory until stopped. */
 export async function startMarkModeCapture(onLimit: () => void) {
   const stream = await requestMicrophone(await chooseRecordingMicrophone());
-  const context = new AudioContext();
+  let context: AudioContext;
+  try {
+    context = new AudioContext();
+  } catch (error) {
+    stream.getTracks().forEach((track) => track.stop());
+    throw error;
+  }
   const chunks: Float32Array<ArrayBuffer>[] = [];
   let startedAt: number | null = null;
   let stopped: (() => void) | null = null;
@@ -34,7 +40,7 @@ export async function startMarkModeCapture(onLimit: () => void) {
       else if (data === "limit") onLimit();
       else if (data instanceof Float32Array) {
         // The first chunk arrives once it fills, so its first sample is that much older.
-        startedAt ??= performance.timeOrigin + performance.now() - data.length / SAMPLES_PER_MS;
+        startedAt ??= Date.now() - data.length / SAMPLES_PER_MS;
         chunks.push(data);
       }
     };

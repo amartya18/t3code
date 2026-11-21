@@ -103,7 +103,11 @@ export class MarkModeSession {
             display.id === this.primaryDisplayId
               ? { ...this.options.toolbar, marks: this.options.marksLabel(0) }
               : null;
-          const html = overlayHtml({ startedAt, toolbar });
+          const html = overlayHtml({
+            startedAt,
+            toolbar,
+            toolbarTop: display.workArea.y - display.bounds.y + 12,
+          });
           return window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
         }),
       );
@@ -122,7 +126,8 @@ export class MarkModeSession {
     }
     const focused = this.overlays.get(cursorDisplay.id);
     if (focused) {
-      focused.window.show();
+      // show() activates the app on macOS, raising T3's main window over the app being marked.
+      focused.window.showInactive();
       focused.window.setBounds(focused.display.bounds);
       focused.window.focus();
     }
@@ -173,7 +178,11 @@ export class MarkModeSession {
       },
     });
     window.setAlwaysOnTop(true, "screen-saver");
-    window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    // Without skipTransformProcessType, macOS drops T3 Code from the Dock for good.
+    window.setVisibleOnAllWorkspaces(true, {
+      visibleOnFullScreen: true,
+      skipTransformProcessType: true,
+    });
     // Not a guarantee on macOS 15 ScreenCaptureKit; clearing ink before each capture is.
     if (platform === "darwin" || platform === "win32") window.setContentProtection(true);
     window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
