@@ -6,6 +6,7 @@ import {
   type SpeechAcceleration,
   type SpeechModelUnloadTimeout,
   type SpeechTranscriptionOptions,
+  type SpeechWord,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
@@ -147,7 +148,10 @@ export class SpeechService extends Context.Service<
     readonly transcribe: (
       pcmBytes: Uint8Array,
       options: SpeechTranscriptionOptions,
-    ) => Effect.Effect<string, SpeechError>;
+    ) => Effect.Effect<
+      { readonly text: string; readonly words?: readonly SpeechWord[] },
+      SpeechError
+    >;
     readonly startStream: (
       options: SpeechTranscriptionOptions,
     ) => Effect.Effect<SpeechStream, SpeechError, Scope.Scope>;
@@ -593,7 +597,11 @@ const make = Effect.gen(function* () {
   });
 
   const transcribe: SpeechService["Service"]["transcribe"] = Effect.fn("SpeechService.transcribe")(
-    function* (pcmBytes, options) {
+    function* (pcmBytes, requested) {
+      // Cutting silence would shift word times off the recording clock.
+      const options = requested.speechWordTimestamps
+        ? { ...requested, speechSilenceFiltering: false }
+        : requested;
       const settings = yield* readSettings("transcription");
       return yield* exclusive(
         "transcription",
@@ -603,7 +611,7 @@ const make = Effect.gen(function* () {
             try: () => decodeSpeechPcm(pcmBytes),
             catch: (cause) => speechError("transcription", cause),
           });
-          if (pcm.length === 0) return "";
+          if (pcm.length === 0) return { text: "" };
           activeTranscriptions += 1;
           return yield* Effect.gen(function* () {
             const definition = selectedModel(settings);
@@ -638,7 +646,7 @@ const make = Effect.gen(function* () {
                   return inference.transcribe(
                     pcm,
                     {
-                      timestamps: "none",
+                      timestamps: options.speechWordTimestamps ? "word" : "none",
                       ...(hint ? { language: hint } : {}),
                       ...(translateToEnglish
                         ? { task: "translate" as const, targetLanguage: "en" as const }
@@ -680,11 +688,14 @@ const make = Effect.gen(function* () {
               vocabularyFor(inference).length > 0 ? [] : customWords,
               dictionary,
             );
-            return finalizeTranscript(
-              correct(result.text),
-              options,
-              translateToEnglish ? "en" : language === "auto" ? undefined : language,
-            );
+            return {
+              text: finalizeTranscript(
+                correct(result.text),
+                options,
+                translateToEnglish ? "en" : language === "auto" ? undefined : language,
+              ),
+              ...(result.words ? { words: result.words } : {}),
+            };
           }).pipe(
             Effect.ensuring(
               Effect.sync(() => {

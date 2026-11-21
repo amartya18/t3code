@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off - native inference and IPC cleanup need killable Promise boundaries outside the Effect runtime.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeSea from "node:sea";
-import type { SpeechStreamText } from "@t3tools/contracts";
+import type { SpeechStreamText, SpeechWord } from "@t3tools/contracts";
 import { createSpeechAudio } from "./audio.ts";
 
 // Inline the small child entry so the packaged CLI does not need a separate worker artifact.
@@ -20,6 +20,8 @@ let useVad;
 let scored;
 let revision;
 let texts;
+let words;
+let decodedSamples;
 let heardAudio;
 const warnVad = () => console.warn("Silero silence filtering unavailable; preserving raw recording and using bounded ASR chunks.");
 const resetAsr = () => {
@@ -42,7 +44,8 @@ const begin = async (message, live) => {
   options = message.options;
   nativeStreaming = live && model.capabilities.supportsStreaming;
   texts = [];
-  scored = revision = 0;
+  words = [];
+  scored = revision = decodedSamples = 0;
   heardAudio = false;
   useVad = Boolean(message.vadPath) && (message.filterSilence ||
     (!nativeStreaming && !model.supports("long_form")));
@@ -66,16 +69,22 @@ const begin = async (message, live) => {
   audio = newAudio(useVad && message.filterSilence);
   await openAsr();
 };
-const transcribe = async (pcm) => {
+// Word times are on the recording clock only while chunks are contiguous, i.e. silence is kept.
+const transcribe = async (pcm, at) => {
   try {
     const result = await model.transcribe(pcm, options);
     texts.push(result.text);
+    if (options.timestamps === "word") {
+      const shift = Math.round(at / 16);
+      for (const word of result.words)
+        words.push({ text: word.text, startMs: word.t0Ms + shift, endMs: word.t1Ms + shift });
+    }
   } catch (error) {
     if ((error?.constructor?.name !== "OutputTruncated" &&
          error?.constructor?.name !== "InputTooLong") || pcm.length <= 4000) throw error;
     const middle = Math.floor(pcm.length / 2);
-    await transcribe(pcm.subarray(0, middle));
-    await transcribe(pcm.subarray(middle));
+    await transcribe(pcm.subarray(0, middle), at);
+    await transcribe(pcm.subarray(middle), at + middle);
   }
 };
 const decode = async (final) => {
@@ -90,7 +99,8 @@ const decode = async (final) => {
         preview = { committed: text.committed, tentative: text.tentative };
       }
     } else {
-      await transcribe(pcm);
+      await transcribe(pcm, decodedSamples);
+      decodedSamples += pcm.length;
       preview = { committed: texts.join(" ").trim(), tentative: "" };
     }
   }
@@ -124,6 +134,8 @@ const feed = async (pcm, final = false) => {
     warnVad();
     resetAsr();
     texts = [];
+    words = [];
+    decodedSamples = 0;
     heardAudio = false;
     audio = newAudio(false);
     audio.append(raw);
@@ -175,7 +187,8 @@ process.on("message", async (message) => {
       await feed(message.pcm, true);
       const text = texts.join(" ").trim();
       audio = undefined;
-      process.send({ type: "t3-speech-reply", ok: true, text });
+      process.send({ type: "t3-speech-reply", ok: true, text,
+        ...(options.timestamps === "word" ? { words } : {}) });
     }
   } catch (error) {
     process.send({ type: "t3-speech-reply", ok: false,
@@ -190,6 +203,7 @@ type Reply = {
   readonly type: "t3-speech-reply";
   readonly ok: boolean;
   readonly text?: string;
+  readonly words?: readonly SpeechWord[];
   readonly error?: string;
   readonly supportsStreaming?: boolean;
   readonly supportsLongForm?: boolean;
@@ -443,14 +457,14 @@ async function loadNativeSpeechModelOnce(
     ) => {
       const result = await send({ kind: "transcribe", pcm, options, filterSilence, vadPath });
       if (typeof result.text !== "string") throw new Error("Invalid speech process response.");
-      return { text: result.text };
+      return { text: result.text, ...(result.words ? { words: result.words } : {}) };
     },
     dispose,
   };
 }
 
 type NativeSpeechOptions = {
-  readonly timestamps: "none";
+  readonly timestamps: "none" | "word";
   readonly task?: "translate";
   readonly targetLanguage?: "en";
   readonly language?: string;
