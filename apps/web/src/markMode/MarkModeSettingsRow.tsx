@@ -32,7 +32,7 @@ export function MarkModeSettingsRow() {
           step={0.1}
           format={{ style: "unit", unit: "second", unitDisplay: "short", maximumFractionDigits: 1 }}
           size="sm"
-          className="w-32"
+          className="w-40"
           onValueCommitted={(seconds) => {
             if (seconds === null) return;
             const next = Math.round(Math.min(Math.max(seconds, 0.3), 10) * 1_000);
