@@ -3,6 +3,7 @@ import {
   MessageId,
   ThreadId,
   type ChatAttachment,
+  type CustomModeSkillName,
   type ModelSelection,
   type OrchestrationMessageContext,
   type ProjectId,
@@ -32,6 +33,7 @@ export interface ProjectThreadStartTurnSpec {
   readonly modelSelection: ModelSelection;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
+  readonly customMode?: CustomModeSkillName;
   readonly workspaceMode: "local" | "worktree";
   readonly branch: string | null;
   readonly worktreePath: string | null;
@@ -67,6 +69,7 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
         modelSelection: spec.modelSelection,
         runtimeMode: spec.runtimeMode,
         interactionMode: spec.interactionMode,
+        ...(spec.customMode === undefined ? {} : { customMode: spec.customMode }),
         branch: spec.branch,
         worktreePath: isWorktree ? null : spec.worktreePath,
         createdAt: spec.createdAt,

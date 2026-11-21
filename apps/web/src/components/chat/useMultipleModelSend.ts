@@ -44,6 +44,7 @@ import {
   startFanoutThread,
 } from "./chatViewSend";
 import type { useLocalDispatchState } from "./useLocalDispatchState";
+import { draftCustomModeLaunch } from "./useComposerCustomMode";
 
 interface MultipleModelSendInput {
   readonly environmentId: EnvironmentId;
@@ -192,6 +193,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
                       modelSelection: target.selection,
                       runtimeMode,
                       interactionMode: DEFAULT_INTERACTION_MODE,
+                      ...draftCustomModeLaunch(draftId),
                       branch,
                       worktreePath: null,
                       createdAt: createdAt,

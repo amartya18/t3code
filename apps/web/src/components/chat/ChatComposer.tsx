@@ -26,6 +26,7 @@ import type {
   ResponseContextRecord,
   ChatAttachment as ContractChatAttachment,
   ChatFileAttachment,
+  CustomModeSkillName,
   EnvironmentId,
   ModelSelection,
   ProjectId,
@@ -42,6 +43,7 @@ import type {
 import {
   EnvironmentRequestInvalidError,
   AuthOrchestrationOperateScope,
+  isCustomModeSkillName,
   clampManagedRuntimeMode,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -208,8 +210,10 @@ import { threadContextAttachment } from "~/lib/threadContextAttachment";
 import {
   type ComposerCommandItem,
   ComposerCommandMenu,
+  type ComposerCommandSelectOptions,
   composerSuggestionOptionId,
 } from "./ComposerCommandMenu";
+import { ComposerCustomModeChip } from "./ComposerCustomModeChip";
 import {
   ComposerAttachButton,
   ComposerAttachmentFileList,
@@ -399,6 +403,8 @@ export interface ChatComposerProps {
   sideChatDisabledReason?: string | null;
   /** Arms a fresh session for the next message; absent where `/clear` is unavailable. */
   onFreshSession?: (() => void) | undefined;
+  customModeSkill: CustomModeSkillName | null;
+  onCustomModeChange: (skill: CustomModeSkillName | null) => void;
   environmentUnavailable: {
     readonly label: string;
     readonly connection: EnvironmentConnectionPresentation;
@@ -1953,7 +1959,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
 
   const { onUsageLimitsCommand } = props;
-  const onSelectComposerItem = (item: ComposerCommandItem) => {
+  const onSelectComposerItem = (
+    item: ComposerCommandItem,
+    options?: ComposerCommandSelectOptions,
+  ) => {
     if (composerSelectLockRef.current) return;
     composerSelectLockRef.current = true;
     window.requestAnimationFrame(() => {
@@ -2035,6 +2044,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       });
       if (applied) {
         setComposerHighlightedItemId(null);
+      }
+      return;
+    }
+    if (
+      item.type === "skill" &&
+      options?.asCustomMode === true &&
+      canOperateThread &&
+      isCustomModeSkillName(item.skill.name)
+    ) {
+      const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+        expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+      });
+      if (applied) {
+        setComposerHighlightedItemId(null);
+        props.onCustomModeChange(item.skill.name);
       }
       return;
     }
@@ -3662,6 +3686,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     activeItemId={activeComposerMenuItem?.id ?? null}
                     onHighlightedItemChange={onComposerMenuItemHighlightedStable}
                     onSelect={onSelectComposerItemStable}
+                    customModeHint={canOperateThread}
                   />
                 </ComposerCommandMenuLayer>
               )}
@@ -3814,6 +3839,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               >
                 {composerAttachButton && !dictationTakesFooter ? (
                   <div className="me-2">{composerAttachButton}</div>
+                ) : null}
+                {props.customModeSkill && !dictationTakesFooter ? (
+                  <div className="me-2 min-w-0 max-w-48 text-sm">
+                    <ComposerCustomModeChip
+                      skill={props.customModeSkill}
+                      onTurnOff={() => props.onCustomModeChange(null)}
+                    />
+                  </div>
                 ) : null}
                 <div
                   data-chat-composer-actions="right"

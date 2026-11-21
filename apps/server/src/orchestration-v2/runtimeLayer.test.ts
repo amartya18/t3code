@@ -3708,6 +3708,30 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         threadId,
         interactionMode: "plan",
       });
+      for (const [step, skill, expected, emitted] of [
+        ["off-while-absent", null, undefined, false],
+        ["on", "review", { status: "on", skill: "review" }, true],
+        ["on-same", "review", { status: "on", skill: "review" }, false],
+        ["switch", "ship-it", { status: "on", skill: "ship-it" }, true],
+        ["off", null, { status: "off", skill: "ship-it" }, true],
+        ["off-again", null, { status: "off", skill: "ship-it" }, false],
+      ] as const) {
+        const result = yield* orchestrator.dispatch({
+          type: "thread.custom-mode.set",
+          commandId: CommandId.make(`runtime-layer-lifecycle-custom-mode-${step}`),
+          threadId,
+          skill,
+        });
+        const mode = (yield* orchestrator.getThreadProjection(threadId)).thread.customMode;
+        assert.deepEqual(
+          mode === undefined || mode === null
+            ? undefined
+            : { status: mode.status, skill: mode.skill },
+          expected,
+          step,
+        );
+        assert.equal(result.storedEvents.length > 0, emitted, step);
+      }
       yield* orchestrator.dispatch({
         type: "thread.model-selection.set",
         commandId: CommandId.make("runtime-layer-lifecycle-model"),

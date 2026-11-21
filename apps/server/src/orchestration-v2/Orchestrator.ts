@@ -157,6 +157,7 @@ import {
   decideGuestShareCommand,
   type GuestShareCommand,
 } from "./GuestShareDecider.ts";
+import { customModeOn, nextThreadCustomMode } from "./threadCustomMode.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import { withCommandMetrics } from "../observability/Metrics.ts";
 import type { OrchestrationEffectRequestV2, PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
@@ -665,6 +666,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.project.adopt-folder":
     case "thread.runtime-mode.set":
     case "thread.interaction-mode.set":
+    case "thread.custom-mode.set":
     case "thread.model-selection.set":
     case "provider-session.detach":
     case "message.dispatch":
@@ -4009,6 +4011,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       interactionMode: command.interactionMode,
       branch: command.branch,
       worktreePath: command.worktreePath,
+      ...(command.customMode === undefined
+        ? {}
+        : { customMode: customModeOn(command.customMode, now) }),
       activeProviderThreadId: null,
       pullRequests: [],
       ...(command.linkOrigin === undefined ? {} : { linkOrigin: command.linkOrigin }),
@@ -4295,6 +4300,41 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     });
     yield* releaseGuestAttachments(command, thread.guestShare, decided.success.guestShare, effects);
   });
+
+  const dispatchThreadCustomMode = Effect.fn("orchestrationV2.dispatch.threadCustomMode")(
+    function* (
+      command: Extract<OrchestrationV2Command, { readonly type: "thread.custom-mode.set" }>,
+      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    ) {
+      const thread = yield* projectionStore
+        .getThread(command.threadId)
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+          ),
+        );
+      if (thread.deletedAt !== null) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} is deleted.`,
+        });
+      }
+      const now = yield* DateTime.now;
+      const customMode = nextThreadCustomMode(thread.customMode, command.skill, now);
+      if (customMode === undefined) return;
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "thread.custom-mode-updated",
+        threadId: command.threadId,
+        providerInstanceId: thread.providerInstanceId,
+        occurredAt: now,
+        payload: { ...thread, customMode, updatedAt: now },
+      });
+    },
+  );
 
   // Emitted before the message so the send and the status change commit together, and so
   // `dispatchMessage`, which reads pending events, keeps the updated share.
@@ -15617,6 +15657,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.guest-message.dismiss":
         yield* dispatchGuestShare(command, events, effects);
         break;
+      case "thread.custom-mode.set":
+        yield* dispatchThreadCustomMode(command, events);
+        break;
       case "provider-session.detach":
         yield* dispatchProviderSessionDetach(command, events, effects);
         break;
@@ -16018,6 +16061,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command.type === "subagent.stop" ||
           // Closing a share again, or after it ended, is not an error.
           command.type === "thread.guest-share.close" ||
+          // Nor is setting the custom mode a thread already has.
+          command.type === "thread.custom-mode.set" ||
           (command.type === "thread.delete" && command.onlyIfUnused === true),
         (_planned) =>
           new OrchestratorDispatchError({

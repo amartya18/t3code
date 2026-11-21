@@ -1,5 +1,5 @@
 import type { ChatComposerProps } from "./ChatComposer";
-import { type ComposerCommandItem } from "./ComposerCommandMenu";
+import { type ComposerCommandItem, type ComposerCommandSelectOptions } from "./ComposerCommandMenu";
 import {
   type ComposerDispatchMode,
   resolveComposerDispatchMode,
@@ -82,7 +82,10 @@ export function composerCommandKeyHandler(input: {
   readonly setComposerHighlightedItemId: Dispatch<SetStateAction<string | null>>;
   readonly dismissComposerTrigger: (trigger: ComposerTrigger | null) => void;
   readonly nudgeComposerMenuHighlight: (key: "ArrowDown" | "ArrowUp") => void;
-  readonly onSelectComposerItem: (item: ComposerCommandItem) => void;
+  readonly onSelectComposerItem: (
+    item: ComposerCommandItem,
+    options?: ComposerCommandSelectOptions,
+  ) => void;
   readonly resolveActiveComposerTrigger: () => { trigger: ComposerTrigger | null };
   readonly readComposerSnapshot: () => { value: string };
   readonly applyPromptReplacement: (
@@ -258,6 +261,10 @@ export function composerCommandKeyHandler(input: {
       }
       if (key === "ArrowUp" && currentItems.length > 0) {
         nudgeComposerMenuHighlight("ArrowUp");
+        return true;
+      }
+      if (key === "Enter" && event.altKey && selectedItem?.type === "skill") {
+        onSelectComposerItem(selectedItem, { asCustomMode: true });
         return true;
       }
       if ((key === "Enter" || key === "Tab") && selectedItem) {

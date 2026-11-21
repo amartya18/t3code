@@ -2,16 +2,17 @@ import {
   resolveProviderSkillSourceKind,
   type ProviderSkillSourceKind,
 } from "@t3tools/client-runtime/providerSkills";
-import type {
-  EnvironmentId,
-  EnvironmentMachineKind,
-  PullRequestContextMetadata,
-  ScopedThreadRef,
-  ServerProviderSkill,
-  ServerProviderSlashCommand,
+import {
+  isCustomModeSkillName,
+  type EnvironmentId,
+  type EnvironmentMachineKind,
+  type PullRequestContextMetadata,
+  type ScopedThreadRef,
+  type ServerProviderSkill,
+  type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 import type { ComposerTriggerKind } from "@t3tools/shared/composerTrigger";
-import { msg, useMessages } from "gt-react-native";
+import { msg, T, useGT, useMessages } from "gt-react-native";
 import { memo } from "react";
 import { Pressable, ScrollView, StyleSheet, View, type ViewStyle } from "react-native";
 
@@ -91,6 +92,8 @@ interface ComposerCommandPopoverProps {
   readonly isLoading: boolean;
   readonly error?: string | null;
   readonly onSelect: (item: ComposerCommandItem) => void;
+  /** Pins a skill as the thread's custom mode instead of inserting it. */
+  readonly onLongPressSkill?: ((item: ComposerCommandItem) => void) | undefined;
 }
 
 function PopoverSurface(props: { readonly children: React.ReactNode; readonly style?: ViewStyle }) {
@@ -185,15 +188,19 @@ function emptyText(
 const CommandRow = memo(function CommandRow(props: {
   readonly item: ComposerCommandItem;
   readonly onPress: () => void;
+  readonly onLongPress: (() => void) | undefined;
   readonly isLast: boolean;
   readonly isSlashSkill: boolean;
 }) {
+  const gt = useGT();
   const iconName = itemIcon(props.item);
 
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityHint={props.onLongPress ? gt("Long press to keep it on as a mode") : undefined}
       onPress={props.onPress}
+      onLongPress={props.onLongPress}
       className="flex-row items-center gap-2.5 border-border px-3.5 py-2.5 active:opacity-60"
       style={{ borderBottomWidth: props.isLast ? 0 : StyleSheet.hairlineWidth }}
     >
@@ -247,14 +254,22 @@ export const ComposerCommandPopover = memo(function ComposerCommandPopover(
 ) {
   const m = useMessages();
   const label = groupLabel(props.triggerKind, props.items, m);
+  const { onLongPressSkill } = props;
+  const offersSkillMode =
+    onLongPressSkill !== undefined && props.items.some((item) => item.type === "skill");
 
   return (
     <PopoverSurface>
       {label ? (
-        <View className="px-3.5 pt-2.5 pb-1">
+        <View className="flex-row items-center justify-between px-3.5 pt-2.5 pb-1">
           <Text className="text-3xs font-t3-bold tracking-[0.8px] uppercase text-foreground-muted">
             {label}
           </Text>
+          {offersSkillMode ? (
+            <Text className="text-3xs text-foreground-muted">
+              <T>Hold to use as mode</T>
+            </Text>
+          ) : null}
         </View>
       ) : null}
       {props.items.length > 0 ? (
@@ -268,6 +283,11 @@ export const ComposerCommandPopover = memo(function ComposerCommandPopover(
               key={item.id}
               item={item}
               onPress={() => props.onSelect(item)}
+              onLongPress={
+                onLongPressSkill && item.type === "skill" && isCustomModeSkillName(item.skill.name)
+                  ? () => onLongPressSkill(item)
+                  : undefined
+              }
               isLast={index === props.items.length - 1}
               isSlashSkill={props.triggerKind === "slash-command" && item.type === "skill"}
             />
