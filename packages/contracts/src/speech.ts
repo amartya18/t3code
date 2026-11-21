@@ -270,7 +270,17 @@ export const EnvironmentSpeechStatus = Schema.Union([
 ]);
 export type EnvironmentSpeechStatus = typeof EnvironmentSpeechStatus.Type;
 
-export const EnvironmentSpeechTranscriptionResult = Schema.Struct({ text: Schema.String });
+/** Milliseconds from the start of the recording. */
+export const SpeechWord = Schema.Struct({
+  text: Schema.String,
+  startMs: Schema.Number,
+  endMs: Schema.Number,
+});
+export type SpeechWord = typeof SpeechWord.Type;
+export const EnvironmentSpeechTranscriptionResult = Schema.Struct({
+  text: Schema.String,
+  words: Schema.optionalKey(Schema.Array(SpeechWord)),
+});
 
 export const EnvironmentSpeechAccelerationRequest = Schema.Struct({
   acceleration: SpeechAcceleration,
@@ -297,6 +307,8 @@ export const SpeechTranscriptionOptions = Schema.Struct({
   /** Preserve this cue for separately consented transcript cleanup. */
   speechCorrectionWord: Schema.optionalKey(SpeechCorrectionCue),
   speechSilenceFiltering: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Return word timings on the recording clock. Needs silence filtering off. */
+  speechWordTimestamps: Schema.optionalKey(Schema.Boolean),
 });
 export type SpeechTranscriptionOptions = typeof SpeechTranscriptionOptions.Type;
 export const DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS: SpeechTranscriptionOptions = {
