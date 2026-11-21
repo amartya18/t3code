@@ -30,7 +30,7 @@ export function MarkModeSettingsRow() {
           min={0.3}
           max={10}
           step={0.1}
-          format={{ maximumFractionDigits: 1 }}
+          format={{ style: "unit", unit: "second", unitDisplay: "short", maximumFractionDigits: 1 }}
           size="sm"
           className="w-32"
           onValueCommitted={(seconds) => {
