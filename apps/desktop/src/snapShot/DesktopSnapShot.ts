@@ -364,7 +364,7 @@ function snapShotAppName(
   return appName.replace(/\.exe$/i, "").trim() || appName;
 }
 
-async function requestMacScreenCapturePermission(): Promise<string | null> {
+export async function requestMacScreenCapturePermission(): Promise<string | null> {
   let status: ReturnType<typeof Electron.systemPreferences.getMediaAccessStatus>;
   try {
     status = Electron.systemPreferences.getMediaAccessStatus("screen");
