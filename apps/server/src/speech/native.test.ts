@@ -301,21 +301,34 @@ it("decodes complete stable chunks before Stop and returns the ordered final tai
 
 it("uses bounded offline chunks for a native streaming model without opening a session", async () => {
   const moduleUrl = `data:text/javascript,${encodeURIComponent(`
+    class InputTooLong extends Error {}
     export const TranscribeModel = { load: async () => ({
       capabilities: { supportsStreaming: true, maxAudioMs: 4000 },
       supports: () => false,
       createSession: () => { throw new Error("Offline inference must not open a stream"); },
-      transcribe: async pcm => {
+      transcribe: async (pcm, options) => {
         if (pcm.length > 32000) throw new Error("Model input limit exceeded");
-        return { text: String(pcm.length) };
+        if (pcm.length > 20000) throw new InputTooLong();
+        const words = [{ text: String(pcm.length), t0Ms: 1, t1Ms: Math.round(pcm.length / 16) }];
+        return { text: String(pcm.length), words: options.timestamps === "word" ? words : [] };
       },
     }) };
   `)}`;
   const model = await loadNativeSpeechModel("asr.gguf", new AbortController().signal, moduleUrl);
   try {
-    expect(
-      await model.transcribe(new Float32Array(48002).fill(0.8), { timestamps: "none" }, false),
-    ).toEqual({ text: "32000 16002" });
+    const pcm = new Float32Array(48002).fill(0.8);
+    expect(await model.transcribe(pcm, { timestamps: "none" }, false)).toEqual({
+      text: "16000 16000 16002",
+    });
+    // Each chunk's words, including those of a split retry, shift by that chunk's start.
+    expect(await model.transcribe(pcm, { timestamps: "word" }, false)).toEqual({
+      text: "16000 16000 16002",
+      words: [
+        { text: "16000", startMs: 1, endMs: 1000 },
+        { text: "16000", startMs: 1001, endMs: 2000 },
+        { text: "16002", startMs: 2001, endMs: 3000 },
+      ],
+    });
   } finally {
     await model.dispose();
   }

@@ -221,10 +221,9 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
           yield* guard(args.endpoint.name);
           const decoded = parseAudio(args.payload);
           if (Option.isNone(decoded)) return yield* failEnvironmentInvalidRequest("invalid_audio");
-          const text = yield* speech
+          return yield* speech
             .transcribe(decoded.value.pcm, decoded.value.options)
             .pipe(mapSpeechError);
-          return { text };
         }),
       )
       .handle(

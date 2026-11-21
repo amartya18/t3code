@@ -69,7 +69,7 @@ const dependencies = Layer.mergeAll(
 
 effectIt.live("rejects oversized chunked audio without invoking transcription", () =>
   Effect.gen(function* () {
-    const transcribe = vi.fn(() => Effect.succeed("unexpected"));
+    const transcribe = vi.fn(() => Effect.succeed({ text: "unexpected" }));
     const routes = HttpApiBuilder.layer(
       HttpApi.make("environment").add(EnvironmentVoiceHttpApi),
     ).pipe(

@@ -1,5 +1,6 @@
 import { copySnapshot } from "./copySnapshot";
 import { VoiceInputSetup } from "./VoiceInputSetup";
+import { ComposerModeControl } from "../../markMode/ComposerModeControl";
 import { useComposerTypingGuard } from "./useComposerTypingGuard";
 import { insertAttachmentReferencesForDraft } from "./composerAttachmentReferences";
 import type { ComposerAttachmentInsertion } from "../composerAttachmentInsertion";
@@ -3916,6 +3917,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       onCancelDownload={() => void speechInput.setup.cancelDownload()}
                       onStartRecording={() => void speechInput.setup.startRecording()}
                     />
+                    <ComposerModeControl />
                   </ComposerFooterPrimaryActions>
                 </div>
               </div>

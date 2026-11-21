@@ -1,5 +1,6 @@
 import type {
   DesktopBridge,
+  DesktopMarkModeEvent,
   DesktopPreviewAnnotationVoiceEvent,
   DesktopPreviewFindResultEvent,
   DesktopPreviewOpenLinkEvent,
@@ -12,6 +13,7 @@ import { exposeClerkBridge } from "@clerk/electron/preload";
 import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
 
 import * as IpcChannels from "./ipc/channels.ts";
+import * as MarkModeChannels from "./markMode/channels.ts";
 import { mergeLegacyLocalStorage } from "./legacyLocalStorageMerge.ts";
 
 const SNAP_SHOT_EVENT_TYPES = new Set([
@@ -376,6 +378,20 @@ contextBridge.exposeInMainWorld("desktopBridge", {
           wrappedListener,
         );
       };
+    },
+  },
+  markMode: {
+    start: (input) => ipcRenderer.invoke(MarkModeChannels.MARK_MODE_START_CHANNEL, input),
+    finish: () => ipcRenderer.invoke(MarkModeChannels.MARK_MODE_FINISH_CHANNEL),
+    cancel: () => ipcRenderer.invoke(MarkModeChannels.MARK_MODE_CANCEL_CHANNEL),
+    onEvent: (listener) => {
+      const wrappedListener = (_event: Electron.IpcRendererEvent, event: unknown) => {
+        if (typeof event !== "object" || event === null || !("type" in event)) return;
+        listener(event as DesktopMarkModeEvent);
+      };
+      ipcRenderer.on(MarkModeChannels.MARK_MODE_EVENT_CHANNEL, wrappedListener);
+      return () =>
+        ipcRenderer.removeListener(MarkModeChannels.MARK_MODE_EVENT_CHANNEL, wrappedListener);
     },
   },
   preview: {

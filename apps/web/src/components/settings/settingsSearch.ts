@@ -595,6 +595,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("speech voice keyboard hotkey hold toggle auto")],
   },
   {
+    id: "mark-mode-pause",
+    title: msg("Mark Mode pause"),
+    to: "/settings/voice",
+    desktopOnly: true,
+    searchTerms: [msg("mark mode draw annotate ink screen pause seconds")],
+  },
+  {
     id: "speech-language",
     title: msg("Transcription language"),
     to: "/settings/voice",
