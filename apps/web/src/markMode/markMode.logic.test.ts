@@ -37,6 +37,17 @@ describe("buildMarkModeText", () => {
     expect(build(marks)).toBe(expected);
   });
 
+  it("puts a mark drawn in a pause before the next sentence, though the last word's end spans the pause", () => {
+    const stretched = [
+      { text: "five", startMs: 0, endMs: 200 },
+      { text: "words.", startMs: 300, endMs: 3_300 },
+      { text: "The", startMs: 3_300, endMs: 3_400 },
+    ];
+    expect(build([mark(1, 1_500)], { text: "five words. The", words: stretched })).toBe(
+      "five words. [1] The",
+    );
+  });
+
   it("writes markers only for an empty transcript", () => {
     expect(build([mark(2, 0), mark(1, 0)], { text: " ", words: [] })).toBe("[1] [2]");
   });

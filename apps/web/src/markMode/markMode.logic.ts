@@ -21,6 +21,9 @@ export function nextMarkModePhase(
 
 type MarkTiming = { readonly index: number; readonly startedAt: number };
 
+// Parakeet stretches a word's end across the pause after it, so a word's span is capped.
+const MAX_WORD_MS = 700;
+
 /**
  * The transcript with `[n]` at the word boundary nearest each mark's start. Boundary i is the
  * gap before word i (the last one follows the final word); a mark inside a gap is at distance 0.
@@ -32,7 +35,11 @@ export function buildMarkModeText(input: {
   readonly audioStartedAt: number;
 }): string {
   const words = (input.words ?? [])
-    .map((word) => ({ ...word, text: word.text.trim() }))
+    .map((word) => ({
+      text: word.text.trim(),
+      startMs: word.startMs,
+      endMs: Math.min(word.endMs, word.startMs + MAX_WORD_MS),
+    }))
     .filter((word) => word.text.length > 0);
   const sorted = input.marks.toSorted((a, b) => a.index - b.index);
   const label = (marks: ReadonlyArray<MarkTiming>) => marks.map(({ index }) => `[${index}]`);
