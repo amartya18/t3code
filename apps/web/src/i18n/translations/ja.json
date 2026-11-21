@@ -3402,6 +3402,17 @@
   "0e7b21ab11721ca7": "一致するコマンドはありません。",
   "2029db2cc30beb6d": "プロバイダー設定を開く",
   "517cfb8f24123f5b": "利用できるプロバイダーがありません",
+  "75ef6f4149b8c826": "Turn off custom mode {skill}",
+  "f74e29147dbedc9d": [
+    "Custom mode: every message follows ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "."
+  ],
+  "244cd6f39cba983a": "use as mode",
   "7ff1a0ef1490668d": "Codex のフィードバックスレッド ID をコピーする際にクリップボード API を利用できませんでした。",
   "1967731535386826": "Codex のフィードバックスレッド ID をクリップボードにコピーできませんでした。",
   "9c5afbfbbe8b305d": "スレッド ID をコピーできませんでした",

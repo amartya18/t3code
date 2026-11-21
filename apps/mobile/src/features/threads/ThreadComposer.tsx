@@ -812,7 +812,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
               size="small"
               selected
               disabled={!props.canOperateThread}
-              accessibilityLabel={`Turn off custom mode ${customMode.skill}`}
+              accessibilityLabel={gt("Turn off custom mode {skill}", { skill: customMode.skill })}
               onPress={() => customMode.setSkill(null)}
             />
           </View>

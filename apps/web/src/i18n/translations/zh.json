@@ -3411,6 +3411,17 @@
   "0e7b21ab11721ca7": "没有匹配的命令。",
   "2029db2cc30beb6d": "打开提供方设置",
   "517cfb8f24123f5b": "没有可用的提供方",
+  "75ef6f4149b8c826": "Turn off custom mode {skill}",
+  "f74e29147dbedc9d": [
+    "Custom mode: every message follows ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "."
+  ],
+  "244cd6f39cba983a": "use as mode",
   "7ff1a0ef1490668d": "复制 Codex 反馈会话 ID 时剪贴板 API 不可用。",
   "1967731535386826": "无法将 Codex 反馈会话 ID 复制到剪贴板。",
   "9c5afbfbbe8b305d": "无法复制会话 ID",

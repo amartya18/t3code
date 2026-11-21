@@ -12,7 +12,7 @@ import {
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 import type { ComposerTriggerKind } from "@t3tools/shared/composerTrigger";
-import { msg, useMessages } from "gt-react-native";
+import { msg, T, useGT, useMessages } from "gt-react-native";
 import { memo } from "react";
 import { Pressable, ScrollView, StyleSheet, View, type ViewStyle } from "react-native";
 
@@ -192,12 +192,13 @@ const CommandRow = memo(function CommandRow(props: {
   readonly isLast: boolean;
   readonly isSlashSkill: boolean;
 }) {
+  const gt = useGT();
   const iconName = itemIcon(props.item);
 
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityHint={props.onLongPress ? "Long press to keep it on as a mode" : undefined}
+      accessibilityHint={props.onLongPress ? gt("Long press to keep it on as a mode") : undefined}
       onPress={props.onPress}
       onLongPress={props.onLongPress}
       className="flex-row items-center gap-2.5 border-border px-3.5 py-2.5 active:opacity-60"
@@ -265,7 +266,9 @@ export const ComposerCommandPopover = memo(function ComposerCommandPopover(
             {label}
           </Text>
           {offersSkillMode ? (
-            <Text className="text-3xs text-foreground-muted">Hold to use as mode</Text>
+            <Text className="text-3xs text-foreground-muted">
+              <T>Hold to use as mode</T>
+            </Text>
           ) : null}
         </View>
       ) : null}
