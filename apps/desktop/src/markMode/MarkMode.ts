@@ -1,5 +1,6 @@
 import type {
   DesktopMarkModeEvent,
+  KeybindingShortcut,
   MarkModePauseMs,
   MarkModeStartFailure,
   MarkModeStartResult,
@@ -11,7 +12,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import type * as Scope from "effect/Scope";
 import * as Electron from "electron";
 import { msg } from "gt-i18n";
 
@@ -20,11 +20,9 @@ import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { m } from "../i18n/messages.ts";
 import * as MacPermissions from "../permissions/MacPermissions.ts";
 import { requestMacScreenCapturePermission } from "../snapShot/DesktopSnapShot.ts";
-import { isWaylandSession } from "../snapShot/snapShot.ts";
+import { isWaylandSession, toElectronAccelerator } from "../snapShot/snapShot.ts";
 import { MARK_MODE_EVENT_CHANNEL } from "./channels.ts";
 import { MarkModeSession } from "./MarkModeSession.ts";
-
-const SHORTCUT = "Alt+Shift+M";
 
 export class MarkMode extends Context.Service<
   MarkMode,
@@ -34,8 +32,11 @@ export class MarkMode extends Context.Service<
     }) => Effect.Effect<MarkModeStartResult>;
     readonly finish: Effect.Effect<void>;
     readonly cancel: Effect.Effect<void>;
-    /** Alt+Shift+M (⌥⇧M) asks the renderer to start, or finishes an active session. */
-    readonly registerShortcut: Effect.Effect<void, never, Scope.Scope>;
+    /**
+     * Registers the renderer's `markMode.toggle` binding system-wide, replacing the last one:
+     * idle asks the renderer to start, active finishes. False when it could not register.
+     */
+    readonly setShortcut: (shortcut: KeybindingShortcut | null) => Effect.Effect<boolean>;
   }
 >()("@t3tools/desktop/markMode/MarkMode") {}
 
@@ -65,6 +66,7 @@ export const layer = Layer.effect(
     const runFork = Effect.runForkWith(yield* Effect.context<never>());
     const preloadPath = path.join(environment.dirname, "mark-mode-overlay-preload.cjs");
     let current: MarkModeSession | "starting" | undefined;
+    let accelerator: string | null = null;
 
     // Only the main window's preload listens; overlays and preview guests never see marks.
     const emit = Effect.fn("MarkMode.emit")(function* (event: DesktopMarkModeEvent) {
@@ -144,8 +146,18 @@ export const layer = Layer.effect(
       if (session instanceof MarkModeSession) yield* Effect.promise(() => session.finish());
     });
 
+    const onShortcut = () => {
+      if (current === "starting") return;
+      runFork(current ? finish() : emit({ type: "start-requested" }));
+    };
+    const unregisterShortcut = () => {
+      if (accelerator !== null) Electron.globalShortcut.unregister(accelerator);
+      accelerator = null;
+    };
+
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {
+        unregisterShortcut();
         if (current instanceof MarkModeSession) current.cancel();
       }),
     );
@@ -156,25 +168,30 @@ export const layer = Layer.effect(
       cancel: Effect.sync(() => {
         if (current instanceof MarkModeSession) current.cancel();
       }).pipe(Effect.withSpan("MarkMode.cancel")),
-      registerShortcut: Effect.acquireRelease(
-        Effect.sync(() =>
-          Electron.globalShortcut.register(SHORTCUT, () => {
-            if (current === "starting") return;
-            runFork(current ? finish() : emit({ type: "start-requested" }));
-          }),
-        ),
-        (registered) =>
-          Effect.sync(() => {
-            if (registered) Electron.globalShortcut.unregister(SHORTCUT);
-          }),
-      ).pipe(
-        Effect.flatMap((registered) =>
-          registered
-            ? Effect.void
-            : Effect.logWarning("Mark Mode could not register its shortcut", { SHORTCUT }),
-        ),
-        Effect.withSpan("MarkMode.registerShortcut"),
-      ),
+      setShortcut: Effect.fn("MarkMode.setShortcut")(function* (shortcut) {
+        // A bare key registered system-wide would be taken from every other app.
+        const next =
+          shortcut &&
+          (shortcut.modKey ||
+            shortcut.metaKey ||
+            shortcut.ctrlKey ||
+            shortcut.altKey ||
+            shortcut.shiftKey)
+            ? toElectronAccelerator(shortcut)
+            : null;
+        if (next === accelerator) return next !== null;
+        unregisterShortcut();
+        if (next === null) return false;
+        const registered = Electron.globalShortcut.register(next, onShortcut);
+        if (!registered) {
+          yield* Effect.logWarning("Mark Mode could not register its shortcut", {
+            accelerator: next,
+          });
+          return false;
+        }
+        accelerator = next;
+        return true;
+      }),
     });
   }),
 );

@@ -3,6 +3,7 @@ import type { MarkModeStroke } from "@t3tools/contracts";
 export const MARK_MODE_START_CHANNEL = "desktop:mark-mode-start";
 export const MARK_MODE_FINISH_CHANNEL = "desktop:mark-mode-finish";
 export const MARK_MODE_CANCEL_CHANNEL = "desktop:mark-mode-cancel";
+export const MARK_MODE_SET_SHORTCUT_CHANNEL = "desktop:mark-mode-set-shortcut";
 export const MARK_MODE_EVENT_CHANNEL = "desktop:mark-mode-event";
 export const MARK_MODE_OVERLAY_CHANNEL = "desktop:mark-mode-overlay";
 

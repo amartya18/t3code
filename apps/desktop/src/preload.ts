@@ -384,6 +384,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     start: (input) => ipcRenderer.invoke(MarkModeChannels.MARK_MODE_START_CHANNEL, input),
     finish: () => ipcRenderer.invoke(MarkModeChannels.MARK_MODE_FINISH_CHANNEL),
     cancel: () => ipcRenderer.invoke(MarkModeChannels.MARK_MODE_CANCEL_CHANNEL),
+    setShortcut: (shortcut) =>
+      ipcRenderer.invoke(MarkModeChannels.MARK_MODE_SET_SHORTCUT_CHANNEL, shortcut),
     onEvent: (listener) => {
       const wrappedListener = (_event: Electron.IpcRendererEvent, event: unknown) => {
         if (typeof event !== "object" || event === null || !("type" in event)) return;

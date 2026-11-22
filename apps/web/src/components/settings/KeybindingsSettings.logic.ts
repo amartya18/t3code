@@ -411,6 +411,7 @@ const COMMAND_LABELS: Partial<Record<KeybindingCommand, string>> = {
   "composer.sendBackground": msg("Composer: Start in Background"),
   "composer.sendAndNewThread": msg("Composer: Send and Start New Thread"),
   "composer.dictation": msg("Composer: Start or Finish Dictation"),
+  "markMode.toggle": msg("Mark Mode: Start or Finish"),
   "thread.steerQueuedMessage": msg("Queue: Send First Queued Message"),
   "thread.editQueuedMessage": msg("Queue: Edit Last Queued Message"),
   "thread.copyReference": msg("Pull Request: Copy Link or Thread"),

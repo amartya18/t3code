@@ -1,9 +1,12 @@
+import { useAtomValue } from "@effect/atom-react";
 import { useEffect } from "react";
 
 import { resolveExistingSnapShotTarget } from "../components/desktop/SnapShotCoordinator";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useStableCallback } from "../hooks/useStableCallback";
+import { effectiveShortcutsForCommand } from "../keybindings";
 import { resolveThreadActionProjectRef } from "../lib/chatThreadActions";
+import { primaryServerKeybindingsAtom } from "../state/server";
 import {
   getMarkModeBridge,
   handleMarkModeEvent,
@@ -44,6 +47,13 @@ export function MarkModeCoordinator() {
       clearResolver();
     };
   }, [resolveTarget]);
+
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the binding system-wide in the desktop main process
+  useEffect(() => {
+    const [shortcut = null] = effectiveShortcutsForCommand(keybindings, "markMode.toggle");
+    void getMarkModeBridge()?.setShortcut(shortcut);
+  }, [keybindings]);
 
   return null;
 }

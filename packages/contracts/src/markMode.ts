@@ -4,6 +4,8 @@
  */
 import * as Schema from "effect/Schema";
 
+import type { KeybindingShortcut } from "./keybindings.ts";
+
 export const DEFAULT_MARK_MODE_PAUSE_MS = 1_500;
 export const MarkModePauseMs = Schema.Int.check(
   Schema.isBetween({ minimum: 300, maximum: 10_000 }),
@@ -72,4 +74,9 @@ export interface DesktopMarkModeBridge {
   readonly finish: () => Promise<void>;
   readonly cancel: () => Promise<void>;
   readonly onEvent: (listener: (event: DesktopMarkModeEvent) => void) => () => void;
+  /**
+   * Registers the `markMode.toggle` binding system-wide, so it works while another app is in
+   * front; null clears it. False when the shortcut has no modifier or the system refused it.
+   */
+  readonly setShortcut: (shortcut: KeybindingShortcut | null) => Promise<boolean>;
 }
