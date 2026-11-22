@@ -2,7 +2,12 @@ import { ProviderThreadId, type ThreadCustomMode } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import { customModeTurnForRun, nextThreadCustomMode } from "./threadCustomMode.ts";
+import {
+  type CustomModeTurn,
+  customModeTurnForRun,
+  nextThreadCustomMode,
+  renderCustomModeTurn,
+} from "./threadCustomMode.ts";
 
 const at = (time: string) => DateTime.makeUnsafe(`2026-01-01T${time}Z`);
 const conversation = ProviderThreadId.make("provider-thread:claude");
@@ -82,26 +87,80 @@ describe("customModeTurnForRun", () => {
     expect(customModeTurnForRun({ customMode, run: current, runs }).kind).toBe(kind);
   });
 
-  it("activates, reminds, stops once, and activates again across on, off, on", () => {
+  const replay = (
+    steps: ReadonlyArray<readonly [string | null, string] | readonly ["turn", string]>,
+  ) => {
     let customMode: ThreadCustomMode | undefined;
     const runs: Array<ReturnType<typeof run>> = [];
-    const kinds: Array<string> = [];
-    const set = (skill: "review" | null, time: string) => {
-      customMode = nextThreadCustomMode(customMode, skill, at(time)) ?? customMode;
-    };
-    const turn = (time: string) => {
-      const current = run(runs.length + 1, null);
-      kinds.push(customModeTurnForRun({ customMode, run: current, runs }).kind);
-      runs.push({ ...current, startedAt: at(time) });
-    };
-    set("review", "10:00:00");
-    turn("10:01:00");
-    turn("10:02:00");
-    set(null, "10:03:00");
-    turn("10:04:00");
-    turn("10:05:00");
-    set("review", "10:06:00");
-    turn("10:07:00");
-    expect(kinds).toEqual(["activate", "remind", "exit", "none", "activate"]);
+    const turns: Array<CustomModeTurn> = [];
+    for (const [action, time] of steps) {
+      if (action === "turn") {
+        const current = run(runs.length + 1, null);
+        turns.push(customModeTurnForRun({ customMode, run: current, runs }));
+        runs.push({ ...current, startedAt: at(time) });
+      } else {
+        customMode = nextThreadCustomMode(customMode, action, at(time)) ?? customMode;
+      }
+    }
+    return turns;
+  };
+
+  it("activates, reminds, stops once, and activates again across on, off, on", () => {
+    const turns = replay([
+      ["review", "10:00:00"],
+      ["turn", "10:01:00"],
+      ["turn", "10:02:00"],
+      [null, "10:03:00"],
+      ["turn", "10:04:00"],
+      ["turn", "10:05:00"],
+      ["review", "10:06:00"],
+      ["turn", "10:07:00"],
+    ]);
+    expect(turns.map((turn) => turn.kind)).toEqual([
+      "activate",
+      "remind",
+      "exit",
+      "none",
+      "activate",
+    ]);
+    expect(turns[4]).toEqual({ kind: "activate", skill: "review", replaces: undefined });
+  });
+
+  it.each([
+    [
+      "switched straight from one skill to another",
+      [
+        ["review", "10:00:00"],
+        ["turn", "10:01:00"],
+        ["poteto", "10:02:00"],
+      ],
+    ],
+    [
+      "turned off, then another skill on, before the next turn",
+      [
+        ["review", "10:00:00"],
+        ["turn", "10:01:00"],
+        [null, "10:02:00"],
+        ["poteto", "10:03:00"],
+      ],
+    ],
+  ] as const)("names the replaced skill when %s", (_name, steps) => {
+    const turns = replay([
+      ...steps,
+      ["turn", "10:10:00"],
+      ["turn", "10:11:00"],
+      [null, "10:12:00"],
+      ["turn", "10:13:00"],
+    ]);
+    expect(turns.map(renderCustomModeTurn)).toEqual([
+      renderCustomModeTurn({ kind: "activate", skill: "review" }),
+      {
+        context:
+          "Custom mode `review` is off and `poteto` is on for this thread. Stop following `review`'s skill. Follow `poteto` for this and every later message until it is turned off. This replaces any custom mode turned on earlier in this thread.",
+        prefix: "$poteto ",
+      },
+      renderCustomModeTurn({ kind: "remind", skill: "poteto" }),
+      renderCustomModeTurn({ kind: "exit", skill: "poteto" }),
+    ]);
   });
 });

@@ -18,6 +18,8 @@ export const isCustomModeSkillName = Schema.is(CustomModeSkillName);
 export const ThreadCustomMode = Schema.Struct({
   status: Schema.Literals(["on", "off"]),
   skill: CustomModeSkillName,
+  /** The skill an `on` switched away from, so the next turn can tell the agent to drop it. */
+  replaces: Schema.optional(CustomModeSkillName),
   updatedAt: IsoDateTime,
 });
 export type ThreadCustomMode = typeof ThreadCustomMode.Type;
