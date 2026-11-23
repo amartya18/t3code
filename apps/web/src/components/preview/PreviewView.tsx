@@ -79,6 +79,7 @@ import { showPreviewPopup } from "./showPreviewPopup";
 import { PreviewChromeRow } from "./PreviewChromeRow";
 import { PreviewEmptyState } from "./PreviewEmptyState";
 import { PreviewMoreMenu, type PreviewMoreMenuActions } from "./PreviewMoreMenu";
+import { PreviewWindowPlaceholder, usePreviewWindowActions } from "./PreviewWindowPlaceholder";
 import { commitBrowserViewportChange } from "~/browser/browserViewportActions";
 import { browserResponsiveViewportForToggle, useBrowserDefaults } from "~/browser/browserDefaults";
 import { BrowserDeviceToolbar } from "~/browser/BrowserDeviceToolbar";
@@ -251,6 +252,8 @@ export function PreviewView({
   const desktopOverlay =
     tabId && !isServerTab ? (previewState.desktopByTabId[tabId] ?? null) : null;
   const layoutZoomFactor = useBrowserLayoutZoomFactor(desktopOverlay?.zoomFactor ?? 1);
+  const inWindow = desktopOverlay?.inWindow ?? false;
+  const windowActions = usePreviewWindowActions(runtimeTabId);
   // A new Electron tab is Idle until its first URL commits, while the server already has it Loading.
   const desktopNavStatus =
     !serverOwnsRendering && desktopOverlay?.navStatus._tag !== "Idle"
@@ -534,6 +537,7 @@ export function PreviewView({
           ? {
               openDevTools: desktopCall(previewBridge.openDevTools),
               toggleNativePictureInPicture: () => handleNativePictureInPicture(),
+              toggleWindow: inWindow ? windowActions.close : windowActions.open,
               ...(canFindInPage ? { find: handleFind } : {}),
             }
           : {}),
@@ -558,6 +562,7 @@ export function PreviewView({
               .catch(() => undefined),
           openDevTools: desktopCall(previewBridge.openDevTools),
           toggleNativePictureInPicture: () => handleNativePictureInPicture(),
+          toggleWindow: inWindow ? windowActions.close : windowActions.open,
           ...(canFindInPage ? { find: handleFind } : {}),
         }
       : null;
@@ -1073,6 +1078,7 @@ export function PreviewView({
               deviceToolbarVisible={viewport._tag !== "fill"}
               onToggleDeviceToolbar={handleToggleDeviceToolbar}
               nativePictureInPicture={desktopOverlay?.pictureInPicture ?? false}
+              inWindow={inWindow}
             />
           ) : null
         }
@@ -1130,12 +1136,19 @@ export function PreviewView({
           </>
         ) : runtimeTabId && snapshot && !showEmptyState ? (
           previewBridge ? (
-            <BrowserSurfaceSlot
-              key={runtimeTabId}
-              tabId={runtimeTabId}
-              visible={visible && !isUnreachable}
-              className="absolute inset-0 h-full w-full"
-            />
+            inWindow ? (
+              <PreviewWindowPlaceholder
+                runtimeTabId={runtimeTabId}
+                className="absolute inset-0 h-full w-full"
+              />
+            ) : (
+              <BrowserSurfaceSlot
+                key={runtimeTabId}
+                tabId={runtimeTabId}
+                visible={visible && !isUnreachable}
+                className="absolute inset-0 h-full w-full"
+              />
+            )
           ) : (
             <div className="flex h-full items-center justify-center p-8 text-center">
               <p className="max-w-sm text-sm text-muted-foreground">
@@ -1159,6 +1172,7 @@ export function PreviewView({
         ) : null}
         {runtimeTabId &&
         desktopOverlay &&
+        !inWindow &&
         !showEmptyState &&
         !isUnreachable &&
         !activeRecordingTabIds.has(runtimeTabId) ? (

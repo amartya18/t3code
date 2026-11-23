@@ -39,6 +39,7 @@ export interface PreviewMoreMenuActions {
   readonly clearCache: () => void;
   readonly openDevTools?: () => void;
   readonly toggleNativePictureInPicture?: () => void;
+  readonly toggleWindow?: () => void;
   readonly find?: () => void;
 }
 
@@ -50,6 +51,7 @@ interface Props {
   deviceToolbarVisible: boolean;
   onToggleDeviceToolbar: () => void;
   nativePictureInPicture: boolean;
+  inWindow: boolean;
   profileName: string | undefined;
   findShortcutLabel?: string | null;
   move?: { readonly label: string; readonly onMove: () => void };
@@ -90,6 +92,7 @@ export function PreviewMoreMenu({
   deviceToolbarVisible,
   onToggleDeviceToolbar,
   nativePictureInPicture,
+  inWindow,
   profileName,
   findShortcutLabel,
   move,
@@ -117,10 +120,15 @@ export function PreviewMoreMenu({
           </MenuItem>
         ) : null}
         {actions.toggleNativePictureInPicture ? (
-          <MenuItem onClick={actions.toggleNativePictureInPicture} disabled={disabled}>
+          <MenuItem onClick={actions.toggleNativePictureInPicture} disabled={disabled || inWindow}>
             {nativePictureInPicture
               ? gt("Close separate preview window")
               : gt("Open separate preview window")}
+          </MenuItem>
+        ) : null}
+        {actions.toggleWindow ? (
+          <MenuItem onClick={actions.toggleWindow} disabled={disabled}>
+            {inWindow ? gt("Bring back to panel") : gt("Open in window")}
           </MenuItem>
         ) : null}
         {move ? <MenuItem onClick={move.onMove}>{move.label}</MenuItem> : null}
