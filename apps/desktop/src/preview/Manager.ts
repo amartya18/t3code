@@ -646,6 +646,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const pendingNavigations = new Map<string, NavigationSnapshot>();
   // Chromium drops the debugger while a closing window unloads; reattaching restarts the close.
   const closingWindowContentsIds = new Set<number>();
+  // Frame capture and each tab's window need the main renderer painting while it is hidden:
+  // captured guests render through it, and Base UI unmounts a bar's closed menu on its next frame.
+  let mainRendererHolds = 0;
   let guestContextMenu: GuestContextMenu = () => {};
   // Legacy tab capture is unsupported (electron/electron#44618); recording uses setDisplayMediaRequestHandler.
   let pendingRecording: PendingRecording | null = null;
@@ -749,10 +752,33 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       window.webContents.setBackgroundThrottling(enabled),
     );
   });
-  const setFrameCaptureBackgroundThrottling = Effect.fnUntraced(function* (enabled: boolean) {
+  // Reads the count when it runs, so a hold and a release that interleave settle on the last count.
+  const applyMainRendererThrottling = Effect.gen(function* () {
     const mainWindow = yield* Ref.get(mainWindowRef);
     if (Option.isNone(mainWindow)) return;
-    yield* setWindowBackgroundThrottling(mainWindow.value, enabled);
+    yield* setWindowBackgroundThrottling(mainWindow.value, mainRendererHolds === 0);
+  });
+  /** Fails holding nothing when the main renderer's throttling cannot be turned off. */
+  const holdMainRenderer = Effect.fnUntraced(function* () {
+    mainRendererHolds += 1;
+    if (mainRendererHolds > 1) return;
+    yield* applyMainRendererThrottling.pipe(
+      Effect.onError(() =>
+        Effect.sync(() => {
+          mainRendererHolds -= 1;
+        }),
+      ),
+    );
+  });
+  const releaseMainRenderer = Effect.fnUntraced(function* () {
+    mainRendererHolds -= 1;
+    if (mainRendererHolds > 0) return;
+    yield* applyMainRendererThrottling.pipe(
+      Effect.retry({ times: 2 }),
+      Effect.catch((error) =>
+        Effect.logWarning("Failed to restore main window throttling.", { error }),
+      ),
+    );
   });
   const setFrameCaptureWebContentsBackgroundThrottling = Effect.fnUntraced(function* (
     wc: Electron.WebContents,
@@ -870,14 +896,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         yield* restoreFrameCaptureWebContentsBackgroundThrottling(
           current.unthrottledWebContentsIds,
         );
-        if (remainingSessions.size === 0) {
-          yield* setFrameCaptureBackgroundThrottling(true).pipe(
-            Effect.retry({ times: 2 }),
-            Effect.catch((error) =>
-              Effect.logWarning("Failed to restore preview frame capture throttling.", { error }),
-            ),
-          );
-        }
+        if (remainingSessions.size === 0) yield* releaseMainRenderer();
         return [current.scope, remainingSessions] as const;
       }),
     ).pipe(
@@ -1775,7 +1794,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       Effect.gen(function* () {
         // Cleanup or lock acquisition can outlive the replacement window.
         if (window.isDestroyed()) return [undefined, sessions] as const;
-        if (sessions.size > 0) {
+        if (mainRendererHolds > 0) {
           yield* setWindowBackgroundThrottling(window, false);
         }
         yield* Ref.set(mainWindowRef, Option.some(window));
@@ -1894,7 +1913,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         { concurrency: 2, discard: true },
       );
     }
-    if (windowSession) yield* destroyWindow(tabId, windowSession);
+    if (windowSession) {
+      yield* destroyWindow(tabId, windowSession);
+      yield* releaseMainRenderer();
+    }
     const updatedAt = yield* currentIso;
     const closed: PreviewTabState = {
       ...closedTab,
@@ -2189,6 +2211,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     if (tab)
       yield* update(tabId, owned ? { webContentsId: null, inWindow: false } : { inWindow: false });
     yield* destroyWindow(tabId, session);
+    yield* releaseMainRenderer();
     closingWindowContentsIds.delete(session.webContentsId);
   });
 
@@ -2285,6 +2308,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               };
             },
           );
+          yield* holdMainRenderer().pipe(Effect.onError(() => destroyWindow(tabId, session)));
           const { window } = session;
           const contents = session.pageView.webContents;
           windowSessions.set(tabId, session);
@@ -3457,15 +3481,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               }),
             ] as const;
           }
-          if (sessions.size === 0) {
-            yield* setFrameCaptureBackgroundThrottling(false);
-          }
+          if (sessions.size === 0) yield* holdMainRenderer();
           yield* setFrameCaptureWebContentsBackgroundThrottling(wc, false).pipe(
-            Effect.onError(() =>
-              sessions.size === 0
-                ? setFrameCaptureBackgroundThrottling(true).pipe(Effect.ignore)
-                : Effect.void,
-            ),
+            Effect.onError(() => (sessions.size === 0 ? releaseMainRenderer() : Effect.void)),
           );
           const scope =
             consumer === "picture-in-picture" ? yield* Scope.fork(parentScope, "sequential") : null;
