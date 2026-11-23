@@ -12,6 +12,7 @@ import {
   buildWhenVariableOptions,
   keybindingConflictLabels,
   keybindingFromKeyboardEvent,
+  keybindingPillLabels,
   parseWhenExpressionDraft,
   shortcutToKeybindingInput,
   unknownWhenVariables,
@@ -19,6 +20,17 @@ import {
 } from "./KeybindingsSettings.logic";
 
 describe("KeybindingsSettings.logic", () => {
+  it.each([
+    ["ctrl+alt+meta+m", "MacIntel", ["⌃", "⌥", "⌘", "M"]],
+    ["meta+ctrl+alt+m", "MacIntel", ["⌃", "⌥", "⌘", "M"]],
+    ["ctrl+alt+meta+m", "Linux x86_64", ["Ctrl", "Alt", "Meta", "M"]],
+    ["mod+shift+d", "MacIntel", ["⇧", "⌘", "D"]],
+    ["mod+shift+d", "Win32", ["Ctrl", "⇧", "D"]],
+    ["alt+shift+m", "Linux x86_64", ["Alt", "⇧", "M"]],
+  ])("shows %s on %s as %j, in the tooltip's modifier order", (value, platform, labels) => {
+    expect(keybindingPillLabels(value, platform).map(({ label }) => label)).toEqual(labels);
+  });
+
   it("keeps sibling row identities when a saved binding moves to the end", () => {
     const bindings = compileResolvedKeybindingsConfig([
       { command: "chat.new", key: "mod+n" },

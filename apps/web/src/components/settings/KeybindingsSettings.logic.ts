@@ -66,6 +66,7 @@ const CORE_WHEN_VARIABLES = [
   "previewOpen",
   "isWeb",
   "isDesktop",
+  "isMac",
   "true",
   "false",
 ] as const;
@@ -80,6 +81,43 @@ export const DEFAULT_WHEN_VARIABLE =
     (identifier) => identifier !== "true" && identifier !== "false",
   ) ?? "terminalFocus";
 const KNOWN_WHEN_VARIABLES = new Set(DEFAULT_WHEN_VARIABLES);
+
+/** Chips for a keybinding string, in formatShortcutLabel's order: ⌃⌥⇧⌘ on a Mac, Ctrl Alt Shift Meta elsewhere. */
+export function keybindingPillLabels(
+  value: string,
+  platform = navigator.platform,
+): ReadonlyArray<{ readonly key: string; readonly label: string }> {
+  const mac = isMacPlatform(platform);
+  const rank = (part: string) =>
+    part === "ctrl" || (part === "mod" && !mac)
+      ? 0
+      : part === "alt"
+        ? 1
+        : part === "shift"
+          ? 2
+          : part === "meta" || part === "mod"
+            ? 3
+            : 4;
+  const label = (part: string) => {
+    if (part === "mod") return mac ? "⌘" : "Ctrl";
+    if (part === "meta") return mac ? "⌘" : "Meta";
+    if (part === "ctrl") return mac ? "⌃" : "Ctrl";
+    if (part === "alt") return mac ? "⌥" : "Alt";
+    if (part === "shift") return "⇧";
+    return part.length === 1 ? part.toUpperCase() : part;
+  };
+  // Keys dedupe repeated parts; a literal "+" in a shortcut splits into empty strings.
+  const seen = new Map<string, number>();
+  return value
+    .split("+")
+    .map((part, index) => ({ part, index }))
+    .toSorted((a, b) => rank(a.part) - rank(b.part) || a.index - b.index)
+    .map(({ part }) => {
+      const count = seen.get(part) ?? 0;
+      seen.set(part, count + 1);
+      return { key: count === 0 ? part : `${part}-${count}`, label: label(part) };
+    });
+}
 
 export function shortcutToKeybindingInput(shortcut: KeybindingShortcut): string {
   const parts: string[] = [];
@@ -411,6 +449,7 @@ const COMMAND_LABELS: Partial<Record<KeybindingCommand, string>> = {
   "composer.sendBackground": msg("Composer: Start in Background"),
   "composer.sendAndNewThread": msg("Composer: Send and Start New Thread"),
   "composer.dictation": msg("Composer: Start or Finish Dictation"),
+  "markMode.toggle": msg("Mark Mode: Start or Finish"),
   "thread.steerQueuedMessage": msg("Queue: Send First Queued Message"),
   "thread.editQueuedMessage": msg("Queue: Edit Last Queued Message"),
   "thread.copyReference": msg("Pull Request: Copy Link or Thread"),

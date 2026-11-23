@@ -12,6 +12,7 @@ import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 import { DEFAULT_HOME_SETTINGS, HomeSettings } from "./home.ts";
 import { DEFAULT_MEMORY_CAPTURE_SETTINGS, MemoryCaptureSettings } from "./memoryCapture.ts";
+import { DEFAULT_MARK_MODE_PAUSE_MS, MarkModePauseMs } from "./markMode.ts";
 import * as Struct from "effect/Struct";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import {
@@ -598,6 +599,10 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   snapShotFlash: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   snapShotAnimations: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Fork-only: drawing pause that ends a Mark Mode mark. */
+  markModePauseMs: MarkModePauseMs.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_MARK_MODE_PAUSE_MS)),
+  ),
   wordWrap: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   // Opt-in TeX typesetting in rendered Markdown. Off keeps math parsing and
   // KaTeX out of the render path entirely.
@@ -2148,6 +2153,7 @@ export const ClientSettingsPatch = Schema.Struct({
   snapShotShortcut: Schema.optionalKey(SnapShotShortcut),
   snapShotPlaySound: Schema.optionalKey(Schema.Boolean),
   snapShotSound: Schema.optionalKey(SnapShotSound),
+  markModePauseMs: Schema.optionalKey(MarkModePauseMs),
   snapShotFlash: Schema.optionalKey(Schema.Boolean),
   snapShotAnimations: Schema.optionalKey(Schema.Boolean),
   wordWrap: Schema.optionalKey(Schema.Boolean),

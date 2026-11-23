@@ -258,6 +258,7 @@ import {
 } from "./CommandPaletteAddProject";
 import { useCommandPaletteThreadItems } from "./CommandPaletteThreadItems";
 import { useCommandPaletteThemeItems } from "./CommandPaletteThemeItems";
+import { useMarkModeCommandItem } from "../markMode/useMarkModeCommandItem";
 import {
   PORT_FORWARD_GROUP_PREFIX,
   useCommandPalettePortForwardItem,
@@ -556,6 +557,7 @@ function OpenCommandPaletteDialog(props: {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const providersByEnvironment = useEnvironmentProviders();
   const { changeThemeItem, changeAppearanceItem, themeEditorItem } = useCommandPaletteThemeItems();
+  const markModeItem = useMarkModeCommandItem();
   const portForwardItem = useCommandPalettePortForwardItem({
     activeThread: activeThread ?? null,
     query: deferredQuery,
@@ -1758,6 +1760,8 @@ function OpenCommandPaletteDialog(props: {
       );
     },
   });
+
+  if (markModeItem) actionItems.push(markModeItem);
 
   actionItems.push({
     kind: "action",

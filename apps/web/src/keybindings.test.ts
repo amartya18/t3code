@@ -313,6 +313,17 @@ describe("shortcutLabelForCommand", () => {
     assert.strictEqual(shortcutLabelForCommand(bindings, "thread.jump.7", "MacIntel"), "⇧⌘1");
   });
 
+  it.each([
+    ["MacIntel", "⌃⌥⌘M"],
+    ["Win32", "Alt+Shift+M"],
+    ["Linux x86_64", "Alt+Shift+M"],
+  ])("labels the default Mark Mode shortcut on %s as %s", (platform, label) => {
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_RESOLVED_KEYBINDINGS, "markMode.toggle", platform),
+      label,
+    );
+  });
+
   it("respects when-context while resolving labels", () => {
     const bindings = compile([
       { shortcut: modShortcut("d"), command: "diff.toggle" },

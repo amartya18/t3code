@@ -36,6 +36,8 @@ export interface ShortcutMatchContext {
   previewOpen: boolean;
   isWeb: boolean;
   isDesktop: boolean;
+  /** The client's platform, which can differ from the server that holds the keybindings. */
+  isMac?: boolean;
   editableFocus?: boolean;
   [key: string]: boolean;
 }
@@ -66,6 +68,7 @@ function resolveContext(options: ShortcutMatchOptions | undefined): ShortcutMatc
     previewOpen: false,
     isWeb: !isElectron,
     isDesktop: isElectron,
+    isMac: isMacPlatform(resolvePlatform(options)),
     editableFocus: false,
     ...options?.context,
   };

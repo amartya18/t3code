@@ -12,7 +12,7 @@ import * as Scope from "effect/Scope";
 import * as Exit from "effect/Exit";
 import * as PlatformError from "effect/PlatformError";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS } from "@t3tools/contracts";
+import { DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS, type SpeechWord } from "@t3tools/contracts";
 import * as ServerSettings from "../serverSettings.ts";
 import { listNativeSpeechGpuDevices } from "./native.ts";
 import * as SpeechModelStore from "./SpeechModelStore.ts";
@@ -34,7 +34,12 @@ const native = vi.hoisted(() => ({
   finish: vi.fn(async () => "hello"),
   reset: vi.fn(async () => {}),
   dispose: vi.fn(),
-  transcribe: vi.fn(async (_pcm: Float32Array, _options?: unknown) => ({ text: "hello" })),
+  transcribe: vi.fn(
+    async (
+      _pcm: Float32Array,
+      _options?: unknown,
+    ): Promise<{ text: string; words?: readonly SpeechWord[] }> => ({ text: "hello" }),
+  ),
 }));
 const loadNative = vi.hoisted(() =>
   vi.fn(
@@ -182,7 +187,9 @@ it.effect.each(["CPU", "Vulkan0"])(
         );
         expect(yield* stream.finish).toBe("hello");
       }).pipe(Effect.scoped);
-      expect(yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)).toBe("hello");
+      expect(yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)).toEqual({
+        text: "hello",
+      });
       expect(loadNative).toHaveBeenCalledTimes(1);
     }).pipe(Effect.provide(layer)),
 );
@@ -210,11 +217,30 @@ it.effect("sends the chosen language in the spelling the loaded model advertises
         ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
         speechLanguage: "fr",
       }),
-    ).toBe("hello");
+    ).toEqual({ text: "hello" });
     expect(native.transcribe).toHaveBeenLastCalledWith(
       expect.any(Float32Array),
       { timestamps: "none", language: "fr-FR" },
       true,
+      "test.gguf",
+    );
+    // Word timings turn silence filtering off and come back without text cleanup.
+    const words = [
+      { text: "euh", startMs: 0, endMs: 200 },
+      { text: "bonjour", startMs: 300, endMs: 700 },
+    ];
+    native.transcribe.mockResolvedValueOnce({ text: "euh bonjour", words });
+    expect(
+      yield* speech.transcribe(pcm(), {
+        ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+        speechLanguage: "fr",
+        speechWordTimestamps: true,
+      }),
+    ).toEqual({ text: "bonjour", words });
+    expect(native.transcribe).toHaveBeenLastCalledWith(
+      expect.any(Float32Array),
+      { timestamps: "word", language: "fr-FR" },
+      false,
       "test.gguf",
     );
     // A language the model does not advertise reaches it unchanged, so the model reports it.
@@ -271,10 +297,10 @@ it.effect.each(["cancellation", "timeout"] as const)(
         }
         yield* speech.selectModel("fallback-model");
         const transcribe = speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
-        expect(yield* transcribe).toBe("hello");
+        expect(yield* transcribe).toEqual({ text: "hello" });
         stalled.resolve(abandoned);
         yield* Effect.promise(() => disposed.promise);
-        expect(yield* transcribe).toBe("hello");
+        expect(yield* transcribe).toEqual({ text: "hello" });
         expect(loadNative).toHaveBeenCalledTimes(2);
       } finally {
         stalled.resolve(abandoned);
@@ -453,7 +479,9 @@ it.effect("keeps the installed speech model usable when optional Silero acquisit
     const installed = yield* speech.downloadModel("test-model");
     expect(installed).toHaveProperty("cancelled", false);
     expect(installed.models.find((model) => model.id === "test-model")?.state).toBe("installed");
-    expect(yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)).toBe("hello");
+    expect(yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)).toEqual({
+      text: "hello",
+    });
     yield* Effect.scoped(
       Effect.gen(function* () {
         const stream = yield* speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
@@ -462,7 +490,9 @@ it.effect("keeps the installed speech model usable when optional Silero acquisit
     );
     expect(download).toHaveBeenCalledTimes(2);
     yield* TestClock.adjust("10 minutes");
-    expect(yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)).toBe("hello");
+    expect(yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)).toEqual({
+      text: "hello",
+    });
     expect(download).toHaveBeenCalledTimes(3);
   }).pipe(Effect.provide(layer)),
 );
@@ -512,7 +542,7 @@ it.effect("honors exact aliases and phrase boundaries in batch and streamed text
       "我用GitHub和React，部署到Kubernetes上。Bob用GitHub。GitHubで管理する。";
     native.transcribe.mockResolvedValueOnce({ text: spoken });
     native.finish.mockResolvedValueOnce(spoken);
-    expect(yield* speech.transcribe(pcm(), options)).toBe(expected);
+    expect(yield* speech.transcribe(pcm(), options)).toEqual({ text: expected });
     const stream = yield* speech.startStream(options);
     expect(yield* stream.finish).toBe(expected);
   }).pipe(Effect.scoped, Effect.provide(layer)),
@@ -538,9 +568,9 @@ it.effect("uses vocabulary only for supported transcription and always applies a
           const vocabulary =
             supportsVocabulary && !translate ? ["GitHub", "Bob", "T3 Code"] : undefined;
           native.transcribe.mockResolvedValueOnce({ text: "git hub and Robert" });
-          expect(yield* speech.transcribe(pcm(), options)).toBe(
-            vocabulary ? "git hub and Bob" : "GitHub and Bob",
-          );
+          expect(yield* speech.transcribe(pcm(), options)).toEqual({
+            text: vocabulary ? "git hub and Bob" : "GitHub and Bob",
+          });
           const delivered = native.transcribe.mock.lastCall?.[1];
           expect(delivered).toEqual({
             timestamps: "none",
@@ -649,7 +679,7 @@ it.effect.each([
       };
       native.transcribe.mockResolvedValueOnce({ text });
       native.finish.mockResolvedValueOnce(text);
-      expect(yield* speech.transcribe(pcm(), options)).toBe(expected);
+      expect(yield* speech.transcribe(pcm(), options)).toEqual({ text: expected });
       const stream = yield* speech.startStream(options);
       expect(yield* stream.finish).toBe(expected);
     }).pipe(Effect.scoped, Effect.provide(layer)),
@@ -794,13 +824,13 @@ it.effect(
           };
           const speech = yield* SpeechService.SpeechService;
           expect(yield* speech.status).toMatchObject({ benchmarkTier: "accelerated" });
-          expect(yield* speech.transcribe(pcm(), options)).toBe(
-            cpuSupportsVocabulary ? "git hub Bob" : "GitHub Bob",
-          );
+          expect(yield* speech.transcribe(pcm(), options)).toEqual({
+            text: cpuSupportsVocabulary ? "git hub Bob" : "GitHub Bob",
+          });
           expect(yield* speech.status).toMatchObject({ benchmarkTier: "cpu" });
-          expect(yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)).toBe(
-            "hello",
-          );
+          expect(yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)).toEqual({
+            text: "hello",
+          });
           expect(loadNative.mock.calls.slice(-2).map((call) => call[3])).toEqual(["auto", "cpu"]);
           expect(native.transcribe.mock.calls.slice(-3, -1).map((call) => call[1])).toEqual([
             { timestamps: "none", language: "en", vocabulary: ["GitHub", "Bob"] },

@@ -47,6 +47,7 @@ export * from "./orchestratorMcp.ts";
 export * from "./peerLink.ts";
 export * from "./home.ts";
 export * from "./memoryCapture.ts";
+export * from "./markMode.ts";
 export * from "./threadMetadataMcp.ts";
 export * from "./threadPullRequest.ts";
 export * from "./threadSearch.ts";
