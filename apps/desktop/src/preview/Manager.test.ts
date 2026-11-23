@@ -3451,9 +3451,13 @@ describe("PreviewManager", () => {
         } as never);
         yield* manager.startRecording("tab_window_recording");
 
-        const refused = yield* Effect.flip(manager.openWindow("tab_window_recording"));
+        const refused = yield* Effect.exit(manager.openWindow("tab_window_recording"));
 
-        expect(refused._tag).toBe("PreviewWindowRecordingError");
+        expect(Exit.isFailure(refused)).toBe(true);
+        if (Exit.isSuccess(refused)) return;
+        expect(Option.getOrThrow(Cause.findErrorOption(refused.cause))).toMatchObject({
+          _tag: "PreviewWindowRecordingError",
+        });
         expect(browserWindowConstructor).not.toHaveBeenCalled();
       }),
     ),
