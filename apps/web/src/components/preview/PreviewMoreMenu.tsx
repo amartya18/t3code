@@ -49,7 +49,7 @@ interface Props {
   zoomFactor: number;
   colorScheme: DesktopPreviewColorScheme;
   deviceToolbarVisible: boolean;
-  onToggleDeviceToolbar: () => void;
+  onToggleDeviceToolbar?: (() => void) | undefined;
   nativePictureInPicture: boolean;
   inWindow: boolean;
   /** A recording is bound to the panel's page, so it cannot move into a window. */
@@ -135,9 +135,11 @@ export function PreviewMoreMenu({
           </MenuItem>
         ) : null}
         {move ? <MenuItem onClick={move.onMove}>{move.label}</MenuItem> : null}
-        <MenuItem onClick={onToggleDeviceToolbar} disabled={disabled}>
-          {deviceToolbarVisible ? gt("Hide device toolbar") : gt("Show device toolbar")}
-        </MenuItem>
+        {onToggleDeviceToolbar ? (
+          <MenuItem onClick={onToggleDeviceToolbar} disabled={disabled}>
+            {deviceToolbarVisible ? gt("Hide device toolbar") : gt("Show device toolbar")}
+          </MenuItem>
+        ) : null}
         <MenuSub>
           <MenuSubTrigger disabled={disabled}>
             <T>Appearance</T>
