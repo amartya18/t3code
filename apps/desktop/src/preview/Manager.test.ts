@@ -775,6 +775,8 @@ const makeTestPreviewWindow = (page: Electron.WebContents) => {
   return { window, bar: bar as unknown as Electron.WebContents, pageView, barView, addChildView };
 };
 
+type TestPreviewWindow = ReturnType<typeof makeTestPreviewWindow>;
+
 /** Opens a tab's own window as the main renderer's `window.open` does. */
 const openTestWindow = (
   manager: PreviewManager.PreviewManager["Service"],
@@ -3746,6 +3748,57 @@ describe("PreviewManager", () => {
           webContentsId: 44,
           navStatus: { kind: "Success", url: "https://example.com" },
         });
+      }),
+    ),
+  );
+
+  // A hidden window or page left behind would outlive everything that could close it.
+  effectIt.effect.each([
+    {
+      stage: "while its views are built",
+      fail: ({ pageView }: TestPreviewWindow) =>
+        webContentsViewConstructor.mockImplementation(function (options: {
+          webContents?: unknown;
+        }) {
+          if (options.webContents !== undefined) throw new Error("The bar's view failed.");
+          return pageView;
+        }),
+    },
+    {
+      stage: "while its page attaches to the tab",
+      fail: ({ pageView }: TestPreviewWindow) =>
+        vi.mocked(pageView.webContents.setZoomFactor).mockImplementation(() => {
+          throw new Error("The page is gone.");
+        }),
+    },
+  ])("closes the window and both contents when opening fails $stage", ({ fail }) =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const restored = makeChangeSignal();
+        const history = { entries: [{ url: "https://example.com/a", title: "A" }], index: 0 };
+        const guest = makeTestNavigableWebContents(42, history, restored);
+        const page = makeTestNavigableWebContents(77, history, restored, "browserView", {
+          empty: true,
+        });
+        const contentsById = new Map([guest, page].map(({ wc }) => [wc.id, wc]));
+        fromId.mockImplementation((id) =>
+          id === undefined ? null : (contentsById.get(id) ?? null),
+        );
+        const preview = makeTestPreviewWindow(page.wc);
+        const barClosed = makeChangeSignal();
+        preview.bar.once("destroyed", barClosed.notify);
+        yield* manager.createTab("tab_window_failed");
+        yield* manager.registerWebview("tab_window_failed", 42);
+        fail(preview);
+
+        manager.windowOpenResponse(desktopPreviewWindowName("tab_window_failed"))?.createWindow?.({
+          webContents: preview.bar,
+        } as Electron.BrowserWindowConstructorOptions);
+        yield* barClosed.until(() => preview.bar.isDestroyed());
+
+        expect(preview.window.destroy).toHaveBeenCalledOnce();
+        expect(page.wc.isDestroyed()).toBe(true);
+        expect(preview.window.show).not.toHaveBeenCalled();
       }),
     ),
   );

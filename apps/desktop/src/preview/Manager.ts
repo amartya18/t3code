@@ -2287,25 +2287,33 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
                 autoHideMenuBar: true,
                 ...windowIcon,
               });
-              const pageView = new WebContentsView({
-                webPreferences: hardenPreviewGuestPreferences(
-                  // Same session as the panel's guest, so cookies and storage carry over.
-                  { session: wc.session, preload: guestPreloadPath },
-                  { passkeyBridge: passkeys.bridgeEnabled, primaryPaste: primaryPaste.enabled },
-                ),
-              });
-              const barView = new WebContentsView({ webContents: bar });
-              // Clear, so the page shows through while the bar covers it for a menu.
-              barView.setBackgroundColor("#00000000");
-              window.contentView.addChildView(pageView);
-              window.contentView.addChildView(barView);
-              return {
-                window,
-                pageView,
-                barView,
-                webContentsId: pageView.webContents.id,
-                overlay: false,
-              };
+              let pageView: WebContentsView | undefined;
+              try {
+                pageView = new WebContentsView({
+                  webPreferences: hardenPreviewGuestPreferences(
+                    // Same session as the panel's guest, so cookies and storage carry over.
+                    { session: wc.session, preload: guestPreloadPath },
+                    { passkeyBridge: passkeys.bridgeEnabled, primaryPaste: primaryPaste.enabled },
+                  ),
+                });
+                const barView = new WebContentsView({ webContents: bar });
+                // Clear, so the page shows through while the bar covers it for a menu.
+                barView.setBackgroundColor("#00000000");
+                window.contentView.addChildView(pageView);
+                window.contentView.addChildView(barView);
+                return {
+                  window,
+                  pageView,
+                  barView,
+                  webContentsId: pageView.webContents.id,
+                  overlay: false,
+                };
+              } catch (error) {
+                // Nothing else holds the hidden window or the page yet; the refusal closes the bar.
+                window.destroy();
+                if (pageView && !pageView.webContents.isDestroyed()) pageView.webContents.close();
+                throw error;
+              }
             },
           );
           yield* holdMainRenderer().pipe(Effect.onError(() => destroyWindow(tabId, session)));
