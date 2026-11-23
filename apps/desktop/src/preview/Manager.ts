@@ -2179,6 +2179,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           return;
         }
         const tab = yield* requireOpenTab(tabId, expectedGeneration);
+        // The display-media stream is bound to the current contents, so moving them ends the video.
+        if (
+          (yield* SynchronizedRef.get(frameCaptureSessionsRef))
+            .get(tabId)
+            ?.consumers.has("recording")
+        ) {
+          return yield* new PreviewWindowRecordingError({ tabId });
+        }
         const wc = yield* requireWebContents(tabId);
         yield* closePictureInPicture(tabId);
         const { navigation, title } = yield* attempt(
@@ -4080,6 +4088,15 @@ export class PreviewRecordingCaptureUnavailableError extends Schema.TaggedError<
   }
 }
 
+export class PreviewWindowRecordingError extends Schema.TaggedError<PreviewWindowRecordingError>()(
+  "PreviewWindowRecordingError",
+  { tabId: Schema.String },
+) {
+  override get message(): string {
+    return `Stop recording preview tab ${this.tabId} before opening it in its own window`;
+  }
+}
+
 export class PreviewOperationError extends Schema.TaggedError<PreviewOperationError>()(
   "PreviewOperationError",
   {
@@ -4152,6 +4169,7 @@ export const PreviewManagerError = Schema.Union([
   PreviewMainWindowClosedError,
   PreviewRecordingArmConflictError,
   PreviewRecordingCaptureUnavailableError,
+  PreviewWindowRecordingError,
   PreviewOperationError,
   PreviewArtifactPathOutsideDirectoryError,
   PreviewArtifactImageLoadError,

@@ -302,7 +302,7 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
                     size="icon-xs"
                     aria-label={inWindow ? gt("Bring back") : gt("Open in window")}
                     aria-pressed={inWindow ? "true" : "false"}
-                    disabled={!desktopOverlay?.hasWebContents}
+                    disabled={!desktopOverlay?.hasWebContents || (recording && !inWindow)}
                     onPointerDown={(event) => event.stopPropagation()}
                     onClick={inWindow ? windowActions.close : windowActions.open}
                   />

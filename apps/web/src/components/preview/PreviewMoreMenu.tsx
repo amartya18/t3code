@@ -52,6 +52,8 @@ interface Props {
   onToggleDeviceToolbar: () => void;
   nativePictureInPicture: boolean;
   inWindow: boolean;
+  /** A recording is bound to the panel's page, so it cannot move into a window. */
+  recording: boolean;
   profileName: string | undefined;
   findShortcutLabel?: string | null;
   move?: { readonly label: string; readonly onMove: () => void };
@@ -93,6 +95,7 @@ export function PreviewMoreMenu({
   onToggleDeviceToolbar,
   nativePictureInPicture,
   inWindow,
+  recording,
   profileName,
   findShortcutLabel,
   move,
@@ -127,7 +130,7 @@ export function PreviewMoreMenu({
           </MenuItem>
         ) : null}
         {actions.toggleWindow ? (
-          <MenuItem onClick={actions.toggleWindow} disabled={disabled}>
+          <MenuItem onClick={actions.toggleWindow} disabled={disabled || (recording && !inWindow)}>
             {inWindow ? gt("Bring back to panel") : gt("Open in window")}
           </MenuItem>
         ) : null}

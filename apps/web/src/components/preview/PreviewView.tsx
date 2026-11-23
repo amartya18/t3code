@@ -1079,6 +1079,7 @@ export function PreviewView({
               onToggleDeviceToolbar={handleToggleDeviceToolbar}
               nativePictureInPicture={desktopOverlay?.pictureInPicture ?? false}
               inWindow={inWindow}
+              recording={recordingRuntimeTabId !== null}
             />
           ) : null
         }

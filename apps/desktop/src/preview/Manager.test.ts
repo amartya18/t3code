@@ -3436,6 +3436,27 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("keeps a recording tab in the panel", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        fromId.mockReturnValue(makeTestPreviewWebContents(async () => makeStillImage(), 42));
+        yield* manager.createTab("tab_window_recording");
+        yield* manager.registerWebview("tab_window_recording", 42);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          once: vi.fn(),
+          webContents: { setBackgroundThrottling: vi.fn() },
+        } as never);
+        yield* manager.startRecording("tab_window_recording");
+
+        const refused = yield* Effect.flip(manager.openWindow("tab_window_recording"));
+
+        expect(refused._tag).toBe("PreviewWindowRecordingError");
+        expect(browserWindowConstructor).not.toHaveBeenCalled();
+      }),
+    ),
+  );
+
   effectIt.effect("closes a tab's window without returning its history to a later tab", () =>
     withManager((manager) =>
       Effect.gen(function* () {
