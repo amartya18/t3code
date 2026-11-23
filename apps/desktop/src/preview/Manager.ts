@@ -1169,15 +1169,15 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               wcDebugger.on("message", onMessage);
               wcDebugger.on("detach", onDetach);
               wcDebugger.attach("1.3");
-            });
-            // Set an opaque base before first paint or background-less dark pages retain white-on-white text.
-            yield* attemptPromise(
-              { operation: "initializeDebugger.defaultBackground", webContentsId: wc.id },
-              () =>
-                wcDebugger.sendCommand("Emulation.setDefaultBackgroundColorOverride", {
+              // Set an opaque base before first paint or background-less dark pages retain white-on-white text.
+              // Not awaited: empty contents answer only once they have a renderer, and every tab's sessions
+              // wait on this one. CDP keeps a session's commands in order, so it still lands first.
+              void wcDebugger
+                .sendCommand("Emulation.setDefaultBackgroundColorOverride", {
                   color: { r: 255, g: 255, b: 255, a: 1 },
-                }),
-            );
+                })
+                .catch(() => undefined);
+            });
             return [
               control,
               replaceMap(sessions, (copy) => {
