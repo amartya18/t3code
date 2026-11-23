@@ -422,6 +422,9 @@ interface WindowSession {
   readonly pageView: WebContentsView;
   /** The popup the main renderer opened and draws the browser bar into, stacked above the page. */
   readonly barView: WebContentsView;
+  // Held directly: a view's contents can't be reached through it once the page is gone.
+  readonly page: Electron.WebContents;
+  readonly bar: Electron.WebContents;
   readonly webContentsId: number;
   /** A bar menu is open, so the bar covers the page to draw it there. */
   overlay: boolean;
@@ -2172,18 +2175,19 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     attempt({ operation: "window.destroy", tabId, webContentsId: session.webContentsId }, () => {
       if (!session.window.isDestroyed()) session.window.destroy();
       // A destroyed window leaves its views' contents alive.
-      for (const view of [session.pageView, session.barView]) {
-        if (!view.webContents.isDestroyed()) view.webContents.close();
+      for (const contents of [session.bar, session.page]) {
+        if (!contents.isDestroyed()) contents.close();
       }
     }).pipe(Effect.ignore);
 
   const layoutWindow = (session: WindowSession): void => {
-    const { window, pageView, barView } = session;
+    const { window, pageView, barView, bar: barContents } = session;
     if (window.isDestroyed()) return;
-    const [width = 0, height = 0] = window.getContentSize();
-    const bar = barView.webContents.isDestroyed()
+    // X11 updates getContentSize only after `maximize` and `resize`; the root view is laid out first.
+    const { width, height } = window.contentView.getBounds();
+    const bar = barContents.isDestroyed()
       ? 0
-      : Math.round(DESKTOP_PREVIEW_WINDOW_BAR_HEIGHT * barView.webContents.getZoomFactor());
+      : Math.round(DESKTOP_PREVIEW_WINDOW_BAR_HEIGHT * barContents.getZoomFactor());
     pageView.setBounds({ x: 0, y: bar, width, height: Math.max(0, height - bar) });
     barView.setBounds({ x: 0, y: 0, width, height: session.overlay ? height : bar });
   };
@@ -2318,6 +2322,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
                   window,
                   pageView,
                   barView,
+                  page: pageView.webContents,
+                  bar,
                   webContentsId: pageView.webContents.id,
                   overlay: false,
                 };
@@ -2331,7 +2337,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           );
           yield* holdMainRenderer().pipe(Effect.onError(() => destroyWindow(tabId, session)));
           const { window } = session;
-          const contents = session.pageView.webContents;
+          const contents = session.page;
           windowSessions.set(tabId, session);
           pendingNavigations.set(tabId, navigation);
           yield* Effect.gen(function* () {
@@ -2340,11 +2346,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               () => {
                 const layout = () => layoutWindow(session);
                 layout();
-                window.on("resize", layout);
-                window.on("maximize", layout);
-                window.on("unmaximize", layout);
-                window.on("enter-full-screen", layout);
-                window.on("leave-full-screen", layout);
+                window.contentView.on("bounds-changed", layout);
                 contents.on("page-title-updated", (_event, pageTitle) => {
                   if (!window.isDestroyed()) window.setTitle(pageTitle.trim() || fallbackTitle);
                 });
@@ -2465,12 +2467,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     yield* attempt(
       { operation: "window.focus", tabId, webContentsId: session.webContentsId },
       () => {
-        const { window, pageView } = session;
+        const { window, page } = session;
         if (window.isDestroyed()) return;
         if (window.isMinimized()) window.restore();
         window.show();
         window.focus();
-        if (!pageView.webContents.isDestroyed()) pageView.webContents.focus();
+        if (!page.isDestroyed()) page.focus();
       },
     );
   });
@@ -2508,7 +2510,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           Effect.gen(function* () {
             const session = windowSessions.get(tabId);
             if (!session) return;
-            const page = session.pageView.webContents;
+            const page = session.page;
             yield* attempt(
               { operation: "window.readNavigation", tabId, webContentsId: session.webContentsId },
               () => {

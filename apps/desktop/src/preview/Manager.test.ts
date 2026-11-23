@@ -751,13 +751,23 @@ const makeTestPreviewWindow = (page: Electron.WebContents, opener = testAppFrame
     getZoomFactor: () => 1,
     setWindowOpenHandler: vi.fn(),
   };
-  const pageView = { webContents: page, setBounds: vi.fn() };
+  const pageView = {
+    // Electron's view gives up its contents once they're destroyed.
+    get webContents() {
+      if (page.isDestroyed()) throw new Error("Object has been destroyed");
+      return page;
+    },
+    setBounds: vi.fn(),
+  };
   const barView = { webContents: bar, setBounds: vi.fn(), setBackgroundColor: vi.fn() };
   const addChildView = vi.fn();
+  const contentEvents = makeTestEmitter();
+  let contentBounds = { x: 0, y: 0, width: 1280, height: 800 };
   const window = {
-    contentView: { addChildView },
+    contentView: { addChildView, on: contentEvents.on, getBounds: () => contentBounds },
     on: events.on,
     once: events.once,
+    // X11 reports the old size here until after `maximize` and `resize` have fired.
     getContentSize: () => [1280, 800],
     setTitle: vi.fn(),
     isDestroyed: () => destroyed,
@@ -785,7 +795,21 @@ const makeTestPreviewWindow = (page: Electron.WebContents, opener = testAppFrame
   webContentsViewConstructor.mockImplementation(function (options: { webContents?: unknown }) {
     return options.webContents === undefined ? pageView : barView;
   });
-  return { window, bar: bar as unknown as Electron.WebContents, pageView, barView, addChildView };
+  /** The window manager maximizing the window: only the root view learns the new size in time. */
+  const maximize = (width: number, height: number) => {
+    events.emit("maximize");
+    events.emit("resize");
+    contentBounds = { x: 0, y: 0, width, height };
+    contentEvents.emit("bounds-changed");
+  };
+  return {
+    window,
+    bar: bar as unknown as Electron.WebContents,
+    pageView,
+    barView,
+    addChildView,
+    maximize,
+  };
 };
 
 type TestPreviewWindow = ReturnType<typeof makeTestPreviewWindow>;
@@ -3558,6 +3582,14 @@ describe("PreviewManager", () => {
           y: 0,
           width: 1280,
           height: 800,
+        });
+        yield* manager.setWindowOverlay("tab_window", false);
+        preview.maximize(1600, 944);
+        expect(preview.pageView.setBounds).toHaveBeenLastCalledWith({
+          x: 0,
+          y: 40,
+          width: 1600,
+          height: 904,
         });
         yield* restored.until(() => page.restore.mock.calls.length > 0);
         expect(page.restore).toHaveBeenCalledWith(guestHistory);
