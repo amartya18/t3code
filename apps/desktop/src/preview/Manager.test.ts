@@ -612,13 +612,18 @@ const makeTestPictureInPictureWindow = (loadURL: () => Promise<void> = async () 
 };
 
 // A page's contents with a navigation stack; `restored` notifies when a history restore starts.
+// Empty contents have no renderer until a restore loads a page, and CDP holds their commands until then.
 const makeTestNavigableWebContents = (
   id: number,
   navigation: { readonly entries: Electron.NavigationEntry[]; readonly index: number },
   restored: ChangeSignal,
   type: "webview" | "window" = "webview",
+  { empty = false }: { readonly empty?: boolean } = {},
 ) => {
+  const renderer = Promise.withResolvers<void>();
+  if (!empty) renderer.resolve();
   const restore = vi.fn(async (_options: Electron.RestoreOptions) => {
+    renderer.resolve();
     restored.notify();
   });
   const wc = Object.assign(
@@ -629,6 +634,14 @@ const makeTestNavigableWebContents = (
       session: { id: `session-${id}` },
       once: vi.fn(),
       isDevToolsOpened: () => false,
+      debugger: {
+        isAttached: () => false,
+        attach: vi.fn(),
+        detach: vi.fn(),
+        sendCommand: vi.fn(() => renderer.promise),
+        on: vi.fn(),
+        off: vi.fn(),
+      },
       navigationHistory: {
         canGoBack: () => navigation.index > 0,
         canGoForward: () => navigation.index < navigation.entries.length - 1,
@@ -1754,30 +1767,19 @@ describe("PreviewManager", () => {
     ),
   );
 
-  effectIt.effect("skips a guest destroyed while another guest's session opens", () =>
+  effectIt.effect("opens sessions while a guest without a renderer has not answered", () =>
     withManager((manager) =>
       Effect.gen(function* () {
-        const slow = makeAttachingGuest(46);
-        let releaseSlow = () => {};
-        const slowCommand = new Promise<void>((resolve) => {
-          releaseSlow = resolve;
-        });
-        slow.sendCommand.mockImplementation(() => slowCommand);
-        const queued = makeAttachingGuest(47);
+        // Contents that never loaded a page answer renderer commands only once one loads.
+        const empty = makeAttachingGuest(46);
+        empty.sendCommand.mockImplementation(() => new Promise(() => {}));
+        const next = makeAttachingGuest(47);
 
-        const slowFiber = yield* manager
-          .prepareWebview(slow.wc)
-          .pipe(Effect.forkChild({ startImmediately: true }));
-        const queuedFiber = yield* manager
-          .prepareWebview(queued.wc)
-          .pipe(Effect.forkChild({ startImmediately: true }));
-        queued.destroy();
-        releaseSlow();
+        yield* manager.prepareWebview(empty.wc);
+        yield* manager.prepareWebview(next.wc);
 
-        expect(Exit.isSuccess(yield* Fiber.await(slowFiber))).toBe(true);
-        expect(Exit.isSuccess(yield* Fiber.await(queuedFiber))).toBe(true);
-        expect(slow.attach).toHaveBeenCalledTimes(1);
-        expect(queued.attach).not.toHaveBeenCalled();
+        expect(empty.attach).toHaveBeenCalledTimes(1);
+        expect(next.attach).toHaveBeenCalledTimes(1);
       }),
     ),
   );
@@ -3362,8 +3364,16 @@ describe("PreviewManager", () => {
           index: 2,
         };
         const guest = makeTestNavigableWebContents(42, guestHistory, restored);
-        const windowContents = makeTestNavigableWebContents(77, windowHistory, restored, "window");
-        const returned = makeTestNavigableWebContents(43, { entries: [], index: -1 }, restored);
+        const windowContents = makeTestNavigableWebContents(77, windowHistory, restored, "window", {
+          empty: true,
+        });
+        const returned = makeTestNavigableWebContents(
+          43,
+          { entries: [], index: -1 },
+          restored,
+          "webview",
+          { empty: true },
+        );
         const contentsById = new Map(
           [guest, windowContents, returned].map(({ wc }) => [wc.id, wc]),
         );
@@ -3416,6 +3426,8 @@ describe("PreviewManager", () => {
         yield* Deferred.await(backInPanel);
         expect(states.at(-1)).toMatchObject({ webContentsId: null, inWindow: false });
 
+        // The returning guest attaches empty, as the main window's did-attach-webview prepares it.
+        yield* manager.prepareWebview(returned.wc);
         yield* manager.registerWebview("tab_window", 43);
         yield* restored.until(() => returned.restore.mock.calls.length > 0);
         expect(returned.restore).toHaveBeenCalledWith(windowHistory);
@@ -3430,7 +3442,9 @@ describe("PreviewManager", () => {
         const restored = makeChangeSignal();
         const history = { entries: [{ url: "https://example.com/a", title: "A" }], index: 0 };
         const guest = makeTestNavigableWebContents(42, history, restored);
-        const windowContents = makeTestNavigableWebContents(77, history, restored, "window");
+        const windowContents = makeTestNavigableWebContents(77, history, restored, "window", {
+          empty: true,
+        });
         const laterGuest = makeTestPreviewWebContents(async () => makeStillImage(), 44);
         const contentsById = new Map([
           [42, guest.wc],
