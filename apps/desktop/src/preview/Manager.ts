@@ -5,6 +5,8 @@ import {
   DesktopPreviewAnnotationVoiceEventSchema,
   DesktopPreviewRecordingInputSchema,
   DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER,
+  DESKTOP_PREVIEW_WINDOW_BAR_HEIGHT,
+  desktopPreviewWindowTabId,
 } from "@t3tools/contracts";
 import type {
   DesktopPreviewAnnotationTheme,
@@ -38,6 +40,7 @@ import {
   dialog,
   nativeImage,
   shell,
+  WebContentsView,
   webContents,
 } from "electron";
 import * as Cause from "effect/Cause";
@@ -416,7 +419,12 @@ interface PictureInPictureSession {
 
 interface WindowSession {
   readonly window: BrowserWindow;
+  readonly pageView: WebContentsView;
+  /** The popup the main renderer opened and draws the browser bar into, stacked above the page. */
+  readonly barView: WebContentsView;
   readonly webContentsId: number;
+  /** A bar menu is open, so the bar covers the page to draw it there. */
+  overlay: boolean;
 }
 
 interface NavigationSnapshot {
@@ -2141,7 +2149,22 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const destroyWindow = (tabId: string, session: WindowSession) =>
     attempt({ operation: "window.destroy", tabId, webContentsId: session.webContentsId }, () => {
       if (!session.window.isDestroyed()) session.window.destroy();
+      // A destroyed window leaves its views' contents alive.
+      for (const view of [session.pageView, session.barView]) {
+        if (!view.webContents.isDestroyed()) view.webContents.close();
+      }
     }).pipe(Effect.ignore);
+
+  const layoutWindow = (session: WindowSession): void => {
+    const { window, pageView, barView } = session;
+    if (window.isDestroyed()) return;
+    const [width = 0, height = 0] = window.getContentSize();
+    const bar = barView.webContents.isDestroyed()
+      ? 0
+      : Math.round(DESKTOP_PREVIEW_WINDOW_BAR_HEIGHT * barView.webContents.getZoomFactor());
+    pageView.setBounds({ x: 0, y: bar, width, height: Math.max(0, height - bar) });
+    barView.setBounds({ x: 0, y: 0, width, height: session.overlay ? height : bar });
+  };
 
   /** Gives the tab back to the panel; its next guest restores whatever history is pending. */
   const releaseWindowUnlocked = Effect.fn("PreviewManager.releaseWindowUnlocked")(function* (
@@ -2150,7 +2173,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   ) {
     if (windowSessions.get(tabId) !== session) return;
     windowSessions.delete(tabId);
-    closingWindowContentsIds.delete(session.webContentsId);
     const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
     const owned = tab?.webContentsId === session.webContentsId;
     if (owned) {
@@ -2167,129 +2189,244 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     if (tab)
       yield* update(tabId, owned ? { webContentsId: null, inWindow: false } : { inWindow: false });
     yield* destroyWindow(tabId, session);
+    closingWindowContentsIds.delete(session.webContentsId);
   });
 
-  const openWindow = Effect.fn("PreviewManager.openWindow")(function* (tabId: string) {
-    const expectedGeneration = tabLifecycleGenerations.get(tabId);
-    yield* withTabLifecycleLock(
-      tabId,
-      Effect.gen(function* () {
-        const existing = windowSessions.get(tabId);
-        if (existing) {
-          yield* attempt(
-            { operation: "window.focus", tabId, webContentsId: existing.webContentsId },
-            () => {
-              if (existing.window.isMinimized()) existing.window.restore();
-              existing.window.show();
-              existing.window.focus();
+  // Synchronous for setWindowOpenHandler, so a refused open returns null to the renderer.
+  const canOpenWindow = (tabId: string): boolean => {
+    const tab = SynchronizedRef.getUnsafe(tabsRef).get(tabId);
+    return (
+      tab !== undefined &&
+      tab.webContentsId !== null &&
+      !windowSessions.has(tabId) &&
+      // The display-media stream is bound to the current contents, so moving them ends the video.
+      SynchronizedRef.getUnsafe(frameCaptureSessionsRef).get(tabId)?.consumers.has("recording") !==
+        true
+    );
+  };
+
+  const windowOpenResponse = (frameName: string): Electron.WindowOpenHandlerResponse | null => {
+    const tabId = desktopPreviewWindowTabId(frameName);
+    if (tabId === null) return null;
+    if (!canOpenWindow(tabId)) return { action: "deny" };
+    return {
+      action: "allow",
+      // A popup in its own window would sit under the page's view, and so would the bar's menus.
+      createWindow: (options) => {
+        // Electron passes the popup's contents for the caller to host.
+        const bar = (options as { readonly webContents: Electron.WebContents }).webContents;
+        runFork(
+          openWindow(tabId, bar).pipe(
+            Effect.catch((error) => Effect.logWarning("Preview window did not open.", { error })),
+          ),
+        );
+        return bar;
+      },
+    };
+  };
+
+  const openWindow = Effect.fn("PreviewManager.openWindow")(
+    function* (tabId: string, bar: Electron.WebContents) {
+      const expectedGeneration = tabLifecycleGenerations.get(tabId);
+      yield* withTabLifecycleLock(
+        tabId,
+        Effect.gen(function* () {
+          const tab = yield* requireOpenTab(tabId, expectedGeneration);
+          if (windowSessions.has(tabId)) {
+            return yield* new PreviewOperationError({
+              operation: "window.open",
+              tabId,
+              cause: new Error("The tab already has its own window"),
+            });
+          }
+          if (
+            (yield* SynchronizedRef.get(frameCaptureSessionsRef))
+              .get(tabId)
+              ?.consumers.has("recording")
+          ) {
+            return yield* new PreviewWindowRecordingError({ tabId });
+          }
+          const wc = yield* requireWebContents(tabId);
+          yield* closePictureInPicture(tabId);
+          const { navigation, title } = yield* attempt(
+            { operation: "window.readNavigation", tabId, webContentsId: wc.id },
+            () => ({ navigation: readNavigation(wc), title: wc.getTitle().trim() }),
+          );
+          const fallbackTitle = m(msg("Browser preview"));
+          const session = yield* attempt(
+            { operation: "window.create", tabId, webContentsId: wc.id },
+            (): WindowSession => {
+              const window = new BrowserWindow({
+                width: WINDOW_INITIAL_WIDTH,
+                height: WINDOW_INITIAL_HEIGHT,
+                title: title.length > 0 ? title : fallbackTitle,
+                show: false,
+                autoHideMenuBar: true,
+                ...windowIcon,
+              });
+              const pageView = new WebContentsView({
+                webPreferences: hardenPreviewGuestPreferences(
+                  // Same session as the panel's guest, so cookies and storage carry over.
+                  { session: wc.session, preload: guestPreloadPath },
+                  { passkeyBridge: passkeys.bridgeEnabled, primaryPaste: primaryPaste.enabled },
+                ),
+              });
+              const barView = new WebContentsView({ webContents: bar });
+              // Clear, so the page shows through while the bar covers it for a menu.
+              barView.setBackgroundColor("#00000000");
+              window.contentView.addChildView(pageView);
+              window.contentView.addChildView(barView);
+              return {
+                window,
+                pageView,
+                barView,
+                webContentsId: pageView.webContents.id,
+                overlay: false,
+              };
             },
           );
-          return;
-        }
-        const tab = yield* requireOpenTab(tabId, expectedGeneration);
-        // The display-media stream is bound to the current contents, so moving them ends the video.
-        if (
-          (yield* SynchronizedRef.get(frameCaptureSessionsRef))
-            .get(tabId)
-            ?.consumers.has("recording")
-        ) {
-          return yield* new PreviewWindowRecordingError({ tabId });
-        }
-        const wc = yield* requireWebContents(tabId);
-        yield* closePictureInPicture(tabId);
-        const { navigation, title } = yield* attempt(
-          { operation: "window.readNavigation", tabId, webContentsId: wc.id },
-          () => ({ navigation: readNavigation(wc), title: wc.getTitle().trim() }),
-        );
-        const window = yield* attempt(
-          { operation: "window.create", tabId, webContentsId: wc.id },
-          () =>
-            new BrowserWindow({
-              width: WINDOW_INITIAL_WIDTH,
-              height: WINDOW_INITIAL_HEIGHT,
-              title: title.length > 0 ? title : m(msg("Browser preview")),
-              show: false,
-              autoHideMenuBar: true,
-              ...windowIcon,
-              webPreferences: hardenPreviewGuestPreferences(
-                // Same session as the panel's guest, so cookies and storage carry over.
-                { session: wc.session, preload: guestPreloadPath },
-                { passkeyBridge: passkeys.bridgeEnabled, primaryPaste: primaryPaste.enabled },
-              ),
+          const { window } = session;
+          const contents = session.pageView.webContents;
+          windowSessions.set(tabId, session);
+          pendingNavigations.set(tabId, navigation);
+          yield* Effect.gen(function* () {
+            yield* attempt(
+              { operation: "window.configure", tabId, webContentsId: contents.id },
+              () => {
+                const layout = () => layoutWindow(session);
+                layout();
+                window.on("resize", layout);
+                window.on("maximize", layout);
+                window.on("unmaximize", layout);
+                window.on("enter-full-screen", layout);
+                window.on("leave-full-screen", layout);
+                contents.on("page-title-updated", (_event, pageTitle) => {
+                  if (!window.isDestroyed()) window.setTitle(pageTitle.trim() || fallbackTitle);
+                });
+                // Electron closes a window without asking its views, so the page's beforeunload
+                // decides here; `closed` is too late to read history.
+                window.on("close", (event) => {
+                  if (windowSessions.get(tabId) !== session || contents.isDestroyed()) return;
+                  event.preventDefault();
+                  if (closingWindowContentsIds.has(contents.id)) return;
+                  closingWindowContentsIds.add(contents.id);
+                  pendingNavigations.set(tabId, readNavigation(contents));
+                  contents.close({ waitForBeforeUnload: true });
+                });
+                contents.once("destroyed", () => {
+                  if (!window.isDestroyed()) window.destroy();
+                });
+                // Gone without the renderer's say, as when its window.close() reaches the popup.
+                bar.once("destroyed", () => {
+                  if (!window.isDestroyed()) window.close();
+                });
+                window.once("closed", () => {
+                  runFork(withTabLifecycleLock(tabId, releaseWindowUnlocked(tabId, session)));
+                });
+                // The window's own contents are empty and take focus on activation off macOS.
+                let focused = contents;
+                contents.on("focus", () => {
+                  focused = contents;
+                });
+                bar.on("focus", () => {
+                  focused = bar;
+                });
+                window.on("focus", () => {
+                  if (!focused.isDestroyed()) focused.focus();
+                });
+                const windowShortcuts =
+                  (reloads: boolean) => (event: Electron.Event, input: Electron.Input) => {
+                    if (isPrimaryModifierShortcut(input, hostPlatform, "w")) {
+                      event.preventDefault();
+                      window.close();
+                    } else if (isPrimaryModifierShortcut(input, hostPlatform, "r", true)) {
+                      // The app menu's Force Reload would reload the app, not this page.
+                      event.preventDefault();
+                      runFork(hardReload(tabId).pipe(Effect.ignore));
+                    } else if (reloads && isPrimaryModifierShortcut(input, hostPlatform, "r")) {
+                      event.preventDefault();
+                      runFork(refresh(tabId).pipe(Effect.ignore));
+                    }
+                  };
+                // The page's own listeners already reload it.
+                contents.on("before-input-event", windowShortcuts(false));
+                bar.on("before-input-event", windowShortcuts(true));
+                // The bar is the app's own document: nothing may navigate it or open from it.
+                bar.on("will-navigate", (event) => event.preventDefault());
+                bar.setWindowOpenHandler(() => ({ action: "deny" }));
+                // Without an answer a page's beforeunload silently cancels every close and navigation.
+                contents.on("will-prevent-unload", (event) => {
+                  const options: Electron.MessageBoxOptions = {
+                    type: "question",
+                    buttons: [m(msg("Leave")), m(msg("Stay"))],
+                    // Enter typed into the page must not discard its changes.
+                    defaultId: 1,
+                    cancelId: 1,
+                    noLink: true,
+                    message: m(msg("Leave site?")),
+                    detail: m(msg("Changes you made may not be saved.")),
+                  };
+                  // On Windows a box owned by its window can block that window's input until it closes.
+                  const response =
+                    hostPlatform === "win32"
+                      ? dialog.showMessageBoxSync(options)
+                      : dialog.showMessageBoxSync(window, options);
+                  if (response === 0) {
+                    event.preventDefault();
+                  } else if (closingWindowContentsIds.delete(contents.id)) {
+                    // The page stays open; give back a session Chromium may have dropped meanwhile.
+                    runFork(
+                      Effect.gen(function* () {
+                        if ((yield* SynchronizedRef.get(controlSessionsRef)).has(contents.id))
+                          return;
+                        yield* restoreControlSession(tabId, contents);
+                      }),
+                    );
+                  }
+                });
+                guestContextMenu(window, contents);
+                guestContextMenu(window, bar);
+              },
+            );
+            yield* prepareWebview(contents);
+            yield* adoptWebContentsUnlocked(tabId, tab, contents, expectedGeneration);
+            yield* attempt({ operation: "window.show", tabId, webContentsId: contents.id }, () => {
+              window.show();
+              contents.focus();
+            });
+          }).pipe(
+            Effect.onError(() => {
+              pendingNavigations.delete(tabId);
+              return releaseWindowUnlocked(tabId, session);
             }),
-        );
-        const contents = window.webContents;
-        const session: WindowSession = { window, webContentsId: contents.id };
-        windowSessions.set(tabId, session);
-        pendingNavigations.set(tabId, navigation);
-        yield* Effect.gen(function* () {
-          yield* attempt(
-            { operation: "window.configure", tabId, webContentsId: contents.id },
-            () => {
-              // `closed` is too late to read history: the contents are gone by then.
-              window.on("close", () => {
-                if (windowSessions.get(tabId) !== session || contents.isDestroyed()) return;
-                closingWindowContentsIds.add(contents.id);
-                pendingNavigations.set(tabId, readNavigation(contents));
-              });
-              window.once("closed", () => {
-                runFork(withTabLifecycleLock(tabId, releaseWindowUnlocked(tabId, session)));
-              });
-              contents.on("before-input-event", (event, input) => {
-                if (isPrimaryModifierShortcut(input, hostPlatform, "w")) {
-                  event.preventDefault();
-                  window.close();
-                } else if (isPrimaryModifierShortcut(input, hostPlatform, "r", true)) {
-                  // The app menu's Force Reload would reload the app, not this page.
-                  event.preventDefault();
-                  runFork(hardReload(tabId).pipe(Effect.ignore));
-                }
-              });
-              // Without an answer a page's beforeunload silently cancels every close and navigation.
-              contents.on("will-prevent-unload", (event) => {
-                const options: Electron.MessageBoxOptions = {
-                  type: "question",
-                  buttons: [m(msg("Leave")), m(msg("Stay"))],
-                  // Enter typed into the page must not discard its changes.
-                  defaultId: 1,
-                  cancelId: 1,
-                  noLink: true,
-                  message: m(msg("Leave site?")),
-                  detail: m(msg("Changes you made may not be saved.")),
-                };
-                // On Windows a box owned by its window can block that window's input until it closes.
-                const response =
-                  hostPlatform === "win32"
-                    ? dialog.showMessageBoxSync(options)
-                    : dialog.showMessageBoxSync(window, options);
-                if (response === 0) {
-                  event.preventDefault();
-                } else if (closingWindowContentsIds.delete(contents.id)) {
-                  // The page stays open; give back a session Chromium may have dropped meanwhile.
-                  runFork(
-                    Effect.gen(function* () {
-                      if ((yield* SynchronizedRef.get(controlSessionsRef)).has(contents.id)) return;
-                      yield* restoreControlSession(tabId, contents);
-                    }),
-                  );
-                }
-              });
-              guestContextMenu(window, contents);
-            },
           );
-          yield* prepareWebview(contents);
-          yield* adoptWebContentsUnlocked(tabId, tab, contents, expectedGeneration);
-          yield* attempt({ operation: "window.show", tabId, webContentsId: contents.id }, () => {
-            window.show();
-            window.focus();
-          });
-        }).pipe(
-          Effect.onError(() => {
-            pendingNavigations.delete(tabId);
-            return releaseWindowUnlocked(tabId, session);
+        }),
+      );
+    },
+    (effect, _tabId, bar) =>
+      effect.pipe(
+        Effect.onError(() =>
+          Effect.sync(() => {
+            // A refused open leaves the renderer's popup with nothing to host it.
+            if (!bar.isDestroyed()) bar.close();
           }),
-        );
-      }),
+        ),
+      ),
+  );
+
+  const focusWindow = Effect.fn("PreviewManager.focusWindow")(function* (tabId: string) {
+    const session = windowSessions.get(tabId);
+    if (!session) return;
+    yield* attempt(
+      { operation: "window.focus", tabId, webContentsId: session.webContentsId },
+      () => {
+        const { window, pageView } = session;
+        if (window.isDestroyed()) return;
+        if (window.isMinimized()) window.restore();
+        window.show();
+        window.focus();
+        if (!pageView.webContents.isDestroyed()) pageView.webContents.focus();
+      },
     );
   });
 
@@ -2301,6 +2438,19 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       () => {
         if (!session.window.isDestroyed()) session.window.close();
       },
+    );
+  });
+
+  const setWindowOverlay = Effect.fn("PreviewManager.setWindowOverlay")(function* (
+    tabId: string,
+    open: boolean,
+  ) {
+    const session = windowSessions.get(tabId);
+    if (!session || session.overlay === open) return;
+    session.overlay = open;
+    yield* attempt(
+      { operation: "window.layout", tabId, webContentsId: session.webContentsId },
+      () => layoutWindow(session),
     );
   });
 
@@ -2789,6 +2939,15 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const reapplyZoom = Effect.fn("PreviewManager.reapplyZoom")(function* () {
     const tabIds = Array.from((yield* SynchronizedRef.get(tabsRef)).keys());
     yield* Effect.forEach(tabIds, assertTabZoom, { discard: true });
+    // App zoom may reach a window's bar, which sets where its page starts.
+    yield* Effect.forEach(
+      windowSessions,
+      ([tabId, session]) =>
+        attempt({ operation: "window.layout", tabId, webContentsId: session.webContentsId }, () =>
+          layoutWindow(session),
+        ).pipe(Effect.ignore),
+      { discard: true },
+    );
   });
 
   const applyZoom = Effect.fn("PreviewManager.applyZoom")(function* (
@@ -4004,8 +4163,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     hardReload,
     navigate,
     openPictureInPicture,
-    openWindow,
+    windowOpenResponse,
+    focusWindow,
     closeWindow,
+    setWindowOverlay,
+    closeAllWindows,
     openDevTools,
     pickElement,
     updateAnnotationVoice,
@@ -4289,9 +4451,20 @@ export class PreviewManager extends Context.Service<
     readonly copyArtifactToClipboard: (path: string) => Effect.Effect<void, PreviewManagerError>;
     readonly openPictureInPicture: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly closePictureInPicture: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
-    /** Moves the page into a normal window, or shows and focuses the one already open. */
-    readonly openWindow: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
+    /**
+     * Answers the main renderer's `window.open` for a tab's own window, or null for any other
+     * frame. An allowed popup hosts the browser bar above the tab's page in a normal window.
+     */
+    readonly windowOpenResponse: (frameName: string) => Electron.WindowOpenHandlerResponse | null;
+    readonly focusWindow: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
+    /** Closes as the window's close button does, so the page's beforeunload can keep it open. */
     readonly closeWindow: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
+    readonly setWindowOverlay: (
+      tabId: string,
+      open: boolean,
+    ) => Effect.Effect<void, PreviewManagerError>;
+    /** Brings every page back to the panel without asking it, as when the renderer reloads. */
+    readonly closeAllWindows: () => Effect.Effect<void>;
     readonly setGuestContextMenu: (install: GuestContextMenu) => Effect.Effect<void>;
     readonly startRecording: (
       tabId: string,
@@ -4461,8 +4634,11 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     copyArtifactToClipboard: operations.copyArtifactToClipboard,
     openPictureInPicture: operations.openPictureInPicture,
     closePictureInPicture: operations.closePictureInPicture,
-    openWindow: operations.openWindow,
+    windowOpenResponse: operations.windowOpenResponse,
+    focusWindow: operations.focusWindow,
     closeWindow: operations.closeWindow,
+    setWindowOverlay: operations.setWindowOverlay,
+    closeAllWindows: operations.closeAllWindows,
     setGuestContextMenu: operations.setGuestContextMenu,
     startRecording: operations.startRecording,
     stopRecording: operations.stopRecording,

@@ -1,11 +1,12 @@
 import { it as effectIt } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import type {
-  DesktopPreviewFindResultEvent,
-  DesktopPreviewRecordingInputEvent,
-  PreviewAnnotationPayload,
-  PreviewAnnotationRect,
+import {
+  type DesktopPreviewFindResultEvent,
+  type DesktopPreviewRecordingInputEvent,
+  type PreviewAnnotationPayload,
+  type PreviewAnnotationRect,
+  desktopPreviewWindowName,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { parseKeybindingShortcut } from "@t3tools/shared/keybindings";
@@ -153,11 +154,13 @@ const {
   mkdir,
   previewSession,
   showItemInFolder,
+  webContentsViewConstructor,
   webviewSend,
   writeFile,
   writeClipboard,
 } = vi.hoisted(() => ({
   browserWindowConstructor: vi.fn(),
+  webContentsViewConstructor: vi.fn(),
   clipboardItemConstructor: vi.fn(),
   createFromPath: vi.fn((): { readonly isEmpty: () => boolean; readonly toPNG: () => Buffer } => ({
     isEmpty: () => false,
@@ -198,6 +201,7 @@ vi.mock("electron", () => ({
     fromId,
     getFocusedWebContents,
   },
+  WebContentsView: webContentsViewConstructor,
 }));
 
 const layerBrowserSession = Layer.succeed(
@@ -611,13 +615,37 @@ const makeTestPictureInPictureWindow = (loadURL: () => Promise<void> = async () 
   return { pictureInPictureWindow, send, webContentsListeners };
 };
 
+// Records listeners so a test can raise Electron events on a fake.
+const makeTestEmitter = () => {
+  const listeners = new Map<string, Set<(...args: never[]) => void>>();
+  const off = (event: string, listener: (...args: never[]) => void) => {
+    listeners.get(event)?.delete(listener);
+  };
+  const on = (event: string, listener: (...args: never[]) => void) => {
+    listeners.set(event, (listeners.get(event) ?? new Set()).add(listener));
+  };
+  const once = (event: string, listener: (...args: never[]) => void) => {
+    const wrapped = (...args: never[]) => {
+      off(event, wrapped);
+      listener(...args);
+    };
+    on(event, wrapped);
+  };
+  const emit = (event: string, ...args: unknown[]) => {
+    for (const listener of Array.from(listeners.get(event) ?? [])) {
+      (listener as (...args: unknown[]) => void)(...args);
+    }
+  };
+  return { on: vi.fn(on), once: vi.fn(once), off: vi.fn(off), emit };
+};
+
 // A page's contents with a navigation stack; `restored` notifies when a history restore starts.
 // Empty contents have no renderer until a restore loads a page, and CDP holds their commands until then.
 const makeTestNavigableWebContents = (
   id: number,
   navigation: { readonly entries: Electron.NavigationEntry[]; readonly index: number },
   restored: ChangeSignal,
-  type: "webview" | "window" = "webview",
+  type: "webview" | "browserView" = "webview",
   { empty = false }: { readonly empty?: boolean } = {},
 ) => {
   const renderer = Promise.withResolvers<void>();
@@ -628,13 +656,29 @@ const makeTestNavigableWebContents = (
   });
   const attach = vi.fn();
   const detachListeners = new Set<() => void>();
+  const events = makeTestEmitter();
+  let destroyed = false;
+  /** The page finished unloading, as after its beforeunload let a close go on. */
+  const unload = () => {
+    if (destroyed) return;
+    destroyed = true;
+    events.emit("destroyed");
+  };
+  const close = vi.fn((options?: Electron.CloseOpts) => {
+    if (options?.waitForBeforeUnload !== true) unload();
+  });
   const wc = Object.assign(
     makeTestPreviewWebContents(async () => makeStillImage(), id),
     {
       getType: () => type,
       hostWebContents: null,
       session: { id: `session-${id}` },
-      once: vi.fn(),
+      on: events.on,
+      once: events.once,
+      off: events.off,
+      isDestroyed: () => destroyed,
+      close,
+      focus: vi.fn(),
       isDevToolsOpened: () => false,
       debugger: {
         isAttached: () => false,
@@ -661,45 +705,99 @@ const makeTestNavigableWebContents = (
   const chromiumDetach = () => {
     for (const listener of Array.from(detachListeners)) listener();
   };
-  return { wc: wc as unknown as Electron.WebContents, restore, attach, chromiumDetach };
+  return {
+    wc: wc as unknown as Electron.WebContents,
+    restore,
+    attach,
+    close,
+    unload,
+    chromiumDetach,
+  };
 };
 
-const makeTestPreviewWindow = (contents: Electron.WebContents) => {
-  const listeners = new Map<string, Array<() => void>>();
-  const listen = vi.fn((event: string, listener: () => void) => {
-    listeners.set(event, [...(listeners.get(event) ?? []), listener]);
-  });
-  const emit = (event: string) => {
-    for (const listener of listeners.get(event) ?? []) listener();
-  };
+/**
+ * A tab's own window as the manager builds it for the renderer's `window.open`: the popup's
+ * contents hold the bar, stacked above a view of the page.
+ */
+const makeTestPreviewWindow = (page: Electron.WebContents) => {
+  const events = makeTestEmitter();
+  const barEvents = makeTestEmitter();
   let destroyed = false;
-  return {
-    webContents: contents,
-    on: listen,
-    once: listen,
+  let barDestroyed = false;
+  const bar = {
+    id: 90,
+    isDestroyed: () => barDestroyed,
+    close: vi.fn(() => {
+      if (barDestroyed) return;
+      barDestroyed = true;
+      barEvents.emit("destroyed");
+    }),
+    on: barEvents.on,
+    once: barEvents.once,
+    focus: vi.fn(),
+    getZoomFactor: () => 1,
+    setWindowOpenHandler: vi.fn(),
+  };
+  const pageView = { webContents: page, setBounds: vi.fn() };
+  const barView = { webContents: bar, setBounds: vi.fn(), setBackgroundColor: vi.fn() };
+  const addChildView = vi.fn();
+  const window = {
+    contentView: { addChildView },
+    on: events.on,
+    once: events.once,
+    getContentSize: () => [1280, 800],
+    setTitle: vi.fn(),
     isDestroyed: () => destroyed,
     isMinimized: () => false,
     show: vi.fn(),
     focus: vi.fn(),
-    /** The close event without `closed`: the page is still unloading, or its beforeunload kept it open. */
-    cancelClose: () => emit("close"),
+    restore: vi.fn(),
     close: vi.fn(() => {
       if (destroyed) return;
-      emit("close");
+      let prevented = false;
+      events.emit("close", { preventDefault: () => (prevented = true) });
+      if (prevented) return;
       destroyed = true;
-      emit("closed");
+      events.emit("closed");
     }),
     destroy: vi.fn(() => {
       if (destroyed) return;
       destroyed = true;
-      emit("closed");
+      events.emit("closed");
     }),
   };
+  browserWindowConstructor.mockImplementation(function () {
+    return window;
+  });
+  webContentsViewConstructor.mockImplementation(function (options: { webContents?: unknown }) {
+    return options.webContents === undefined ? pageView : barView;
+  });
+  return { window, bar: bar as unknown as Electron.WebContents, pageView, barView, addChildView };
 };
+
+/** Opens a tab's own window as the main renderer's `window.open` does. */
+const openTestWindow = (
+  manager: PreviewManager.PreviewManager["Service"],
+  tabId: string,
+  bar: Electron.WebContents,
+) =>
+  Effect.gen(function* () {
+    const opened = yield* Deferred.make<PreviewManager.PreviewTabState>();
+    yield* manager.subscribeStateChanges((changedTabId, state) =>
+      changedTabId === tabId && state.inWindow
+        ? Deferred.succeed(opened, state).pipe(Effect.asVoid)
+        : Effect.void,
+    );
+    const response = manager.windowOpenResponse(desktopPreviewWindowName(tabId));
+    expect(response?.action).toBe("allow");
+    response?.createWindow?.({ webContents: bar } as Electron.BrowserWindowConstructorOptions);
+    return yield* Deferred.await(opened);
+  });
 
 describe("PreviewManager", () => {
   beforeEach(() => {
     browserWindowConstructor.mockReset();
+    webContentsViewConstructor.mockReset();
     fromId.mockClear();
     getFocusedWebContents.mockReset();
     getFocusedWebContents.mockReturnValue(null);
@@ -3374,7 +3472,7 @@ describe("PreviewManager", () => {
           index: 2,
         };
         const guest = makeTestNavigableWebContents(42, guestHistory, restored);
-        const windowContents = makeTestNavigableWebContents(77, windowHistory, restored, "window", {
+        const page = makeTestNavigableWebContents(77, windowHistory, restored, "browserView", {
           empty: true,
         });
         const returned = makeTestNavigableWebContents(
@@ -3384,16 +3482,11 @@ describe("PreviewManager", () => {
           "webview",
           { empty: true },
         );
-        const contentsById = new Map(
-          [guest, windowContents, returned].map(({ wc }) => [wc.id, wc]),
-        );
+        const contentsById = new Map([guest, page, returned].map(({ wc }) => [wc.id, wc]));
         fromId.mockImplementation((id) =>
           id === undefined ? null : (contentsById.get(id) ?? null),
         );
-        const window = makeTestPreviewWindow(windowContents.wc);
-        browserWindowConstructor.mockImplementation(function () {
-          return window;
-        });
+        const preview = makeTestPreviewWindow(page.wc);
         const states: PreviewManager.PreviewTabState[] = [];
         const backInPanel = yield* Deferred.make<void>();
         yield* manager.subscribeStateChanges((_tabId, state) =>
@@ -3409,34 +3502,54 @@ describe("PreviewManager", () => {
         );
         yield* manager.createTab("tab_window");
         yield* manager.registerWebview("tab_window", 42);
+        expect(manager.windowOpenResponse("some-other-frame")).toBeNull();
 
-        yield* manager.openWindow("tab_window");
+        const opened = yield* openTestWindow(manager, "tab_window", preview.bar);
 
-        expect(states.at(-1)).toMatchObject({ webContentsId: 77, inWindow: true });
-        expect(browserWindowConstructor).toHaveBeenCalledWith(
-          expect.objectContaining({
-            webPreferences: expect.objectContaining({
-              session: guest.wc.session,
-              sandbox: true,
-              contextIsolation: false,
-              nodeIntegration: false,
-            }),
+        expect(opened).toMatchObject({ webContentsId: 77, inWindow: true });
+        expect(webContentsViewConstructor).toHaveBeenCalledWith({
+          webPreferences: expect.objectContaining({
+            session: guest.wc.session,
+            sandbox: true,
+            contextIsolation: false,
+            nodeIntegration: false,
           }),
-        );
-        yield* restored.until(() => windowContents.restore.mock.calls.length > 0);
-        expect(windowContents.restore).toHaveBeenCalledWith(guestHistory);
-        expect(window.show).toHaveBeenCalled();
+        });
+        // The bar is stacked above the page, so its menus draw over it.
+        expect(preview.addChildView.mock.calls).toEqual([[preview.pageView], [preview.barView]]);
+        expect(preview.pageView.setBounds).toHaveBeenLastCalledWith({
+          x: 0,
+          y: 40,
+          width: 1280,
+          height: 760,
+        });
+        yield* manager.setWindowOverlay("tab_window", true);
+        expect(preview.barView.setBounds).toHaveBeenLastCalledWith({
+          x: 0,
+          y: 0,
+          width: 1280,
+          height: 800,
+        });
+        yield* restored.until(() => page.restore.mock.calls.length > 0);
+        expect(page.restore).toHaveBeenCalledWith(guestHistory);
+        expect(preview.window.show).toHaveBeenCalled();
         // A normal window keeps the app menu's shortcuts, such as Quit and Minimize.
-        expect(windowContents.wc.setIgnoreMenuShortcuts).not.toHaveBeenCalled();
+        expect(page.wc.setIgnoreMenuShortcuts).not.toHaveBeenCalled();
 
         // The panel's guest still reports after the page moved out.
         const staleRegistration = yield* Effect.exit(manager.registerWebview("tab_window", 42));
         expect(Exit.isFailure(staleRegistration)).toBe(true);
         expect(states.at(-1)).toMatchObject({ webContentsId: 77, inWindow: true });
 
-        window.close();
+        // Closing asks the page first; it goes once its beforeunload lets it.
+        yield* manager.closeWindow("tab_window");
+        expect(page.close).toHaveBeenCalledWith({ waitForBeforeUnload: true });
+        expect(preview.window.destroy).not.toHaveBeenCalled();
+        page.unload();
         yield* Deferred.await(backInPanel);
         expect(states.at(-1)).toMatchObject({ webContentsId: null, inWindow: false });
+        expect(preview.window.destroy).toHaveBeenCalledOnce();
+        expect(preview.bar.isDestroyed()).toBe(true);
 
         // The returning guest attaches empty, as the main window's did-attach-webview prepares it.
         yield* manager.prepareWebview(returned.wc);
@@ -3455,29 +3568,26 @@ describe("PreviewManager", () => {
         const restored = makeChangeSignal();
         const history = { entries: [{ url: "https://example.com/a", title: "A" }], index: 0 };
         const guest = makeTestNavigableWebContents(44, history, restored);
-        const windowContents = makeTestNavigableWebContents(78, history, restored, "window", {
+        const page = makeTestNavigableWebContents(78, history, restored, "browserView", {
           empty: true,
         });
-        const contentsById = new Map([guest, windowContents].map(({ wc }) => [wc.id, wc]));
+        const contentsById = new Map([guest, page].map(({ wc }) => [wc.id, wc]));
         fromId.mockImplementation((id) =>
           id === undefined ? null : (contentsById.get(id) ?? null),
         );
-        const window = makeTestPreviewWindow(windowContents.wc);
-        browserWindowConstructor.mockImplementation(function () {
-          return window;
-        });
+        const preview = makeTestPreviewWindow(page.wc);
         yield* manager.createTab("tab_window_closing");
         yield* manager.registerWebview("tab_window_closing", 44);
-        yield* manager.openWindow("tab_window_closing");
-        yield* restored.until(() => windowContents.restore.mock.calls.length > 0);
-        const attaches = windowContents.attach.mock.calls.length;
+        yield* openTestWindow(manager, "tab_window_closing", preview.bar);
+        yield* restored.until(() => page.restore.mock.calls.length > 0);
+        const attaches = page.attach.mock.calls.length;
         expect(attaches).toBeGreaterThan(0);
 
-        window.cancelClose();
-        windowContents.chromiumDetach();
+        preview.window.close();
+        page.chromiumDetach();
         yield* Effect.yieldNow;
 
-        expect(windowContents.attach).toHaveBeenCalledTimes(attaches);
+        expect(page.attach).toHaveBeenCalledTimes(attaches);
       }),
     ),
   );
@@ -3495,14 +3605,10 @@ describe("PreviewManager", () => {
         } as never);
         yield* manager.startRecording("tab_window_recording");
 
-        const refused = yield* Effect.exit(manager.openWindow("tab_window_recording"));
-
-        expect(Exit.isFailure(refused)).toBe(true);
-        if (Exit.isSuccess(refused)) return;
-        expect(Option.getOrThrow(Cause.findErrorOption(refused.cause))).toMatchObject({
-          _tag: "PreviewWindowRecordingError",
-        });
-        expect(browserWindowConstructor).not.toHaveBeenCalled();
+        // Refused before the popup exists, so the renderer's window.open returns null.
+        expect(
+          manager.windowOpenResponse(desktopPreviewWindowName("tab_window_recording")),
+        ).toEqual({ action: "deny" });
       }),
     ),
   );
@@ -3513,22 +3619,19 @@ describe("PreviewManager", () => {
         const restored = makeChangeSignal();
         const history = { entries: [{ url: "https://example.com/a", title: "A" }], index: 0 };
         const guest = makeTestNavigableWebContents(42, history, restored);
-        const windowContents = makeTestNavigableWebContents(77, history, restored, "window", {
+        const page = makeTestNavigableWebContents(77, history, restored, "browserView", {
           empty: true,
         });
         const laterGuest = makeTestPreviewWebContents(async () => makeStillImage(), 44);
         const contentsById = new Map([
           [42, guest.wc],
-          [77, windowContents.wc],
+          [77, page.wc],
           [44, laterGuest as Electron.WebContents],
         ]);
         fromId.mockImplementation((id) =>
           id === undefined ? null : (contentsById.get(id) ?? null),
         );
-        const window = makeTestPreviewWindow(windowContents.wc);
-        browserWindowConstructor.mockImplementation(function () {
-          return window;
-        });
+        const preview = makeTestPreviewWindow(page.wc);
         const states: PreviewManager.PreviewTabState[] = [];
         yield* manager.subscribeStateChanges((_tabId, state) =>
           Effect.sync(() => {
@@ -3537,14 +3640,17 @@ describe("PreviewManager", () => {
         );
         yield* manager.createTab("tab_window_closed");
         yield* manager.registerWebview("tab_window_closed", 42);
-        yield* manager.openWindow("tab_window_closed");
-        window.cancelClose();
+        yield* openTestWindow(manager, "tab_window_closed", preview.bar);
+        // The page's beforeunload is still deciding.
+        preview.window.close();
 
         yield* manager.closeTab("tab_window_closed");
 
-        // destroy, not close: a page's beforeunload must not keep an orphaned window open.
-        expect(window.destroy).toHaveBeenCalledOnce();
-        expect(window.close).not.toHaveBeenCalled();
+        // Closed without asking: a page's beforeunload must not keep an orphaned window open.
+        expect(page.close).toHaveBeenLastCalledWith();
+        expect(page.wc.isDestroyed()).toBe(true);
+        expect(preview.bar.isDestroyed()).toBe(true);
+        expect(preview.window.destroy).toHaveBeenCalledOnce();
         expect(states.at(-1)).toMatchObject({ webContentsId: null, inWindow: false });
         yield* manager.createTab("tab_window_closed");
         yield* manager.registerWebview("tab_window_closed", 44);

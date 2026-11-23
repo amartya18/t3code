@@ -737,11 +737,17 @@ export const make = Effect.gen(function* () {
       void runPromise(previewManager.prepareWebview(contents));
     });
 
-    window.webContents.setWindowOpenHandler(({ url }) => {
+    window.webContents.setWindowOpenHandler(({ url, frameName }) => {
+      const previewWindow = previewManager.windowOpenResponse(frameName);
+      if (previewWindow !== null) return previewWindow;
       if (Option.isSome(ElectronShell.parseSafeExternalUrl(url))) {
         void runPromise(electronShell.openExternal(url));
       }
       return { action: "deny" };
+    });
+    // A preview tab's own window shows a bar this document draws, which a new document cannot.
+    window.webContents.on("did-start-navigation", ({ isMainFrame, isSameDocument }) => {
+      if (isMainFrame && !isSameDocument) void runPromise(previewManager.closeAllWindows());
     });
     window.webContents.on("will-navigate", (event, url) => {
       if (

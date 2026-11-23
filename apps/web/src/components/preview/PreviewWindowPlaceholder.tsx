@@ -8,24 +8,27 @@ import { m } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
 
 import { previewBridge } from "./previewBridge";
+import { openPreviewWindow } from "./previewWindows";
 
 /** Opening an open window focuses it, so `open` also serves as "Focus". */
 export function usePreviewWindowActions(runtimeTabId: string | null) {
   const gt = useGT();
-  const run = (operation: "open" | "close") => {
-    if (!previewBridge || !runtimeTabId) return;
-    void previewBridge.window[operation](runtimeTabId).catch((error) => {
-      toastManager.add({
-        type: "error",
-        title:
-          operation === "open"
-            ? gt("Unable to open preview window")
-            : gt("Unable to bring preview back"),
-        description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
+  return {
+    open: () => {
+      if (!runtimeTabId || openPreviewWindow(runtimeTabId)) return;
+      toastManager.add({ type: "error", title: gt("Unable to open preview window") });
+    },
+    close: () => {
+      if (!previewBridge || !runtimeTabId) return;
+      void previewBridge.window.close(runtimeTabId).catch((error) => {
+        toastManager.add({
+          type: "error",
+          title: gt("Unable to bring preview back"),
+          description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
+        });
       });
-    });
+    },
   };
-  return { open: () => run("open"), close: () => run("close") };
 }
 
 export function PreviewWindowPlaceholder(props: {

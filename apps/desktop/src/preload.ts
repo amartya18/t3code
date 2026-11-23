@@ -501,8 +501,10 @@ contextBridge.exposeInMainWorld("desktopBridge", {
         ipcRenderer.invoke(IpcChannels.PREVIEW_PICTURE_IN_PICTURE_CLOSE_CHANNEL, { tabId }),
     },
     window: {
-      open: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_WINDOW_OPEN_CHANNEL, { tabId }),
+      focus: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_WINDOW_FOCUS_CHANNEL, { tabId }),
       close: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_WINDOW_CLOSE_CHANNEL, { tabId }),
+      setOverlay: (tabId, open) =>
+        ipcRenderer.invoke(IpcChannels.PREVIEW_WINDOW_OVERLAY_CHANNEL, { tabId, open }),
     },
     recording: {
       onInput: (listener) => {
