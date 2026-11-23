@@ -3561,6 +3561,49 @@ describe("PreviewManager", () => {
     ),
   );
 
+  // A reloaded renderer cannot draw the old bars, so its tabs come back where their pages left off.
+  effectIt.effect("brings every windowed tab back to the panel with its history", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const restored = makeChangeSignal();
+        const guestHistory = { entries: [{ url: "https://example.com/a", title: "A" }], index: 0 };
+        const windowHistory = {
+          entries: [...guestHistory.entries, { url: "https://example.com/b", title: "B" }],
+          index: 1,
+        };
+        const guest = makeTestNavigableWebContents(42, guestHistory, restored);
+        const page = makeTestNavigableWebContents(77, windowHistory, restored, "browserView", {
+          empty: true,
+        });
+        const returned = makeTestNavigableWebContents(
+          43,
+          { entries: [], index: -1 },
+          restored,
+          "webview",
+          { empty: true },
+        );
+        const contentsById = new Map([guest, page, returned].map(({ wc }) => [wc.id, wc]));
+        fromId.mockImplementation((id) =>
+          id === undefined ? null : (contentsById.get(id) ?? null),
+        );
+        const preview = makeTestPreviewWindow(page.wc);
+        yield* manager.createTab("tab_window_reload");
+        yield* manager.registerWebview("tab_window_reload", 42);
+        yield* openTestWindow(manager, "tab_window_reload", preview.bar);
+        yield* restored.until(() => page.restore.mock.calls.length > 0);
+
+        yield* manager.closeAllWindows();
+
+        expect(page.wc.isDestroyed()).toBe(true);
+        expect(preview.bar.isDestroyed()).toBe(true);
+        yield* manager.prepareWebview(returned.wc);
+        yield* manager.registerWebview("tab_window_reload", 43);
+        yield* restored.until(() => returned.restore.mock.calls.length > 0);
+        expect(returned.restore).toHaveBeenCalledWith(windowHistory);
+      }),
+    ),
+  );
+
   // Reattaching while the page unloads restarted the close, so the window never closed and main ran away.
   effectIt.effect("leaves a closing window's dropped debugger detached", () =>
     withManager((manager) =>

@@ -244,6 +244,7 @@ function layerTest(input: {
   readonly onCopyText?: (text: string) => Effect.Effect<void>;
   readonly onPopupTemplate?: (input: ElectronMenu.ElectronMenuTemplateInput) => Effect.Effect<void>;
   readonly previewZoomReapplies?: number[];
+  readonly onClosePreviewWindows?: () => void;
   readonly onReveal?: (window: Electron.BrowserWindow) => void;
   readonly focusedWindow?: Electron.BrowserWindow;
   readonly fallbackWindow?: Electron.BrowserWindow;
@@ -371,6 +372,7 @@ function layerTest(input: {
           prepareWebview: () => Effect.void,
           isBrowserPartition: (partition) => partition.startsWith("persist:t3code-preview-"),
           windowOpenResponse: () => null,
+          closeAllWindows: () => Effect.sync(() => input.onClosePreviewWindows?.()),
           getBrowserPartition: () => Effect.succeed("persist:t3code-preview-test"),
           reapplyZoom: () =>
             Effect.sync(() => {
@@ -1535,6 +1537,47 @@ describe("DesktopWindow", () => {
 
         assert.isTrue(prevented);
         assert.deepEqual(openedExternalUrls, ["https://accounts.microsoft.com/oauth"]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("brings preview tabs back from their windows only when the app's document goes", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      let previewWindowCloses = 0;
+      const layer = layerTest({
+        window: fakeWindow.window,
+        createCount: yield* Ref.make(0),
+        mainWindow: yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none()),
+        onClosePreviewWindows: () => {
+          previewWindowCloses += 1;
+        },
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        const emit = (eventName: string, ...args: unknown[]) => {
+          const listener = fakeWindow.webContentsListeners.get(eventName);
+          if (!listener) assert.fail(`${eventName} listener was not registered`);
+          listener(...args);
+        };
+
+        // will-navigate cancels an external link, and a download never commits either.
+        fakeWindow.webContentsListeners.get("did-start-navigation")?.({
+          isMainFrame: true,
+          isSameDocument: false,
+        });
+        yield* Effect.promise(() => Promise.resolve());
+        assert.equal(previewWindowCloses, 0);
+
+        emit("did-navigate", {}, "t3code-dev://app/");
+        yield* Effect.promise(() => Promise.resolve());
+        assert.equal(previewWindowCloses, 1);
+
+        emit("render-process-gone", {}, { reason: "crashed", exitCode: 1 });
+        yield* Effect.promise(() => Promise.resolve());
+        assert.equal(previewWindowCloses, 2);
       }).pipe(Effect.provide(layer));
     }),
   );
