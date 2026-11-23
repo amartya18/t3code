@@ -1191,7 +1191,7 @@ export function PreviewView({
             onClose={closeFind}
           />
         ) : null}
-        {navStatus._tag === "LoadFailed" && navStatus.download ? (
+        {inWindow ? null : navStatus._tag === "LoadFailed" && navStatus.download ? (
           <div className="absolute inset-0 z-10 bg-background">
             <ServerTabFileNotShown
               threadRef={threadRef}
