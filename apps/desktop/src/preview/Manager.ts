@@ -2484,11 +2484,17 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       (tabId) =>
         withTabLifecycleLock(
           tabId,
-          Effect.suspend(() => {
+          Effect.gen(function* () {
             const session = windowSessions.get(tabId);
-            if (!session) return Effect.void;
-            pendingNavigations.delete(tabId);
-            return releaseWindowUnlocked(tabId, session);
+            if (!session) return;
+            const page = session.pageView.webContents;
+            yield* attempt(
+              { operation: "window.readNavigation", tabId, webContentsId: session.webContentsId },
+              () => {
+                if (!page.isDestroyed()) pendingNavigations.set(tabId, readNavigation(page));
+              },
+            ).pipe(Effect.ignore);
+            yield* releaseWindowUnlocked(tabId, session);
           }),
         ),
       { concurrency: "unbounded", discard: true },

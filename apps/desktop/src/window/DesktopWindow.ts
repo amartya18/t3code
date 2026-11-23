@@ -746,8 +746,9 @@ export const make = Effect.gen(function* () {
       return { action: "deny" };
     });
     // A preview tab's own window shows a bar this document draws, which a new document cannot.
-    window.webContents.on("did-start-navigation", ({ isMainFrame, isSameDocument }) => {
-      if (isMainFrame && !isSameDocument) void runPromise(previewManager.closeAllWindows());
+    // Only a committed navigation replaces it: will-navigate cancels external links.
+    window.webContents.on("did-navigate", () => {
+      void runPromise(previewManager.closeAllWindows());
     });
     window.webContents.on("will-navigate", (event, url) => {
       if (
@@ -934,6 +935,7 @@ export const make = Effect.gen(function* () {
       },
     );
     window.webContents.on("render-process-gone", (_event, details) => {
+      void runPromise(previewManager.closeAllWindows());
       const recoverable =
         details.reason === "crashed" ||
         details.reason === "oom" ||
