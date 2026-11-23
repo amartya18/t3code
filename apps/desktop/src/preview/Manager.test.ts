@@ -3416,6 +3416,8 @@ describe("PreviewManager", () => {
         yield* restored.until(() => windowContents.restore.mock.calls.length > 0);
         expect(windowContents.restore).toHaveBeenCalledWith(guestHistory);
         expect(window.show).toHaveBeenCalled();
+        // A normal window keeps the app menu's shortcuts, such as Quit and Minimize.
+        expect(windowContents.wc.setIgnoreMenuShortcuts).not.toHaveBeenCalled();
 
         // The panel's guest still reports after the page moved out.
         const staleRegistration = yield* Effect.exit(manager.registerWebview("tab_window", 42));

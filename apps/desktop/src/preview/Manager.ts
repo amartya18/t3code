@@ -531,11 +531,12 @@ const isPrimaryModifierShortcut = (
   input: Electron.Input,
   platform: NodeJS.Platform,
   key: string,
+  shift = false,
 ): boolean =>
   input.type === "keyDown" &&
   input.key.toLowerCase() === key &&
   (platform === "darwin" ? input.meta && !input.control : input.control && !input.meta) &&
-  !input.shift &&
+  input.shift === shift &&
   !input.alt;
 
 export const isPreviewEditingShortcut = (
@@ -1613,8 +1614,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           hostPlatform === "darwin" ? "MacIntel" : hostPlatform,
         ),
       );
+    // A tab's own window is an ordinary app window, so the app menu keeps its shortcuts there.
+    const inPanel = wc.getType() === "webview";
     const beforeInput = (event: Electron.Event, input: Electron.Input): void => {
-      syncMenuShortcuts(wc, input);
+      if (inPanel) syncMenuShortcuts(wc, input);
       const host = wc.hostWebContents;
       const forwarded =
         input.type === "keyDown" &&
@@ -1693,7 +1696,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
     const install = Effect.fn("PreviewManager.installWebContentsListeners")(function* () {
       yield* attempt({ operation: "attachListeners", tabId, webContentsId: wc.id }, () => {
-        wc.setIgnoreMenuShortcuts(true);
+        if (inPanel) wc.setIgnoreMenuShortcuts(true);
         wc.on("did-start-navigation", navigationStarted);
         wc.on("did-navigate", syncNavigation);
         wc.on("did-navigate-in-page", syncInPageNavigation);
@@ -2227,9 +2230,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
                 runFork(withTabLifecycleLock(tabId, releaseWindowUnlocked(tabId, session)));
               });
               contents.on("before-input-event", (event, input) => {
-                if (!isPrimaryModifierShortcut(input, hostPlatform, "w")) return;
-                event.preventDefault();
-                window.close();
+                if (isPrimaryModifierShortcut(input, hostPlatform, "w")) {
+                  event.preventDefault();
+                  window.close();
+                } else if (isPrimaryModifierShortcut(input, hostPlatform, "r", true)) {
+                  // The app menu's Force Reload would reload the app, not this page.
+                  event.preventDefault();
+                  runFork(hardReload(tabId).pipe(Effect.ignore));
+                }
               });
               // Without an answer a page's beforeunload silently cancels every close and navigation.
               contents.on("will-prevent-unload", (event) => {
