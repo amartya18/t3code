@@ -3613,6 +3613,51 @@ describe("PreviewManager", () => {
     ),
   );
 
+  // The bar's menus unmount on the main renderer's next frame, which a hidden window never paints.
+  effectIt.effect("keeps the main renderer painting while a tab has its own window", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const restored = makeChangeSignal();
+        const history = { entries: [{ url: "https://example.com/a", title: "A" }], index: 0 };
+        const guest = makeTestNavigableWebContents(42, history, restored);
+        const page = makeTestNavigableWebContents(77, history, restored, "browserView", {
+          empty: true,
+        });
+        const recorded = makeTestPreviewWebContents(async () => makeStillImage(), 43);
+        const contentsById = new Map([
+          [42, guest.wc],
+          [77, page.wc],
+          [43, recorded as Electron.WebContents],
+        ]);
+        fromId.mockImplementation((id) =>
+          id === undefined ? null : (contentsById.get(id) ?? null),
+        );
+        const throttlingChanged = makeChangeSignal();
+        const mainThrottling = vi.fn<(enabled: boolean) => void>(throttlingChanged.notify);
+        const preview = makeTestPreviewWindow(page.wc);
+        yield* manager.createTab("tab_window_throttling");
+        yield* manager.registerWebview("tab_window_throttling", 42);
+        yield* manager.createTab("tab_recording_throttling");
+        yield* manager.registerWebview("tab_recording_throttling", 43);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          once: vi.fn(),
+          webContents: { setBackgroundThrottling: mainThrottling },
+        } as never);
+
+        yield* manager.startRecording("tab_recording_throttling");
+        yield* openTestWindow(manager, "tab_window_throttling", preview.bar);
+        yield* manager.stopRecording("tab_recording_throttling");
+        expect(mainThrottling.mock.calls).toEqual([[false]]);
+
+        yield* manager.closeWindow("tab_window_throttling");
+        page.unload();
+        yield* throttlingChanged.until(() => mainThrottling.mock.calls.length > 1);
+        expect(mainThrottling.mock.calls).toEqual([[false], [true]]);
+      }),
+    ),
+  );
+
   effectIt.effect("closes a tab's window without returning its history to a later tab", () =>
     withManager((manager) =>
       Effect.gen(function* () {
