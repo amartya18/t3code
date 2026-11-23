@@ -715,17 +715,24 @@ const makeTestNavigableWebContents = (
   };
 };
 
+/** The main window's main frame, which opens every tab's own window. */
+const testAppFrame = { frameTreeNodeId: 1 } as Electron.WebFrameMain;
+
+/** What the main window's open handler is told about the renderer's `window.open`. */
+const testWindowOpen = (frameName: string, url = "about:blank") => ({ frameName, url });
+
 /**
  * A tab's own window as the manager builds it for the renderer's `window.open`: the popup's
  * contents hold the bar, stacked above a view of the page.
  */
-const makeTestPreviewWindow = (page: Electron.WebContents) => {
+const makeTestPreviewWindow = (page: Electron.WebContents, opener = testAppFrame) => {
   const events = makeTestEmitter();
   const barEvents = makeTestEmitter();
   let destroyed = false;
   let barDestroyed = false;
   const bar = {
     id: 90,
+    opener,
     isDestroyed: () => barDestroyed,
     close: vi.fn(() => {
       if (barDestroyed) return;
@@ -777,6 +784,20 @@ const makeTestPreviewWindow = (page: Electron.WebContents) => {
 
 type TestPreviewWindow = ReturnType<typeof makeTestPreviewWindow>;
 
+/** The main renderer's `window.open` for a tab's own window; the manager builds it in the background. */
+const requestTestWindow = (
+  manager: PreviewManager.PreviewManager["Service"],
+  tabId: string,
+  bar: Electron.WebContents,
+) => {
+  const response = manager.windowOpenResponse(
+    testWindowOpen(desktopPreviewWindowName(tabId)),
+    testAppFrame,
+  );
+  expect(response?.action).toBe("allow");
+  response?.createWindow?.({ webContents: bar } as Electron.BrowserWindowConstructorOptions);
+};
+
 /** Opens a tab's own window as the main renderer's `window.open` does. */
 const openTestWindow = (
   manager: PreviewManager.PreviewManager["Service"],
@@ -790,9 +811,7 @@ const openTestWindow = (
         ? Deferred.succeed(opened, state).pipe(Effect.asVoid)
         : Effect.void,
     );
-    const response = manager.windowOpenResponse(desktopPreviewWindowName(tabId));
-    expect(response?.action).toBe("allow");
-    response?.createWindow?.({ webContents: bar } as Electron.BrowserWindowConstructorOptions);
+    requestTestWindow(manager, tabId, bar);
     return yield* Deferred.await(opened);
   });
 
@@ -3504,7 +3523,9 @@ describe("PreviewManager", () => {
         );
         yield* manager.createTab("tab_window");
         yield* manager.registerWebview("tab_window", 42);
-        expect(manager.windowOpenResponse("some-other-frame")).toBeNull();
+        expect(
+          manager.windowOpenResponse(testWindowOpen("some-other-frame"), testAppFrame),
+        ).toBeNull();
 
         const opened = yield* openTestWindow(manager, "tab_window", preview.bar);
 
@@ -3652,7 +3673,10 @@ describe("PreviewManager", () => {
 
         // Refused before the popup exists, so the renderer's window.open returns null.
         expect(
-          manager.windowOpenResponse(desktopPreviewWindowName("tab_window_recording")),
+          manager.windowOpenResponse(
+            testWindowOpen(desktopPreviewWindowName("tab_window_recording")),
+            testAppFrame,
+          ),
         ).toEqual({ action: "deny" });
       }),
     ),
@@ -3752,6 +3776,50 @@ describe("PreviewManager", () => {
     ),
   );
 
+  // Frames inside the app, such as an agent's sandboxed visual, can open popups and render links.
+  effectIt.effect("opens a tab's window only for the app's own empty popup", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const restored = makeChangeSignal();
+        const history = { entries: [{ url: "https://example.com/a", title: "A" }], index: 0 };
+        const guest = makeTestNavigableWebContents(42, history, restored);
+        const page = makeTestNavigableWebContents(77, history, restored, "browserView", {
+          empty: true,
+        });
+        const contentsById = new Map([guest, page].map(({ wc }) => [wc.id, wc]));
+        fromId.mockImplementation((id) =>
+          id === undefined ? null : (contentsById.get(id) ?? null),
+        );
+        yield* manager.createTab("tab_window_opener");
+        yield* manager.registerWebview("tab_window_opener", 42);
+        const frameName = desktopPreviewWindowName("tab_window_opener");
+
+        expect(
+          manager.windowOpenResponse(
+            testWindowOpen(frameName, "https://example.com/"),
+            testAppFrame,
+          ),
+        ).toEqual({ action: "deny" });
+
+        const settled = makeChangeSignal();
+        let moved = false;
+        yield* manager.subscribeStateChanges((_tabId, state) =>
+          Effect.sync(() => {
+            moved ||= state.inWindow;
+            settled.notify();
+          }),
+        );
+        const iframe = { frameTreeNodeId: 2 } as Electron.WebFrameMain;
+        const preview = makeTestPreviewWindow(page.wc, iframe);
+        preview.bar.once("destroyed", settled.notify);
+        requestTestWindow(manager, "tab_window_opener", preview.bar);
+        yield* settled.until(() => moved || preview.bar.isDestroyed());
+        expect(moved).toBe(false);
+        expect(browserWindowConstructor).not.toHaveBeenCalled();
+      }),
+    ),
+  );
+
   // A hidden window or page left behind would outlive everything that could close it.
   effectIt.effect.each([
     {
@@ -3791,9 +3859,7 @@ describe("PreviewManager", () => {
         yield* manager.registerWebview("tab_window_failed", 42);
         fail(preview);
 
-        manager.windowOpenResponse(desktopPreviewWindowName("tab_window_failed"))?.createWindow?.({
-          webContents: preview.bar,
-        } as Electron.BrowserWindowConstructorOptions);
+        requestTestWindow(manager, "tab_window_failed", preview.bar);
         yield* barClosed.until(() => preview.bar.isDestroyed());
 
         expect(preview.window.destroy).toHaveBeenCalledOnce();

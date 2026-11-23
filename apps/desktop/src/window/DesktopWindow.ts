@@ -737,9 +737,13 @@ export const make = Effect.gen(function* () {
       void runPromise(previewManager.prepareWebview(contents));
     });
 
-    window.webContents.setWindowOpenHandler(({ url, frameName }) => {
-      const previewWindow = previewManager.windowOpenResponse(frameName);
+    window.webContents.setWindowOpenHandler((details) => {
+      const previewWindow = previewManager.windowOpenResponse(
+        details,
+        window.webContents.mainFrame,
+      );
       if (previewWindow !== null) return previewWindow;
+      const { url } = details;
       if (Option.isSome(ElectronShell.parseSafeExternalUrl(url))) {
         void runPromise(electronShell.openExternal(url));
       }

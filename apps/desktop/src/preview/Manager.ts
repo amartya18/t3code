@@ -2228,10 +2228,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
   };
 
-  const windowOpenResponse = (frameName: string): Electron.WindowOpenHandlerResponse | null => {
+  const windowOpenResponse = (
+    { frameName, url }: Pick<Electron.HandlerDetails, "frameName" | "url">,
+    appFrame: Electron.WebFrameMain,
+  ): Electron.WindowOpenHandlerResponse | null => {
     const tabId = desktopPreviewWindowTabId(frameName);
     if (tabId === null) return null;
-    if (!canOpenWindow(tabId)) return { action: "deny" };
+    // The app opens it empty; a link aimed at the name would load its page as the app's bar.
+    if (url !== "about:blank" || !canOpenWindow(tabId)) return { action: "deny" };
     return {
       action: "allow",
       // A popup in its own window would sit under the page's view, and so would the bar's menus.
@@ -2239,7 +2243,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         // Electron passes the popup's contents for the caller to host.
         const bar = (options as { readonly webContents: Electron.WebContents }).webContents;
         runFork(
-          openWindow(tabId, bar).pipe(
+          openWindow(tabId, bar, appFrame).pipe(
             Effect.catch((error) => Effect.logWarning("Preview window did not open.", { error })),
           ),
         );
@@ -2249,7 +2253,16 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   };
 
   const openWindow = Effect.fn("PreviewManager.openWindow")(
-    function* (tabId: string, bar: Electron.WebContents) {
+    function* (tabId: string, bar: Electron.WebContents, appFrame: Electron.WebFrameMain) {
+      // The handler is told no opener, and the app's sandboxed frames, such as an agent's
+      // visual, may open popups too.
+      if (bar.opener?.frameTreeNodeId !== appFrame.frameTreeNodeId) {
+        return yield* new PreviewOperationError({
+          operation: "window.open",
+          tabId,
+          cause: new Error("Only the app's own document opens a tab's window"),
+        });
+      }
       const expectedGeneration = tabLifecycleGenerations.get(tabId);
       yield* withTabLifecycleLock(
         tabId,
@@ -4485,9 +4498,13 @@ export class PreviewManager extends Context.Service<
     readonly closePictureInPicture: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     /**
      * Answers the main renderer's `window.open` for a tab's own window, or null for any other
-     * frame. An allowed popup hosts the browser bar above the tab's page in a normal window.
+     * frame. An allowed popup hosts the browser bar above the tab's page in a normal window, and
+     * only when `appFrame`, the main window's main frame, opened it.
      */
-    readonly windowOpenResponse: (frameName: string) => Electron.WindowOpenHandlerResponse | null;
+    readonly windowOpenResponse: (
+      details: Pick<Electron.HandlerDetails, "frameName" | "url">,
+      appFrame: Electron.WebFrameMain,
+    ) => Electron.WindowOpenHandlerResponse | null;
     readonly focusWindow: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     /** Closes as the window's close button does, so the page's beforeunload can keep it open. */
     readonly closeWindow: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
