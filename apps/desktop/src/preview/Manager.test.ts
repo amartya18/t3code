@@ -154,6 +154,7 @@ const {
   mkdir,
   previewSession,
   showItemInFolder,
+  showMessageBoxSync,
   webContentsViewConstructor,
   webviewSend,
   writeFile,
@@ -171,6 +172,7 @@ const {
   mkdir: vi.fn((_path: string) => undefined),
   previewSession: { on: vi.fn() },
   showItemInFolder: vi.fn(),
+  showMessageBoxSync: vi.fn(),
   webviewSend: vi.fn(),
   writeFile: vi.fn((_path: string, _data: Uint8Array) => undefined),
   writeClipboard: vi.fn(async () => undefined),
@@ -187,6 +189,9 @@ vi.mock("electron", () => ({
   },
   clipboard: {
     write: writeClipboard,
+  },
+  dialog: {
+    showMessageBoxSync,
   },
   nativeImage: {
     createFromPath,
@@ -712,6 +717,7 @@ const makeTestNavigableWebContents = (
     close,
     unload,
     chromiumDetach,
+    emit: events.emit,
   };
 };
 
@@ -3654,6 +3660,47 @@ describe("PreviewManager", () => {
         yield* Effect.yieldNow;
 
         expect(page.attach).toHaveBeenCalledTimes(attaches);
+      }),
+    ),
+  );
+
+  // Staying keeps the page, so it gets back the debugger it lost and a later close asks it again.
+  effectIt.effect("keeps a window open with its page controlled when the user stays", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const restored = makeChangeSignal();
+        const history = { entries: [{ url: "https://example.com/a", title: "A" }], index: 0 };
+        const guest = makeTestNavigableWebContents(45, history, restored);
+        const page = makeTestNavigableWebContents(79, history, restored, "browserView", {
+          empty: true,
+        });
+        const contentsById = new Map([guest, page].map(({ wc }) => [wc.id, wc]));
+        fromId.mockImplementation((id) =>
+          id === undefined ? null : (contentsById.get(id) ?? null),
+        );
+        const preview = makeTestPreviewWindow(page.wc);
+        yield* manager.createTab("tab_window_stay");
+        yield* manager.registerWebview("tab_window_stay", 45);
+        yield* openTestWindow(manager, "tab_window_stay", preview.bar);
+        yield* restored.until(() => page.restore.mock.calls.length > 0);
+        const attaches = page.attach.mock.calls.length;
+        const reattached = makeChangeSignal();
+        page.attach.mockImplementation(reattached.notify);
+
+        yield* manager.closeWindow("tab_window_stay");
+        page.chromiumDetach();
+        showMessageBoxSync.mockReturnValueOnce(1);
+        const leave = vi.fn();
+        page.emit("will-prevent-unload", { preventDefault: leave });
+        yield* reattached.until(() => page.attach.mock.calls.length > attaches);
+
+        expect(leave).not.toHaveBeenCalled();
+        expect(preview.window.destroy).not.toHaveBeenCalled();
+        yield* manager.closeWindow("tab_window_stay");
+        expect(page.close.mock.calls).toEqual([
+          [{ waitForBeforeUnload: true }],
+          [{ waitForBeforeUnload: true }],
+        ]);
       }),
     ),
   );
