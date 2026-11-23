@@ -4,11 +4,8 @@
 # native fingerprint, so when no preview build has this commit's fingerprint, it starts one
 # instead. Needs EXPO_TOKEN or `eas login`, and the mobile app's dependencies installed.
 #
-# Under GitHub Actions the logs and summary are public, and a preview build's page and IPA
-# expose the ad hoc profile's device UDIDs, so no build ID or link may reach them there.
-#
 # Usage: fork-ios-preview.sh [--dry-run] [--message <text>]
-set -euo pipefail
+set -Eeuo pipefail
 
 dry_run=false
 message=""
@@ -21,6 +18,14 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
+# The Actions log and summary are public, and EAS, npx and jq output can carry the ad hoc
+# profile's device UDIDs and names, build and update IDs, and build or IPA links. There, all of
+# it is hidden and only values this script checked are printed.
+if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+  exec 2>/dev/null
+  trap 'echo "::error::fork-ios-preview.sh failed at line $LINENO (exit $?). Tool output is hidden on public CI; run the script by hand to see why."' ERR
+fi
+
 cd "$(dirname "$0")/../../apps/mobile"
 message="${message:-$(git log -1 --format='%h %s')}"
 
@@ -32,16 +37,7 @@ export T3CODE_EAS_PROJECT_ID=96c0c3a4-8096-4562-a5b4-efafb55415c6
 export APP_VARIANT=preview
 project_url="https://expo.dev/accounts/amartya18/projects/t3-code"
 
-# Callers parse stdout with --json; eas prints its progress, links and errors on stderr.
-eas() {
-  if [[ -z "${GITHUB_ACTIONS:-}" ]]; then
-    npx --yes eas-cli@latest "$@"
-    return
-  fi
-  { npx --yes eas-cli@latest "$@" 2>&1 1>&3 3>&- | sed -E \
-    -e 's#[a-z]+://[^[:space:]"]+#[link hidden]#g' \
-    -e 's#[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}#[id hidden]#g' >&2; } 3>&1
-}
+eas() { npx --yes eas-cli@27.11.0 "$@"; }
 
 report() {
   echo "$1"
@@ -50,7 +46,7 @@ report() {
 
 # Same inputs as the cloud build: eas.json's preview profile builds with the preview environment.
 runtime="$(eas env:exec --non-interactive preview "npx expo-updates fingerprint:generate --platform ios" \
-  | sed -n '/^{/,$p' | jq -er '.hash | select(type == "string" and length > 0)')"
+  | sed -n '/^{/,$p' | jq -er '.hash | select(type == "string" and test("^[0-9a-f]{40}$"))')"
 echo "iOS fingerprint: $runtime"
 
 # A queued or running build counts: it ships this fingerprint, so a second one would be waste.
@@ -69,10 +65,12 @@ if [[ -n "$build_status" ]]; then
   group="$(jq -r .group <<< "$update")"
   published_runtime="$(jq -r .runtimeVersion <<< "$update")"
   if [[ "$published_runtime" != "$runtime" ]]; then
-    echo "::error::The update targets runtime $published_runtime, not $runtime, so the preview build will not load it." >&2
+    echo "::error::The update targets another runtime than $runtime, so the preview build will not load it."
     exit 1
   fi
-  report "iOS preview: published update [$group]($project_url/updates/$group) for runtime $runtime. Force-quit and reopen the app twice to load it."
+  published="published an update"
+  if [[ -z "${GITHUB_ACTIONS:-}" ]]; then published="published update [$group]($project_url/updates/$group)"; fi
+  report "iOS preview: $published for runtime $runtime. Force-quit and reopen the app twice to load it."
 else
   echo "No preview build has this fingerprint: starting one."
   started="Native code changed: started a new iOS preview build. Install it from the Expo dashboard (t3-code → Builds)."
