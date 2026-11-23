@@ -70,8 +70,10 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+d", command: "terminal.split", when: "terminalFocus" },
   { key: "mod+shift+d", command: "terminal.splitVertical", when: "terminalFocus" },
   { key: "mod+shift+d", command: "composer.dictation", when: "!terminalFocus" },
-  // Fork-only: the desktop registers this one system-wide, so it has no `when`.
-  { key: "alt+shift+m", command: "markMode.toggle" },
+  // Fork-only: the desktop registers these system-wide. ⌥⇧M would block typing "Â" on a Mac, and
+  // Ctrl+Alt chords collide with AltGr elsewhere.
+  { key: "ctrl+alt+meta+m", command: "markMode.toggle", when: "isMac" },
+  { key: "alt+shift+m", command: "markMode.toggle", when: "!isMac" },
   { key: "mod+n", command: "terminal.new", when: "terminalFocus" },
   { key: "mod+w", command: "terminal.close", when: "terminalFocus" },
   { key: "mod+w", command: "rightPanel.close", when: "!terminalFocus" },

@@ -13,6 +13,10 @@ actions menu. **Reset to default** brings it back.
 Dictation**, and the hold or toggle behavior in **Settings → Voice**. See
 [Voice input](./voice-input.md).
 
+In the desktop app, ⌃⌥⌘M on a Mac (`ctrl+alt+meta+m`) and `alt+shift+m` elsewhere
+start Mark Mode from any app and finish it on the next press. Change it under
+**Mark Mode: Start or Finish**; the new chord also works while other apps are in front.
+
 In **Settings → Chat → Send shortcut**, choose whether Enter sends, requires
 `mod+Enter` for multiline prompts, or always requires `mod+Enter`. `Shift+Enter`
 inserts a new line. This applies to the web and desktop composer at desktop widths.
@@ -128,13 +132,14 @@ Join modifiers and a key with `+`, such as `mod+shift+d` or `ctrl+l`.
 
 Available context keys are `terminalFocus`, `terminalOpen`, `previewFocus`,
 `previewOpen`, `rightPanelOpen`, `modelPickerOpen`, `usagePageOpen`, `composerFocus`,
-`draftThreadRoute`, `turnRunning`, `editableFocus`, `isWeb`, and `isDesktop`.
+`draftThreadRoute`, `turnRunning`, `editableFocus`, `isWeb`, `isDesktop`, and `isMac`.
 In a thread, `rightPanelOpen` is true while its right panel is open; the default
 `mod+t` uses it to open the panel's new-tab menu.
 `draftThreadRoute` is true on a draft thread, including a restored draft, until it is first sent.
 `editableFocus` is true while a text field, the composer, or another editor has
 the keyboard. `isWeb` is true in a browser tab. `isDesktop` is true in the
-desktop app. Unknown keys evaluate to `false`.
+desktop app. `isMac` is true when the device you are using is a Mac, even if the
+server is not. Unknown keys evaluate to `false`.
 
 `mod+1` through `mod+9` jump to the first nine threads, and to models while the
 model picker is open. The thread jumps do not run while the model picker is open.

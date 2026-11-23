@@ -188,6 +188,7 @@ const PROPER_NOUNS = [
   "Cmd",
   "Ctrl",
   "Esc",
+  "Meta",
   "Shift",
   "PageUp",
   "PageDown",
