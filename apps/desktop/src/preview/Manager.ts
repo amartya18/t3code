@@ -35,6 +35,7 @@ import {
   app,
   type Session,
   clipboard,
+  dialog,
   nativeImage,
   shell,
   webContents,
@@ -2221,6 +2222,25 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
                 if (!isPrimaryModifierShortcut(input, hostPlatform, "w")) return;
                 event.preventDefault();
                 window.close();
+              });
+              // Without an answer a page's beforeunload silently cancels every close and navigation.
+              contents.on("will-prevent-unload", (event) => {
+                const options: Electron.MessageBoxOptions = {
+                  type: "question",
+                  buttons: [m(msg("Leave")), m(msg("Stay"))],
+                  // Enter typed into the page must not discard its changes.
+                  defaultId: 1,
+                  cancelId: 1,
+                  noLink: true,
+                  message: m(msg("Leave site?")),
+                  detail: m(msg("Changes you made may not be saved.")),
+                };
+                // On Windows a box owned by its window can block that window's input until it closes.
+                const response =
+                  hostPlatform === "win32"
+                    ? dialog.showMessageBoxSync(options)
+                    : dialog.showMessageBoxSync(window, options);
+                if (response === 0) event.preventDefault();
               });
               guestContextMenu(window, contents);
             },
