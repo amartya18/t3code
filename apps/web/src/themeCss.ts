@@ -7,6 +7,7 @@ import { themeCssValueFetches } from "@t3tools/shared/themeCss";
 
 let themeSheet: CSSStyleSheet | null = null;
 let appliedCss = "";
+const themeCssListeners = new Set<() => void>();
 
 type RuleParent = Pick<CSSStyleSheet, "cssRules" | "deleteRule">;
 
@@ -61,4 +62,13 @@ export function applyThemeCss(css: string | undefined): void {
   }
   themeSheet.replaceSync(next);
   stripFetches(themeSheet);
+  for (const listener of themeCssListeners) listener();
+}
+
+/** Runs `listener` after each change to the theme CSS in the document's adopted sheets. */
+export function subscribeToThemeCss(listener: () => void): () => void {
+  themeCssListeners.add(listener);
+  return () => {
+    themeCssListeners.delete(listener);
+  };
 }

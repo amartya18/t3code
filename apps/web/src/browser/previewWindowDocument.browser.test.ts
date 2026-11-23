@@ -1,5 +1,7 @@
 import { expect, it, vi } from "vite-plus/test";
 
+import { applyThemeCss } from "~/themeCss";
+
 import { preparePreviewWindowDocument } from "./previewWindowDocument";
 
 function setup() {
@@ -28,10 +30,12 @@ it("keeps the app's styles and theme in the window's document, ahead of its rese
   link.href = "/assets/app.css";
   source.head.append(link);
   source.documentElement.className = "dark";
+  // The app's own styles, then the theme's adopted CSS (none here), then the reset.
+  const appStyles = () => mirroredStyles().slice(0, -2);
   const reset = (styles: ReadonlyArray<string | null>) => styles.at(-1);
 
   const popup = prepare();
-  expect(mirroredStyles().slice(0, -1)).toEqual([".a { color: red; }", "/assets/app.css"]);
+  expect(appStyles()).toEqual([".a { color: red; }", "/assets/app.css"]);
   expect(reset(mirroredStyles())).toContain("background: transparent");
   expect(target.documentElement.className).toBe("dark");
 
@@ -42,7 +46,7 @@ it("keeps the app's styles and theme in the window's document, ahead of its rese
   source.documentElement.className = "light";
   source.documentElement.style.setProperty("--background", "white");
   await vi.waitFor(() =>
-    expect(mirroredStyles().slice(0, -1)).toEqual([".a { color: blue; }", ".b { color: green; }"]),
+    expect(appStyles()).toEqual([".a { color: blue; }", ".b { color: green; }"]),
   );
   expect(reset(mirroredStyles())).toContain("background: transparent");
   expect(target.documentElement.className).toBe("light");
@@ -70,4 +74,21 @@ it("reports a menu or tooltip open while one is portaled into the window", async
   await vi.waitFor(() => expect(overlay).toHaveBeenLastCalledWith(false));
   expect(overlay).toHaveBeenCalledTimes(2);
   popup.dispose();
+});
+
+it("keeps an imported or agent theme's CSS, which no element carries, ahead of the reset", () => {
+  using _css = { [Symbol.dispose]: () => applyThemeCss(undefined) };
+  const target = document.implementation.createHTMLDocument("");
+  const ownStyles = () =>
+    Array.from(target.head.querySelectorAll("style"), (style) => style.textContent);
+  applyThemeCss(".theme-probe { color: red; }");
+
+  const popup = preparePreviewWindowDocument(target, document, vi.fn());
+  expect(ownStyles().at(-2)).toBe(".theme-probe { color: red; }");
+  applyThemeCss(".theme-probe { color: blue; }");
+  expect(ownStyles().at(-2)).toBe(".theme-probe { color: blue; }");
+
+  popup.dispose();
+  applyThemeCss(".theme-probe { color: green; }");
+  expect(ownStyles().at(-2)).toBe(".theme-probe { color: blue; }");
 });

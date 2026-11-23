@@ -1,5 +1,7 @@
 import { DESKTOP_PREVIEW_WINDOW_BAR_HEIGHT } from "@t3tools/contracts";
 
+import { subscribeToThemeCss } from "~/themeCss";
+
 const STYLE_SELECTOR = 'style, link[rel~="stylesheet"]';
 
 export interface PreviewWindowDocument {
@@ -38,6 +40,16 @@ export function preparePreviewWindowDocument(
     "html, body { margin: 0; overflow: hidden; background: transparent !important; }";
   target.head.replaceChildren(base, reset);
 
+  // Imported and agent themes are adopted sheets, which no element carries. Their rules come
+  // already stripped of anything that fetches.
+  const adopted = target.createElement("style");
+  const syncAdopted = () => {
+    const css = source.adoptedStyleSheets
+      .flatMap((sheet) => Array.from(sheet.cssRules, (rule) => rule.cssText))
+      .join("\n");
+    if (adopted.textContent !== css) adopted.textContent = css;
+  };
+
   const clones = new Map<Element, Element>();
   const syncStyles = () => {
     const originals = Array.from(source.head.querySelectorAll(STYLE_SELECTOR));
@@ -60,9 +72,12 @@ export function preparePreviewWindowDocument(
       if (previous.nextElementSibling !== clone) previous.after(clone);
       previous = clone;
     }
+    // Adopted sheets order after the document's own.
+    if (previous.nextElementSibling !== adopted) previous.after(adopted);
   };
   const syncRoot = () => syncAttributes(source.documentElement, target.documentElement);
   syncStyles();
+  syncAdopted();
   syncRoot();
 
   const root = target.createElement("div");
@@ -84,6 +99,7 @@ export function preparePreviewWindowDocument(
   rootObserver.observe(source.documentElement, { attributes: true });
   const overlayObserver = new MutationObserver(syncOverlay);
   overlayObserver.observe(overlays, { childList: true });
+  const unsubscribeTheme = subscribeToThemeCss(syncAdopted);
 
   return {
     root,
@@ -92,6 +108,7 @@ export function preparePreviewWindowDocument(
       styleObserver.disconnect();
       rootObserver.disconnect();
       overlayObserver.disconnect();
+      unsubscribeTheme();
     },
   };
 }
