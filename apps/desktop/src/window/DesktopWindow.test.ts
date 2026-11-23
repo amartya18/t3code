@@ -1,7 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
-import { DesktopSnapShotId } from "@t3tools/contracts";
+import { DESKTOP_PREVIEW_WINDOW_RETURN_URL, DesktopSnapShotId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -367,6 +367,7 @@ function layerTest(input: {
         Layer.mock(PreviewManager.PreviewManager)({
           getBrowserSession: () => Effect.succeed({} as Electron.Session),
           setMainWindow: input.setPreviewMainWindow ?? (() => Effect.void),
+          setGuestContextMenu: () => Effect.void,
           prepareWebview: () => Effect.void,
           isBrowserPartition: (partition) => partition.startsWith("persist:t3code-preview-"),
           getBrowserPartition: () => Effect.succeed("persist:t3code-preview-test"),
@@ -479,6 +480,7 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
           Layer.mock(PreviewManager.PreviewManager)({
             getBrowserSession: () => Effect.succeed({} as Electron.Session),
             setMainWindow: () => Effect.void,
+            setGuestContextMenu: () => Effect.void,
             isBrowserPartition: (partition) => partition.startsWith("persist:t3code-preview-"),
             getBrowserPartition: () => Effect.succeed("persist:t3code-preview-test"),
           }),
@@ -1452,7 +1454,7 @@ describe("DesktopWindow", () => {
     },
     { primaryPasteEnabled: true, expected: [PASSKEY_BRIDGE_ARGUMENT] },
   ])(
-    "passes the primary-paste setting to preview guests (enabled: $primaryPasteEnabled)",
+    "prepares preview guests (primary paste enabled: $primaryPasteEnabled)",
     ({ primaryPasteEnabled, expected }) =>
       Effect.gen(function* () {
         const fakeWindow = makeFakeBrowserWindow();
@@ -1473,11 +1475,15 @@ describe("DesktopWindow", () => {
             return yield* Effect.die("will-attach-webview listener was not registered");
           }
           const webPreferences: Electron.WebPreferences = {};
-          willAttachWebview({ preventDefault: () => {} }, webPreferences, {
+          const params = {
             partition: "persist:t3code-preview-test",
-          });
+            src: DESKTOP_PREVIEW_WINDOW_RETURN_URL,
+          };
+          willAttachWebview({ preventDefault: () => {} }, webPreferences, params);
 
           assert.deepEqual(webPreferences.additionalArguments, expected);
+          // A tab coming back from its window attaches empty so its history can be restored.
+          assert.equal(params.src, "");
         }).pipe(Effect.provide(layer));
       }),
   );

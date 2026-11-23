@@ -298,6 +298,16 @@ const closePictureInPicture = tabMethod(
   "desktop.ipc.preview.closePictureInPicture",
   (manager, tabId) => manager.closePictureInPicture(tabId),
 );
+const openWindow = tabMethod(
+  IpcChannels.PREVIEW_WINDOW_OPEN_CHANNEL,
+  "desktop.ipc.preview.openWindow",
+  (manager, tabId) => manager.openWindow(tabId),
+);
+const closeWindow = tabMethod(
+  IpcChannels.PREVIEW_WINDOW_CLOSE_CHANNEL,
+  "desktop.ipc.preview.closeWindow",
+  (manager, tabId) => manager.closeWindow(tabId),
+);
 
 const clearCookies = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_CLEAR_COOKIES_CHANNEL,
@@ -583,6 +593,8 @@ export const methods = [
   copyArtifactToClipboard,
   openPictureInPicture,
   closePictureInPicture,
+  openWindow,
+  closeWindow,
   startRecording,
   stopRecording,
   saveRecording,

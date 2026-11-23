@@ -611,6 +611,8 @@ export interface DesktopPreviewTabState {
   canGoForward: boolean;
   zoomFactor: number;
   pictureInPicture: boolean;
+  /** The page lives in its own OS window instead of the panel's webview. */
+  inWindow: boolean;
   colorScheme: DesktopPreviewColorScheme;
   audioMuted: boolean;
   /** Chromium reports playback even when audioMuted is true. */
@@ -1227,6 +1229,9 @@ export interface DesktopBridge {
 /** Renderer callback invoked by Electron with a fresh user gesture before display-media capture. */
 export const DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER = "__t3DesktopPreviewRecordingCapture";
 
+/** A webview `src` the desktop attaches as an empty guest, so a tab's window history can be restored into it. */
+export const DESKTOP_PREVIEW_WINDOW_RETURN_URL = "about:blank#t3-preview-window-return";
+
 /**
  * Dictation for the annotation editor drawn inside a preview guest. The guest only shows
  * controls and forwards trusted user gestures; the renderer records, with its consent
@@ -1374,6 +1379,12 @@ export interface DesktopPreviewBridge {
   revealArtifact: (path: string) => Promise<void>;
   copyArtifactToClipboard: (path: string) => Promise<void>;
   pictureInPicture: {
+    open: (tabId: string) => Promise<void>;
+    close: (tabId: string) => Promise<void>;
+  };
+  /** Moves the live page into a normal OS window; closing it brings the page back with its history. */
+  window: {
+    /** Opens the window, or shows and focuses it when it is already open. */
     open: (tabId: string) => Promise<void>;
     close: (tabId: string) => Promise<void>;
   };

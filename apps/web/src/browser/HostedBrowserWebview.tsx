@@ -1,7 +1,8 @@
-import type {
-  DesktopPreviewColorScheme,
-  PreviewViewportSetting,
-  ScopedThreadRef,
+import {
+  type DesktopPreviewColorScheme,
+  DESKTOP_PREVIEW_WINDOW_RETURN_URL,
+  type PreviewViewportSetting,
+  type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { useShallow } from "zustand/react/shallow";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
@@ -58,6 +59,8 @@ export function HostedBrowserWebview(props: {
   readonly initialUrl: string | null;
   readonly viewport: PreviewViewportSetting;
   readonly pictureInPicture: boolean;
+  /** The page lives in its own desktop window, so this host renders no guest. */
+  readonly inWindow: boolean;
   /** Fixed for the tab lifetime; Electron reads partition before guest attachment. */
   readonly profileId: string | undefined;
   readonly zoomFactor: number;
@@ -74,6 +77,7 @@ export function HostedBrowserWebview(props: {
     initialUrl,
     viewport,
     pictureInPicture,
+    inWindow,
     zoomFactor,
     profileId,
     serverDriven = false,
@@ -140,8 +144,17 @@ export function HostedBrowserWebview(props: {
 
   const [webviewGeneration, setWebviewGeneration] = useState(0);
   const [recoverySrc, setRecoverySrc] = useState(initialSrc);
+  // A page back from its window gets an empty guest that restores the window's history.
+  const [previousInWindow, setPreviousInWindow] = useState(inWindow);
+  if (previousInWindow !== inWindow) {
+    setPreviousInWindow(inWindow);
+    if (!inWindow) {
+      setRecoverySrc(DESKTOP_PREVIEW_WINDOW_RETURN_URL);
+      setWebviewGeneration((generation) => generation + 1);
+    }
+  }
   const active = presentation.visible && presentation.rect !== null;
-  const shown = active || pictureInPicture;
+  const shown = active || pictureInPicture || inWindow;
   const reportedShown = useEffectEvent(() => serverDriven && shown);
   const remountCrashedWebview = useEffectEvent(() => {
     setRecoverySrc(initialUrl ?? initialSrc);
@@ -315,7 +328,7 @@ export function HostedBrowserWebview(props: {
   }, [clientSettingsHydrated, runtimeTabId, serverDriven, shown]);
 
   // Captures copy the guest's raster, which a scaled guest only keeps at full detail on request.
-  const fullDetail = backgroundActivity || pictureInPicture || recordingActive;
+  const fullDetail = backgroundActivity || pictureInPicture || recordingActive || inWindow;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tells the desktop host once the guest is drawn at full detail, so its screenshot waits for that frame
   useEffect(() => {
     const bridge = window.desktopBridge?.preview;
@@ -383,45 +396,47 @@ export function HostedBrowserWebview(props: {
             transformStyle: viewportTransform && fullDetail ? "preserve-3d" : undefined,
           }}
         >
-          <webview
-            key={webviewGeneration}
-            ref={setWebviewRef}
-            // Electron needs allowpopups at attachment. React drops boolean values for unknown attributes.
-            {...({ allowpopups: "true" } as unknown as { readonly allowpopups?: boolean })}
-            src={webviewGeneration === 0 ? initialSrc : recoverySrc}
-            partition={config.partition}
-            webpreferences={config.webPreferences}
-            {...(config.preloadUrl ? { preload: config.preloadUrl } : {})}
-            data-preview-tab={runtimeTabId}
-            data-preview-server-tab={tabId}
-            data-preview-viewport-mode={effectiveViewport._tag}
-            data-preview-viewport-key={browserViewportSettingKey(effectiveViewport)}
-            data-preview-css-width={
-              fittedSourceViewport
-                ? fittedSourceViewport.width
-                : effectiveViewport._tag === "fill"
-                  ? Math.max(1, Math.round(layout.viewportWidth / layoutZoomFactor))
-                  : effectiveViewport.width
-            }
-            data-preview-css-height={
-              fittedSourceViewport
-                ? fittedSourceViewport.height
-                : effectiveViewport._tag === "fill"
-                  ? Math.max(1, Math.round(layout.viewportHeight / layoutZoomFactor))
-                  : effectiveViewport.height
-            }
-            aria-hidden={active ? undefined : true}
-            className={cn(
-              "absolute top-0 left-0 flex overflow-hidden bg-white",
-              active && !layout.fillsPanel && "ring-1 ring-border/70 shadow-sm",
-            )}
-            style={{
-              width: layout.viewportWidth / layout.viewportScale,
-              height: layout.viewportHeight / layout.viewportScale,
-              transform: viewportTransform,
-              transformOrigin: "top left",
-            }}
-          />
+          {inWindow ? null : (
+            <webview
+              key={webviewGeneration}
+              ref={setWebviewRef}
+              // Electron needs allowpopups at attachment. React drops boolean values for unknown attributes.
+              {...({ allowpopups: "true" } as unknown as { readonly allowpopups?: boolean })}
+              src={webviewGeneration === 0 ? initialSrc : recoverySrc}
+              partition={config.partition}
+              webpreferences={config.webPreferences}
+              {...(config.preloadUrl ? { preload: config.preloadUrl } : {})}
+              data-preview-tab={runtimeTabId}
+              data-preview-server-tab={tabId}
+              data-preview-viewport-mode={effectiveViewport._tag}
+              data-preview-viewport-key={browserViewportSettingKey(effectiveViewport)}
+              data-preview-css-width={
+                fittedSourceViewport
+                  ? fittedSourceViewport.width
+                  : effectiveViewport._tag === "fill"
+                    ? Math.max(1, Math.round(layout.viewportWidth / layoutZoomFactor))
+                    : effectiveViewport.width
+              }
+              data-preview-css-height={
+                fittedSourceViewport
+                  ? fittedSourceViewport.height
+                  : effectiveViewport._tag === "fill"
+                    ? Math.max(1, Math.round(layout.viewportHeight / layoutZoomFactor))
+                    : effectiveViewport.height
+              }
+              aria-hidden={active ? undefined : true}
+              className={cn(
+                "absolute top-0 left-0 flex overflow-hidden bg-white",
+                active && !layout.fillsPanel && "ring-1 ring-border/70 shadow-sm",
+              )}
+              style={{
+                width: layout.viewportWidth / layout.viewportScale,
+                height: layout.viewportHeight / layout.viewportScale,
+                transform: viewportTransform,
+                transformOrigin: "top left",
+              }}
+            />
+          )}
         </div>
         {active && effectiveViewport._tag !== "fill" && !fittedSourceViewport ? (
           <>

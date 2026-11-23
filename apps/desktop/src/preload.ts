@@ -500,6 +500,10 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       close: (tabId) =>
         ipcRenderer.invoke(IpcChannels.PREVIEW_PICTURE_IN_PICTURE_CLOSE_CHANNEL, { tabId }),
     },
+    window: {
+      open: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_WINDOW_OPEN_CHANNEL, { tabId }),
+      close: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_WINDOW_CLOSE_CHANNEL, { tabId }),
+    },
     recording: {
       onInput: (listener) => {
         const wrappedListener = (_event: Electron.IpcRendererEvent, event: unknown) => {
