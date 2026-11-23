@@ -636,6 +636,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   // History the tab's next contents restore, moving into its window or back to the panel.
   // A window's close event also records it, outside the lock.
   const pendingNavigations = new Map<string, NavigationSnapshot>();
+  // Chromium drops the debugger while a closing window unloads; reattaching restarts the close.
+  const closingWindowContentsIds = new Set<number>();
   let guestContextMenu: GuestContextMenu = () => {};
   // Legacy tab capture is unsupported (electron/electron#44618); recording uses setDisplayMediaRequestHandler.
   let pendingRecording: PendingRecording | null = null;
@@ -1089,12 +1091,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       > => {
         const existing = sessions.get(wc.id);
         if (existing) return Effect.succeed([existing, sessions] as const);
-        if (wc.isDestroyed()) {
+        if (wc.isDestroyed() || closingWindowContentsIds.has(wc.id)) {
           return Effect.fail(
             new PreviewOperationError({
               operation: "ensureControlSession",
               webContentsId: wc.id,
-              cause: new Error("WebContents was destroyed"),
+              cause: new Error(
+                wc.isDestroyed() ? "WebContents was destroyed" : "Preview window is closing",
+              ),
             }),
           );
         }
@@ -2146,6 +2150,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   ) {
     if (windowSessions.get(tabId) !== session) return;
     windowSessions.delete(tabId);
+    closingWindowContentsIds.delete(session.webContentsId);
     const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
     const owned = tab?.webContentsId === session.webContentsId;
     if (owned) {
@@ -2224,6 +2229,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               // `closed` is too late to read history: the contents are gone by then.
               window.on("close", () => {
                 if (windowSessions.get(tabId) !== session || contents.isDestroyed()) return;
+                closingWindowContentsIds.add(contents.id);
                 pendingNavigations.set(tabId, readNavigation(contents));
               });
               window.once("closed", () => {
@@ -2256,7 +2262,17 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
                   hostPlatform === "win32"
                     ? dialog.showMessageBoxSync(options)
                     : dialog.showMessageBoxSync(window, options);
-                if (response === 0) event.preventDefault();
+                if (response === 0) {
+                  event.preventDefault();
+                } else if (closingWindowContentsIds.delete(contents.id)) {
+                  // The page stays open; give back a session Chromium may have dropped meanwhile.
+                  runFork(
+                    Effect.gen(function* () {
+                      if ((yield* SynchronizedRef.get(controlSessionsRef)).has(contents.id)) return;
+                      yield* restoreControlSession(tabId, contents);
+                    }),
+                  );
+                }
               });
               guestContextMenu(window, contents);
             },

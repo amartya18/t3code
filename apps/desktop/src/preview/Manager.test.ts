@@ -626,6 +626,8 @@ const makeTestNavigableWebContents = (
     renderer.resolve();
     restored.notify();
   });
+  const attach = vi.fn();
+  const detachListeners = new Set<() => void>();
   const wc = Object.assign(
     makeTestPreviewWebContents(async () => makeStillImage(), id),
     {
@@ -636,11 +638,15 @@ const makeTestNavigableWebContents = (
       isDevToolsOpened: () => false,
       debugger: {
         isAttached: () => false,
-        attach: vi.fn(),
+        attach,
         detach: vi.fn(),
         sendCommand: vi.fn(() => renderer.promise),
-        on: vi.fn(),
-        off: vi.fn(),
+        on: (event: string, listener: () => void) => {
+          if (event === "detach") detachListeners.add(listener);
+        },
+        off: (event: string, listener: () => void) => {
+          if (event === "detach") detachListeners.delete(listener);
+        },
       },
       navigationHistory: {
         canGoBack: () => navigation.index > 0,
@@ -651,7 +657,11 @@ const makeTestNavigableWebContents = (
       },
     },
   );
-  return { wc: wc as unknown as Electron.WebContents, restore };
+  /** Chromium dropping the debugger without a detach() call, as it does while a page unloads. */
+  const chromiumDetach = () => {
+    for (const listener of Array.from(detachListeners)) listener();
+  };
+  return { wc: wc as unknown as Electron.WebContents, restore, attach, chromiumDetach };
 };
 
 const makeTestPreviewWindow = (contents: Electron.WebContents) => {
@@ -671,7 +681,7 @@ const makeTestPreviewWindow = (contents: Electron.WebContents) => {
     isMinimized: () => false,
     show: vi.fn(),
     focus: vi.fn(),
-    /** A page's beforeunload kept the window open. */
+    /** The close event without `closed`: the page is still unloading, or its beforeunload kept it open. */
     cancelClose: () => emit("close"),
     close: vi.fn(() => {
       if (destroyed) return;
@@ -3434,6 +3444,40 @@ describe("PreviewManager", () => {
         yield* restored.until(() => returned.restore.mock.calls.length > 0);
         expect(returned.restore).toHaveBeenCalledWith(windowHistory);
         expect(states.at(-1)).toMatchObject({ webContentsId: 43, inWindow: false });
+      }),
+    ),
+  );
+
+  // Reattaching while the page unloads restarted the close, so the window never closed and main ran away.
+  effectIt.effect("leaves a closing window's dropped debugger detached", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const restored = makeChangeSignal();
+        const history = { entries: [{ url: "https://example.com/a", title: "A" }], index: 0 };
+        const guest = makeTestNavigableWebContents(44, history, restored);
+        const windowContents = makeTestNavigableWebContents(78, history, restored, "window", {
+          empty: true,
+        });
+        const contentsById = new Map([guest, windowContents].map(({ wc }) => [wc.id, wc]));
+        fromId.mockImplementation((id) =>
+          id === undefined ? null : (contentsById.get(id) ?? null),
+        );
+        const window = makeTestPreviewWindow(windowContents.wc);
+        browserWindowConstructor.mockImplementation(function () {
+          return window;
+        });
+        yield* manager.createTab("tab_window_closing");
+        yield* manager.registerWebview("tab_window_closing", 44);
+        yield* manager.openWindow("tab_window_closing");
+        yield* restored.until(() => windowContents.restore.mock.calls.length > 0);
+        const attaches = windowContents.attach.mock.calls.length;
+        expect(attaches).toBeGreaterThan(0);
+
+        window.cancelClose();
+        windowContents.chromiumDetach();
+        yield* Effect.yieldNow;
+
+        expect(windowContents.attach).toHaveBeenCalledTimes(attaches);
       }),
     ),
   );
