@@ -311,8 +311,6 @@ jobs:
     continue-on-error: true
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    env:
-      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -326,5 +324,6 @@ jobs:
 
       - name: Update or build the iOS preview app
         env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           TAG: ${{ needs.resolve.outputs.tag }}
         run: .github/scripts/fork-ios-preview.sh --message "$TAG ($(git rev-parse --short HEAD))"
