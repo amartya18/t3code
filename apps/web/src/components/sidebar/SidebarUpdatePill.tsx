@@ -171,24 +171,29 @@ export async function downloadLocalUpdate(
   }
 }
 
-/** Returns only when the update did not install; otherwise the app quits first. */
 export async function installLocalUpdate(
   bridge: DesktopBridge,
   reportError: ReportLocalUpdateError = toastUpdateError,
   expectedVersion?: string,
-): Promise<void> {
+): Promise<boolean> {
   try {
-    const outcome = await installDesktopUpdate(bridge, expectedVersion);
-    if (outcome.status === "refused") {
-      showDesktopUpdateDownloadedToast(bridge, outcome.state);
-      return;
+    const result = await installDesktopUpdate(bridge, expectedVersion);
+    if (!result.accepted) {
+      showDesktopUpdateDownloadedToast(bridge, result.state);
+      return false;
     }
-    reportError(m(msg("Could not install update")), outcome.message);
+    const actionError = shouldToastDesktopUpdateActionResult(result)
+      ? getDesktopUpdateActionError(result)
+      : null;
+    if (!actionError) return true;
+    reportError(m(msg("Could not install update")), actionError);
+    return false;
   } catch (error) {
     reportError(
       m(msg("Could not install update")),
       thrownErrorMessage(error, m) ?? m(msg("An unexpected error occurred.")),
     );
+    return false;
   }
 }
 
@@ -440,6 +445,7 @@ function SidebarUpdateControl() {
       <SidebarMenuItem className="@container/sidebar-update ml-auto flex min-w-8 flex-1">
         <SidebarUpdateCapsule
           run={run}
+          current={everything.machines}
           local={local}
           icon={statusIcon}
           {...(run.localVersion === null && action === "install" && window.desktopBridge
@@ -452,8 +458,9 @@ function SidebarUpdateControl() {
                     failures: [],
                     restarting: [],
                   });
-                  await installLocalUpdate(window.desktopBridge!);
-                  clearSavedUpdateEverythingResult();
+                  if (!(await installLocalUpdate(window.desktopBridge!))) {
+                    clearSavedUpdateEverythingResult();
+                  }
                 },
               }
             : {})}
