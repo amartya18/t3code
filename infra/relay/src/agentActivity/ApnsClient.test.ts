@@ -20,7 +20,7 @@ import * as ApnsClient from "./ApnsClient.ts";
 import {
   sanitizeAgentActivityAggregateState,
   sanitizeApnsNotificationPayload,
-} from "./agentActivityPayloads.ts";
+} from "@t3tools/shared/agentActivityPayloads";
 import * as ApnsProviderTokens from "./ApnsProviderTokens.ts";
 
 const layerTest = ApnsClient.layer.pipe(

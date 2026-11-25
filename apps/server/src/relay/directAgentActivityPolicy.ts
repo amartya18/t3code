@@ -1,23 +1,20 @@
 // The server-side twin of the relay's delivery choice (infra/relay ApnsDeliveries.chooseDelivery
 // and ApnsClient's request builders), for forks that push with their own APNs key. The pure
-// aggregate, alert and payload rules are imported from the relay so both stay identical.
+// aggregate, alert and payload rules live in @t3tools/shared so both stay identical.
 import type { PushDeviceRegistration } from "@t3tools/contracts";
 import type {
   RelayAgentActivityAggregateState,
   RelayAgentActivityState,
 } from "@t3tools/contracts/relay";
 
-import {
-  makeAggregateState,
-  statusForPhase,
-} from "../../../../infra/relay/src/agentActivity/agentActivityAggregate.ts";
+import { makeAggregateState, statusForPhase } from "@t3tools/shared/agentActivityAggregate";
 import {
   alertForAttentionTransition,
   alertForNewlyTerminal,
   rowPhasesChanged,
   shouldAlertForActivity,
   type AgentActivityAlert,
-} from "../../../../infra/relay/src/agentActivity/agentActivityAlerts.ts";
+} from "@t3tools/shared/agentActivityAlerts";
 import {
   isExpiredAgentActivityState,
   isTerminalPhase,
@@ -25,10 +22,10 @@ import {
   notificationForActivity,
   sanitizeAgentActivityAggregateState,
   truncateText,
-} from "../../../../infra/relay/src/agentActivity/agentActivityPayloads.ts";
+} from "@t3tools/shared/agentActivityPayloads";
 
 export { makeAggregateState, isExpiredAgentActivityState, isTerminalPhase };
-export { TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS } from "../../../../infra/relay/src/agentActivity/agentActivityAggregate.ts";
+export { TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS } from "@t3tools/shared/agentActivityAggregate";
 
 const MIN_LIVE_ACTIVITY_UPDATE_INTERVAL_MS = 15_000;
 const FRESHLY_ARMED_GRACE_MS = 2 * 60 * 1_000;
