@@ -6,6 +6,7 @@ import {
   DesktopPreviewRecordingInputSchema,
   DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER,
   DESKTOP_PREVIEW_WINDOW_BAR_HEIGHT,
+  DESKTOP_PREVIEW_WINDOW_RETURN_URL,
   desktopPreviewWindowTabId,
 } from "@t3tools/contracts";
 import type {
@@ -147,6 +148,8 @@ const CAPTURE_PAGE_RETRY_ATTEMPTS = 3;
 const CAPTURE_PAGE_RETRY_DELAY_MS = 120;
 const CAPTURE_PAGE_ATTEMPT_TIMEOUT_MS = 1_000;
 const BUSY_PAGE_PROBE_MS = 1_000;
+// A restore that commits nothing by then is given up for a plain load of its page.
+const RESTORE_NAVIGATION_TIMEOUT_MS = 5_000;
 const PICTURE_IN_PICTURE_INITIAL_WIDTH = 480;
 const PICTURE_IN_PICTURE_INITIAL_HEIGHT = 320;
 const PICTURE_IN_PICTURE_MIN_WIDTH = 240;
@@ -537,6 +540,9 @@ export const previewWindowOpenAction = (details: {
     ? "new-tab"
     : "navigate";
 };
+
+const showsPage = (url: string): boolean =>
+  url !== "" && url !== "about:blank" && url !== DESKTOP_PREVIEW_WINDOW_RETURN_URL;
 
 const isPrimaryModifierShortcut = (
   input: Electron.Input,
@@ -2144,20 +2150,18 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
   });
 
-  // Restore throws on contents that already loaded a page; only empty contents need the fallback.
+  // Nothing else loads the contents a tab moves into, so a restore that commits no page (refused,
+  // hung, or left on a blank) falls back to loading the active entry.
   const restoreNavigation = Effect.fn("PreviewManager.restoreNavigation")(
     function* (tabId: string, wc: Electron.WebContents, navigation: NavigationSnapshot) {
-      const restored = yield* attemptPromise(
-        { operation: "restoreNavigation", tabId, webContentsId: wc.id },
-        () => wc.navigationHistory.restore(navigation),
-      ).pipe(
-        Effect.as(true),
-        Effect.orElseSucceed(() => false),
-      );
-      if (restored || wc.isDestroyed() || wc.getURL() !== "") return;
+      yield* attemptPromise({ operation: "restoreNavigation", tabId, webContentsId: wc.id }, () =>
+        wc.navigationHistory.restore(navigation),
+      ).pipe(Effect.timeout(RESTORE_NAVIGATION_TIMEOUT_MS), Effect.ignore);
+      const url = navigation.entries[navigation.index]?.url;
+      if (url === undefined || !showsPage(url) || wc.isDestroyed() || showsPage(wc.getURL()))
+        return;
       const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
-      if (tab?.webContentsId !== wc.id || tab.navStatus.kind === "Idle") return;
-      const { url } = tab.navStatus;
+      if (tab?.webContentsId !== wc.id) return;
       yield* attemptPromise(
         { operation: "restoreNavigation.loadUrl", tabId, webContentsId: wc.id },
         () => wc.loadURL(url),

@@ -6,6 +6,7 @@ import {
   type DesktopPreviewRecordingInputEvent,
   type PreviewAnnotationPayload,
   type PreviewAnnotationRect,
+  DESKTOP_PREVIEW_WINDOW_RETURN_URL,
   desktopPreviewWindowName,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -644,8 +645,9 @@ const makeTestEmitter = () => {
   return { on: vi.fn(on), once: vi.fn(once), off: vi.fn(off), emit };
 };
 
-// A page's contents with a navigation stack; `restored` notifies when a history restore starts.
-// Empty contents have no renderer until a restore loads a page, and CDP holds their commands until then.
+// A page's contents with a navigation stack; `restored` notifies when a history restore starts and
+// when a page commits. Empty contents have no renderer until they commit a page, and CDP holds
+// their commands until then.
 const makeTestNavigableWebContents = (
   id: number,
   navigation: { readonly entries: Electron.NavigationEntry[]; readonly index: number },
@@ -655,10 +657,17 @@ const makeTestNavigableWebContents = (
 ) => {
   const renderer = Promise.withResolvers<void>();
   if (!empty) renderer.resolve();
-  const restore = vi.fn(async (_options: Electron.RestoreOptions) => {
+  let url = empty ? "" : (navigation.entries[navigation.index]?.url ?? "");
+  /** The contents commit a page, which gives them a renderer. */
+  const commit = (committed: string) => {
+    url = committed;
     renderer.resolve();
     restored.notify();
-  });
+  };
+  const restore = vi.fn(async ({ entries, index = entries.length - 1 }: Electron.RestoreOptions) =>
+    commit(entries[index]?.url ?? ""),
+  );
+  const loadURL = vi.fn(async (loaded: string) => commit(loaded));
   const attach = vi.fn();
   const detachListeners = new Set<() => void>();
   const events = makeTestEmitter();
@@ -676,6 +685,8 @@ const makeTestNavigableWebContents = (
     makeTestPreviewWebContents(async () => makeStillImage(), id),
     {
       getType: () => type,
+      getURL: () => url,
+      loadURL,
       hostWebContents: null,
       session: { id: `session-${id}` },
       on: events.on,
@@ -702,7 +713,11 @@ const makeTestNavigableWebContents = (
         canGoForward: () => navigation.index < navigation.entries.length - 1,
         getAllEntries: () => navigation.entries,
         getActiveIndex: () => navigation.index,
-        restore,
+        restore: (options: Electron.RestoreOptions) => {
+          // After the call returns, so anything the caller races against the restore is armed.
+          queueMicrotask(restored.notify);
+          return restore(options);
+        },
       },
     },
   );
@@ -713,6 +728,8 @@ const makeTestNavigableWebContents = (
   return {
     wc: wc as unknown as Electron.WebContents,
     restore,
+    loadURL,
+    commit,
     attach,
     close,
     unload,
@@ -813,6 +830,7 @@ const makeTestPreviewWindow = (page: Electron.WebContents, opener = testAppFrame
 };
 
 type TestPreviewWindow = ReturnType<typeof makeTestPreviewWindow>;
+type TestNavigableWebContents = ReturnType<typeof makeTestNavigableWebContents>;
 
 /** The main renderer's `window.open` for a tab's own window; the manager builds it in the background. */
 const requestTestWindow = (
@@ -3618,6 +3636,66 @@ describe("PreviewManager", () => {
         yield* restored.until(() => returned.restore.mock.calls.length > 0);
         expect(returned.restore).toHaveBeenCalledWith(windowHistory);
         expect(states.at(-1)).toMatchObject({ webContentsId: 43, inWindow: false });
+      }),
+    ),
+  );
+
+  // Nothing but the restore loads the returning guest, so one that commits no page would leave it blank.
+  effectIt.effect.each([
+    {
+      restore: "never settles",
+      arrange: ({ restore }: TestNavigableWebContents) =>
+        restore.mockImplementationOnce(() => new Promise<void>(() => {})),
+    },
+    {
+      restore: "is refused after the guest loaded the marker",
+      arrange: ({ commit, restore }: TestNavigableWebContents) => {
+        commit(DESKTOP_PREVIEW_WINDOW_RETURN_URL);
+        restore.mockRejectedValueOnce(
+          new Error("Cannot restore history on webContents that have previously loaded a page"),
+        );
+      },
+    },
+  ])("loads the window's page into a returning guest whose restore $restore", ({ arrange }) =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const restored = makeChangeSignal();
+        const guestHistory = { entries: [{ url: "https://example.com/a", title: "A" }], index: 0 };
+        const windowHistory = {
+          entries: [...guestHistory.entries, { url: "https://example.com/b", title: "B" }],
+          index: 1,
+        };
+        const guest = makeTestNavigableWebContents(42, guestHistory, restored);
+        const page = makeTestNavigableWebContents(77, windowHistory, restored, "browserView", {
+          empty: true,
+        });
+        const returned = makeTestNavigableWebContents(
+          43,
+          { entries: [], index: -1 },
+          restored,
+          "webview",
+          { empty: true },
+        );
+        const contentsById = new Map([guest, page, returned].map(({ wc }) => [wc.id, wc]));
+        fromId.mockImplementation((id) =>
+          id === undefined ? null : (contentsById.get(id) ?? null),
+        );
+        const preview = makeTestPreviewWindow(page.wc);
+        yield* manager.createTab("tab_window_blank");
+        yield* manager.registerWebview("tab_window_blank", 42);
+        yield* openTestWindow(manager, "tab_window_blank", preview.bar);
+        yield* restored.until(() => page.restore.mock.calls.length > 0);
+        yield* manager.closeAllWindows();
+        arrange(returned);
+
+        yield* manager.prepareWebview(returned.wc);
+        yield* manager.registerWebview("tab_window_blank", 43);
+        yield* restored.until(() => returned.restore.mock.calls.length > 0);
+        yield* TestClock.adjust(5_000);
+        yield* restored.until(() => returned.loadURL.mock.calls.length > 0);
+
+        expect(returned.restore).toHaveBeenCalledWith(windowHistory);
+        expect(returned.loadURL.mock.calls).toEqual([["https://example.com/b"]]);
       }),
     ),
   );
