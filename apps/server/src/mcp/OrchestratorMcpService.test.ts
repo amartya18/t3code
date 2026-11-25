@@ -5,6 +5,7 @@ import {
   CommandId,
   ContextTransferId,
   EnvironmentId,
+  GitCommandError,
   isLiveSubagentShell,
   MessageId,
   NodeId,
