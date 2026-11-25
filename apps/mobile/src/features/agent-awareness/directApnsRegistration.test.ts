@@ -231,6 +231,15 @@ describe("leaving a server's push list", () => {
     expect(sent()).toEqual([["register-live-activity", ENV_B, registration]]);
   });
 
+  it("forgets a server that never took the device without calling it", async () => {
+    mocks.environmentIds = [ENV_A];
+    mocks.runAtomCommand.mockResolvedValue({ _tag: "Failure" });
+    await registerDirectApnsDevice(request());
+    mocks.runAtomCommand.mockClear();
+    await forgetDirectApnsEnvironments([ENV_A]);
+    expect(mocks.runAtomCommand).not.toHaveBeenCalled();
+  });
+
   it("registers again on each new session, so a re-paired server holds the device", async () => {
     mocks.environmentIds = [ENV_A];
     await registerDirectApnsDevice(request());

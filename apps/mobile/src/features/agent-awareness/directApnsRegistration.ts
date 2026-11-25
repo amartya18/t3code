@@ -183,9 +183,9 @@ export async function forgetDirectApnsEnvironments(
   if (request?.platform === "ios") {
     const state: DirectApnsState = { kind: "unregistered", deviceId: request.deviceId };
     await Promise.all(
-      environmentIds.map((environmentId) =>
-        settleWithin(sendState(environmentId, state), FORGET_TIMEOUT_MS),
-      ),
+      environmentIds
+        .filter((environmentId) => sentStates.get(environmentId)?.registered === true)
+        .map((environmentId) => settleWithin(sendState(environmentId, state), FORGET_TIMEOUT_MS)),
     );
   }
   updateSentStates(() => {
