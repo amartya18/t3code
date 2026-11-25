@@ -10,7 +10,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import type { DirectPushDevice } from "./directAgentActivityPolicy.ts";
 
 // APNs tokens are bearer-like identifiers for pushing to a phone, so they live in the secret
-// store (mode-600 files in a mode-700 directory) rather than in settings.json or the database.
+// store rather than in settings.json or the database.
 const DEVICES_SECRET = "direct-apns-devices";
 
 const StoredPushDevice = Schema.Struct({
@@ -44,7 +44,7 @@ export class DirectApnsDevices extends Context.Service<
       readonly deviceId: string;
       readonly activityPushToken: string;
     }) => Effect.Effect<void, ServerSecretStore.SecretStoreError>;
-    /** Drops a token APNs rejected, unless the device has since registered a new one. */
+    /** Forgets a device whose alert token APNs rejected, unless it has since registered a new token. */
     readonly removeRejectedToken: (input: {
       readonly deviceId: string;
       readonly apnsToken: string;
@@ -54,7 +54,7 @@ export class DirectApnsDevices extends Context.Service<
 
 const make = Effect.gen(function* () {
   const secrets = yield* ServerSecretStore.ServerSecretStore;
-  // Registrations, unregistrations and APNs rejections all rewrite one file.
+  // Registrations, Live Activity token changes and APNs rejections all rewrite one file.
   const lock = yield* Semaphore.make(1);
 
   const read = secrets.get(DEVICES_SECRET).pipe(

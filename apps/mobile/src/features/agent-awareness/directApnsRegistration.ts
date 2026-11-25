@@ -48,8 +48,7 @@ let lastRequest: RelayDeviceRegistrationRequest | null = null;
 let watchingCatalog = false;
 const registeredListeners = new Set<() => void>();
 
-// True once at least one connected T3 server holds this device's token. The
-// notification settings read it, since a signed-out device never reaches the relay.
+// True once any T3 server has accepted this device's token in this app session.
 export function isDirectApnsRegistered(): boolean {
   return registeredSignatures.size > 0;
 }

@@ -100,7 +100,7 @@ function shouldUpdateLiveActivity(input: {
   );
 }
 
-// A suppressed update must not fall back to an alert push, or unchanged replays would ring.
+// A suppressed card update must not fall back to a plain alert, or a state the card already shows would ring again.
 function chooseLiveActivity(input: {
   readonly device: DirectPushDevice;
   readonly delivered: DeliveredLiveActivity | undefined;

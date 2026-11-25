@@ -224,7 +224,7 @@ export function setAgentAwarenessRelayTokenProvider(
       clearTimeout(activeLiveActivityRegistrationRetry);
       activeLiveActivityRegistrationRetry = null;
     }
-    // Signed-out activities would be orphaned because the relay can no longer update or end them.
+    // Once signed out, the relay can no longer update or end these cards, so end them here.
     endLocalLiveActivities("live activity cleanup after cloud sign-out failed");
     publishWidget({ kind: "signed-out" });
     setRegistrationStatus("unknown");
@@ -760,8 +760,7 @@ const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function* 
     notificationsEnabled: pushTokenRegistration.notificationsEnabled,
     preferences,
   });
-  // Direct server push needs no T3 Connect sign-in. Each side's failure is
-  // contained: the direct one is logged, the relay one is rethrown after both ran.
+  // Direct server push needs no T3 Connect sign-in.
   const direct = registerDirectApnsDevice(request).catch((error: unknown) => {
     logRegistrationError("direct push registration failed", error);
   });

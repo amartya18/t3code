@@ -19,8 +19,6 @@ const APNS_PRODUCTION_ORIGIN = "https://api.push.apple.com";
 const APNS_SANDBOX_ORIGIN = "https://api.sandbox.push.apple.com";
 const APNS_REQUEST_TIMEOUT = "10 seconds";
 
-// Credentials come from the environment, with the secret store as an
-// alternative for servers that cannot set env vars.
 const KEY_ID_ENV = "T3CODE_APNS_KEY_ID";
 const TEAM_ID_ENV = "T3CODE_APNS_TEAM_ID";
 const PRIVATE_KEY_PATH_ENV = "T3CODE_APNS_PRIVATE_KEY_PATH";
