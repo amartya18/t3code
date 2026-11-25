@@ -123,6 +123,7 @@ import {
   ComposerDictationToolbar,
 } from "../voice-input/ComposerDictationControl";
 import { useVoiceInputController } from "../voice-input/useVoiceInputController";
+import { HomeVoiceSlot } from "../home-voice/HomeVoiceSlot";
 import { resolveVoiceComposerPresentation } from "../voice-input/voiceInputPresentation";
 import type { ExistingThreadSettingsRouteParams } from "./ThreadSettingsSheet";
 import {
@@ -1077,6 +1078,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   onStart={voiceInput.start}
                   onCancel={voiceInput.cancel}
                 />
+                <HomeVoiceSlot thread={props.selectedThread} large={usesLargeControls} />
                 {showStopAction ? (
                   <ComposerActionButton
                     size={usesLargeControls ? "large" : "regular"}
