@@ -23,13 +23,13 @@ type TooltipActionsRef = RefObject<TooltipPrimitive.Root.Actions | null>;
 
 // The compiler freezes context values; update hovered tooltips through calls instead of shared ref writes.
 function createTooltipHoverTracker() {
-  let hovered: { trigger: HTMLElement; actionsRef: TooltipActionsRef } | null = null;
+  let hovered: { trigger: HTMLElement; owner: object; close: () => void } | null = null;
   return {
-    hover(trigger: HTMLElement, actionsRef: TooltipActionsRef) {
-      hovered = { trigger, actionsRef };
+    hover(trigger: HTMLElement, owner: object, close: () => void) {
+      hovered = { trigger, owner, close };
     },
-    release(actionsRef: TooltipActionsRef) {
-      if (hovered?.actionsRef === actionsRef) hovered = null;
+    release(owner: object) {
+      if (hovered?.owner === owner) hovered = null;
     },
     dismissUnfocused() {
       const tooltip = hovered;
@@ -39,20 +39,26 @@ function createTooltipHoverTracker() {
         return;
       }
       hovered = null;
-      // Base UI also cancels delayed hover opens through this action.
-      tooltip.actionsRef.current?.close();
+      tooltip.close();
     },
   };
 }
 
 type TooltipHoverTracker = ReturnType<typeof createTooltipHoverTracker>;
 const TooltipHoverContext = createContext<TooltipActionsRef | null>(null);
-const TooltipScrollContext = createContext<TooltipHoverTracker | null>(null);
+const TooltipScrollContext = createContext<{
+  tracker: TooltipHoverTracker;
+  holdPositionOnExit: boolean;
+} | null>(null);
 
-function TooltipScrollDismissArea({ onScrollCapture, ...props }: ComponentProps<"div">) {
+function TooltipScrollDismissArea({
+  holdPositionOnExit = false,
+  onScrollCapture,
+  ...props
+}: ComponentProps<"div"> & { holdPositionOnExit?: boolean }) {
   const [tracker] = useState(createTooltipHoverTracker);
   return (
-    <TooltipScrollContext value={tracker}>
+    <TooltipScrollContext value={{ tracker, holdPositionOnExit }}>
       <div
         {...props}
         onScrollCapture={(event) => {
@@ -65,7 +71,7 @@ function TooltipScrollDismissArea({ onScrollCapture, ...props }: ComponentProps<
 }
 
 function Tooltip<Payload>(props: TooltipPrimitive.Root.Props<Payload>) {
-  const tracker = use(TooltipScrollContext);
+  const tracker = useTooltipScrollTracker();
   const localActionsRef = useRef<TooltipPrimitive.Root.Actions | null>(null);
   const actionsRef = props.actionsRef ?? localActionsRef;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases this tooltip from the scroll tracker on unmount
@@ -87,7 +93,7 @@ function Tooltip<Payload>(props: TooltipPrimitive.Root.Props<Payload>) {
 }
 
 function TooltipTrigger(props: TooltipPrimitive.Trigger.Props) {
-  const tracker = use(TooltipScrollContext);
+  const tracker = useTooltipScrollTracker();
   const actionsRef = use(TooltipHoverContext);
   if (!tracker || !actionsRef) {
     return <TooltipPrimitive.Trigger data-slot="tooltip-trigger" {...props} />;
@@ -98,7 +104,8 @@ function TooltipTrigger(props: TooltipPrimitive.Trigger.Props) {
       {...props}
       onMouseEnter={(event) => {
         props.onMouseEnter?.(event);
-        tracker.hover(event.currentTarget, actionsRef);
+        // Base UI also cancels delayed hover opens through this action.
+        tracker.hover(event.currentTarget, actionsRef, () => actionsRef.current?.close());
       }}
     />
   );
@@ -106,9 +113,14 @@ function TooltipTrigger(props: TooltipPrimitive.Trigger.Props) {
 
 function TooltipPositioner(props: TooltipPrimitive.Positioner.Props) {
   const titlebarHeight = useNativeTitlebarHeight();
+  const holdPositionOnExit = use(TooltipScrollContext)?.holdPositionOnExit;
   return (
     <TooltipPrimitive.Positioner
-      className="pointer-events-none z-[140] max-w-(--available-width) transition-[top,left,right,bottom,transform] data-instant:transition-none"
+      className={cn(
+        "pointer-events-none z-[140] max-w-(--available-width) transition-[top,left,right,bottom,transform] data-instant:transition-none",
+        // Defer repositioning until the popup's fade finishes when its trigger scrolls away.
+        holdPositionOnExit && "data-closed:delay-(--default-transition-duration)",
+      )}
       collisionPadding={{
         top: COLLISION_PADDING + titlebarHeight,
         right: COLLISION_PADDING,
@@ -163,4 +175,14 @@ function TooltipPopup({
   );
 }
 
-export { TooltipProvider, Tooltip, TooltipTrigger, TooltipPopup, TooltipScrollDismissArea };
+/** The enclosing TooltipScrollDismissArea's tracker, for triggers that bypass TooltipTrigger. */
+const useTooltipScrollTracker = () => use(TooltipScrollContext)?.tracker ?? null;
+
+export {
+  TooltipProvider,
+  Tooltip,
+  TooltipTrigger,
+  TooltipPopup,
+  TooltipScrollDismissArea,
+  useTooltipScrollTracker,
+};
