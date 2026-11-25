@@ -46,12 +46,14 @@ type DirectApnsState =
   | { readonly kind: "unregistered"; readonly deviceId: string };
 
 // Android pushes go through the relay, so only iOS requests reach the server's device list.
+// A missing token with permission granted is a failed lookup (cold start), not a way out.
 function desiredState(request: RelayDeviceRegistrationRequest): DirectApnsState | null {
   if (request.platform !== "ios") return null;
+  if (!request.preferences.notificationsEnabled) {
+    return { kind: "unregistered", deviceId: request.deviceId };
+  }
   const registration = toPushDeviceRegistration(request);
-  return registration === null
-    ? { kind: "unregistered", deviceId: request.deviceId }
-    : { kind: "registered", registration };
+  return registration === null ? null : { kind: "registered", registration };
 }
 
 interface SentState {
