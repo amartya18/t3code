@@ -43,6 +43,10 @@ import {
   LiveActivityEnvironmentUpdateError,
   setLiveActivityUpdatesEnabled,
 } from "../agent-awareness/liveActivityPreferences";
+import {
+  isDirectApnsRegistered,
+  subscribeDirectApnsRegistered,
+} from "../agent-awareness/directApnsRegistration";
 import { requestAgentNotificationPermission } from "../agent-awareness/notificationPermissions";
 import {
   agentAwarenessNotificationsReady,
@@ -180,11 +184,18 @@ function useDeviceRegistered(): boolean {
 }
 
 function useNotificationsReady(): boolean {
-  return useSyncExternalStore(
+  const relayReady = useSyncExternalStore(
     subscribeAgentAwarenessRegistrationStatus,
     agentAwarenessNotificationsReady,
     () => false,
   );
+  // A connected T3 server pushes directly, so a device signed out of T3 Connect still counts.
+  const directReady = useSyncExternalStore(
+    subscribeDirectApnsRegistered,
+    isDirectApnsRegistered,
+    () => false,
+  );
+  return relayReady || directReady;
 }
 
 export function SettingsNotificationsRouteScreen() {
@@ -276,7 +287,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
     }
     if (result.value.type === "granted") {
       setNotificationStatus("enabled");
-      if (!agentAwarenessNotificationsReady()) {
+      if (!agentAwarenessNotificationsReady() && !isDirectApnsRegistered()) {
         Dialog.alert(
           gt("Couldn't finish enabling notifications"),
           gt(
@@ -448,10 +459,6 @@ function ConfiguredSettingsNotificationsRouteScreen() {
 
   const handleDeviceNotificationsChange = (enabled: boolean) => {
     if (enabled) {
-      if (!isSignedIn) {
-        promptSignIn();
-        return;
-      }
       void requestNotifications();
       return;
     }
