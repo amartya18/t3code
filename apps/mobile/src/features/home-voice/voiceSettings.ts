@@ -10,6 +10,7 @@ import {
 import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
 
+import { writeFileAtomically } from "../../lib/atomic-file";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { useProjects } from "../../state/entities";
 import { userHomeAtom } from "../../state/home";
@@ -36,6 +37,7 @@ const StoredVoiceSettings = Schema.Struct({
 type StoredVoiceSettings = typeof StoredVoiceSettings.Type;
 const StoredVoiceSettingsJson = Schema.fromJsonString(StoredVoiceSettings);
 const decodeStoredVoiceSettings = Schema.decodeSync(StoredVoiceSettingsJson);
+const encodeStoredVoiceSettings = Schema.encodeSync(StoredVoiceSettingsJson);
 
 const storedVoiceSettingsAtom = Atom.make<StoredVoiceSettings>({}).pipe(
   Atom.keepAlive,
@@ -47,12 +49,22 @@ async function settingsFile() {
   return new File(Paths.document, "home-voice-settings.json");
 }
 
+let changedBeforeLoad = false;
 void settingsFile()
   .then(async (file) => (file.exists ? await file.text() : null))
   .then((raw) => {
-    if (raw !== null) appAtomRegistry.set(storedVoiceSettingsAtom, decodeStoredVoiceSettings(raw));
+    if (raw === null || changedBeforeLoad) return;
+    appAtomRegistry.set(storedVoiceSettingsAtom, decodeStoredVoiceSettings(raw));
   })
   .catch(() => {});
+
+/** Saves a per-device choice; omitted fields keep their stored value. */
+export async function saveVoiceSettings(patch: StoredVoiceSettings) {
+  changedBeforeLoad = true;
+  const next = { ...appAtomRegistry.get(storedVoiceSettingsAtom), ...patch };
+  appAtomRegistry.set(storedVoiceSettingsAtom, next);
+  await writeFileAtomically(await settingsFile(), encodeStoredVoiceSettings(next));
+}
 
 /**
  * The stored choice where it still exists, else Home's environment and its project titled

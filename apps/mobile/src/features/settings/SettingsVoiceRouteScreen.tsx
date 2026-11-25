@@ -33,6 +33,7 @@ import {
   hasEnvironmentVoiceCapture,
 } from "../voice-input/voiceDestination";
 import { LocalModelChoice } from "./VoiceModelSection";
+import { HomeVoiceSettingsSection } from "../home-voice/HomeVoiceSettingsSection";
 import { CloudVoiceChoice } from "./CloudVoiceSection";
 import type { VoiceGrant } from "../voice-input/voiceGrantStorage";
 import type { EnvironmentId } from "@t3tools/contracts";
@@ -406,6 +407,7 @@ export function SettingsVoiceRouteScreen() {
                 "Voice input uses the first connected microphone in this list. A wired or Bluetooth microphone is added by name the first time you dictate with it connected; until then it falls under Other. Swipe left on a named microphone to forget it.",
               )}
         </Text>
+        <HomeVoiceSettingsSection />
       </ScrollView>
     </SettingsScreen>
   );
