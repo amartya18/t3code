@@ -1,13 +1,20 @@
 import { assert, describe, it } from "@effect/vitest";
-import { EnvironmentId, ThreadId, type PushDeviceRegistration } from "@t3tools/contracts";
+import {
+  AuthSessionId,
+  EnvironmentId,
+  ThreadId,
+  type PushDeviceRegistration,
+} from "@t3tools/contracts";
 import type { RelayAgentActivityState } from "@t3tools/contracts/relay";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as SessionStore from "../auth/SessionStore.ts";
 import * as DirectAgentActivity from "./DirectAgentActivity.ts";
 import * as DirectApnsClient from "./DirectApnsClient.ts";
 import * as DirectApnsDevices from "./DirectApnsDevices.ts";
@@ -82,12 +89,19 @@ const harness = Effect.fnUntraced(function* (
       Layer.provide(client),
       Layer.provideMerge(DirectApnsDevices.layer),
       Layer.provide(secrets),
+      Layer.provide(
+        Layer.mock(SessionStore.SessionStore)({
+          cookieName: "auth-test",
+          legacyCookieName: undefined,
+          streamChanges: Stream.never,
+        }),
+      ),
     ),
   );
   const activity = Layer.succeedContext(context);
   const service = yield* DirectAgentActivity.DirectAgentActivity.pipe(Effect.provide(activity));
   const devices = yield* DirectApnsDevices.DirectApnsDevices.pipe(Effect.provide(activity));
-  yield* devices.register(registration);
+  yield* devices.register(registration, AuthSessionId.make("phone-session"));
   const publish = (next: RelayAgentActivityState | null) =>
     service.publish({ threadId: THREAD_ID, state: next }).pipe(Effect.andThen(service.drain));
   const kinds = () => sent.splice(0).map((request) => request.pushType);

@@ -93,7 +93,11 @@ import {
   EnvironmentAuthorizationError,
 } from "./auth.ts";
 import { ClientActivityReportInput } from "./background.ts";
-import { PushDeviceRegistration, PushLiveActivityRegistration } from "./pushNotifications.ts";
+import {
+  PushDeviceId,
+  PushDeviceRegistration,
+  PushLiveActivityRegistration,
+} from "./pushNotifications.ts";
 import {
   FilesystemGetMetadataInput,
   FilesystemGetMetadataResult,
@@ -668,6 +672,7 @@ export const WS_METHODS = {
   scheduledTasksGetWebhookDelivery: "scheduledTasks.getWebhookDelivery",
 
   notificationsRegisterDevice: "notifications.registerDevice",
+  notificationsUnregisterDevice: "notifications.unregisterDevice",
   notificationsRegisterLiveActivity: "notifications.registerLiveActivity",
 
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
@@ -1219,6 +1224,11 @@ const WsCloudInstallRelayClientRpc = Rpc.make(WS_METHODS.cloudInstallRelayClient
 
 const WsNotificationsRegisterDeviceRpc = Rpc.make(WS_METHODS.notificationsRegisterDevice, {
   payload: PushDeviceRegistration,
+  error: EnvironmentAuthorizationError,
+});
+
+const WsNotificationsUnregisterDeviceRpc = Rpc.make(WS_METHODS.notificationsUnregisterDevice, {
+  payload: Schema.Struct({ deviceId: PushDeviceId }),
   error: EnvironmentAuthorizationError,
 });
 
@@ -2617,6 +2627,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsScheduledTasksListWebhookDeliveriesRpc,
   WsScheduledTasksGetWebhookDeliveryRpc,
   WsNotificationsRegisterDeviceRpc,
+  WsNotificationsUnregisterDeviceRpc,
   WsNotificationsRegisterLiveActivityRpc,
   WsServerReportClientActivityRpc,
   WsCloudGetRelayClientStatusRpc,
