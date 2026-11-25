@@ -52,6 +52,8 @@ export const removeCloudEnvironments = createRuntimeCommand(connectionAtomRuntim
           cause,
         }),
     });
+    // Clerk's native profile view signs out before the app hears of it, so relay leases are
+    // already gone here; only servers still reachable on a direct route get the unregister.
     yield* Effect.promise(() => forgetDirectApnsEnvironments([...environmentIds]));
     yield* registry.removeRelayEnvironments();
   }),
