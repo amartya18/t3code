@@ -172,7 +172,9 @@ export function HostedBrowserWebview(props: {
   useEffect(() => {
     const webview = webviewRef.current;
     const bridge = previewBridge;
-    if (!clientSettingsHydrated || !webview || !config || !bridge) return;
+    // Kept while the tab is in its window, a listener would take the release, which clears the
+    // tab's guest id, for a crash and spend one of the tab's recovery attempts.
+    if (!clientSettingsHydrated || inWindow || !webview || !config || !bridge) return;
     let disposed = false;
     let recoveryTimeout: ReturnType<typeof setTimeout> | null = null;
     let registeredWebContentsId: number | null = null;
@@ -242,6 +244,7 @@ export function HostedBrowserWebview(props: {
   }, [
     clientSettingsHydrated,
     config,
+    inWindow,
     runtimeTabId,
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A crash recovery remounts the webview under a new key, so the listeners attach to the new element.
     webviewGeneration,
