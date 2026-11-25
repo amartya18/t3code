@@ -6,7 +6,6 @@ import {
   DesktopPreviewRecordingInputSchema,
   DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER,
   DESKTOP_PREVIEW_WINDOW_BAR_HEIGHT,
-  DESKTOP_PREVIEW_WINDOW_RETURN_URL,
   desktopPreviewWindowTabId,
 } from "@t3tools/contracts";
 import type {
@@ -148,8 +147,6 @@ const CAPTURE_PAGE_RETRY_ATTEMPTS = 3;
 const CAPTURE_PAGE_RETRY_DELAY_MS = 120;
 const CAPTURE_PAGE_ATTEMPT_TIMEOUT_MS = 1_000;
 const BUSY_PAGE_PROBE_MS = 1_000;
-// A restore that commits nothing by then is given up for a plain load of its page.
-const RESTORE_NAVIGATION_TIMEOUT_MS = 5_000;
 const PICTURE_IN_PICTURE_INITIAL_WIDTH = 480;
 const PICTURE_IN_PICTURE_INITIAL_HEIGHT = 320;
 const PICTURE_IN_PICTURE_MIN_WIDTH = 240;
@@ -540,9 +537,6 @@ export const previewWindowOpenAction = (details: {
     ? "new-tab"
     : "navigate";
 };
-
-const showsPage = (url: string): boolean =>
-  url !== "" && url !== "about:blank" && url !== DESKTOP_PREVIEW_WINDOW_RETURN_URL;
 
 const isPrimaryModifierShortcut = (
   input: Electron.Input,
@@ -2129,7 +2123,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     });
     if (navigation) {
       pendingNavigations.delete(tabId);
-      runFork(restoreNavigation(tabId, wc, navigation));
+      runFork(
+        attemptPromise({ operation: "restoreNavigation", tabId, webContentsId }, () =>
+          wc.navigationHistory.restore(navigation),
+        ).pipe(Effect.ignore),
+      );
       return;
     }
     const latestNavStatus = (yield* SynchronizedRef.get(tabsRef)).get(tabId)?.navStatus;
@@ -2157,26 +2155,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       registerWebviewUnlocked(tabId, webContentsId, expectedGeneration),
     );
   });
-
-  // Nothing else loads the contents a tab moves into, so a restore that commits no page (refused,
-  // hung, or left on a blank) falls back to loading the active entry.
-  const restoreNavigation = Effect.fn("PreviewManager.restoreNavigation")(
-    function* (tabId: string, wc: Electron.WebContents, navigation: NavigationSnapshot) {
-      yield* attemptPromise({ operation: "restoreNavigation", tabId, webContentsId: wc.id }, () =>
-        wc.navigationHistory.restore(navigation),
-      ).pipe(Effect.timeout(RESTORE_NAVIGATION_TIMEOUT_MS), Effect.ignore);
-      const url = navigation.entries[navigation.index]?.url;
-      if (url === undefined || !showsPage(url) || wc.isDestroyed() || showsPage(wc.getURL()))
-        return;
-      const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
-      if (tab?.webContentsId !== wc.id) return;
-      yield* attemptPromise(
-        { operation: "restoreNavigation.loadUrl", tabId, webContentsId: wc.id },
-        () => wc.loadURL(url),
-      );
-    },
-    (effect, _tabId, _wc, _navigation) => effect.pipe(Effect.ignore),
-  );
 
   const readNavigation = (wc: Electron.WebContents): NavigationSnapshot => ({
     entries: wc.navigationHistory.getAllEntries(),
