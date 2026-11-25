@@ -6,6 +6,7 @@ import type {
 import type { RelayDeviceRegistrationRequest } from "@t3tools/contracts/relay";
 import { enabledEnvironmentIds } from "@t3tools/client-runtime/state/connections";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
+import { Atom } from "effect/reactivity";
 
 import { environmentCatalog } from "../../connection/catalog";
 import { appAtomRegistry } from "../../state/atom-registry";
@@ -40,17 +41,52 @@ export function toPushDeviceRegistration(
   };
 }
 
-// Only successes are remembered, so an environment that was unreachable is
-// retried on the next registration trigger (foreground, token rotation, or a
-// change to the connected environments).
-const registeredSignatures = new Map<EnvironmentId, string>();
-let lastRequest: RelayDeviceRegistrationRequest | null = null;
-let watchingCatalog = false;
-const registeredListeners = new Set<() => void>();
+type DirectApnsState =
+  | { readonly kind: "registered"; readonly registration: PushDeviceRegistration }
+  | { readonly kind: "unregistered"; readonly deviceId: string };
 
-// True once any T3 server has accepted this device's token in this app session.
+// Android pushes go through the relay, so only iOS requests reach the server's device list.
+function desiredState(request: RelayDeviceRegistrationRequest): DirectApnsState | null {
+  if (request.platform !== "ios") return null;
+  const registration = toPushDeviceRegistration(request);
+  return registration === null
+    ? { kind: "unregistered", deviceId: request.deviceId }
+    : { kind: "registered", registration };
+}
+
+interface SentState {
+  readonly generation: number;
+  readonly signature: string;
+  readonly registered: boolean;
+}
+
+// What each server last accepted, on which connection. Only successes are remembered, so an
+// unreachable server is retried on the next trigger, and a new session (a reconnect or re-pair)
+// sends again because the server may have dropped the device when it revoked the old one.
+const sentStates = new Map<EnvironmentId, SentState>();
+let lastRequest: RelayDeviceRegistrationRequest | null = null;
+let watchingSessions = false;
+const registeredListeners = new Set<() => void>();
+const FORGET_TIMEOUT_MS = 3_000;
+
+const enabledSessionsAtom = Atom.make((get) =>
+  [...enabledEnvironmentIds(get(environmentCatalog.catalogValueAtom))]
+    .map(
+      (environmentId) =>
+        `${environmentId}:${get(environmentCatalog.sessionGenerationAtom(environmentId))}`,
+    )
+    .join(" "),
+);
+
+function registeredEnvironmentIds(): EnvironmentId[] {
+  return [...sentStates]
+    .filter(([, sent]) => sent.registered)
+    .map(([environmentId]) => environmentId);
+}
+
+// True once any T3 server holds this device's token.
 export function isDirectApnsRegistered(): boolean {
-  return registeredSignatures.size > 0;
+  return registeredEnvironmentIds().length > 0;
 }
 
 export function subscribeDirectApnsRegistered(listener: () => void): () => void {
@@ -60,29 +96,54 @@ export function subscribeDirectApnsRegistered(listener: () => void): () => void 
   };
 }
 
-function setRegisteredSignature(environmentId: EnvironmentId, signature: string): void {
+function updateSentStates(change: () => void): void {
   const wasRegistered = isDirectApnsRegistered();
-  registeredSignatures.set(environmentId, signature);
-  if (!wasRegistered) for (const listener of registeredListeners) listener();
+  change();
+  if (wasRegistered !== isDirectApnsRegistered()) {
+    for (const listener of registeredListeners) listener();
+  }
 }
 
-async function registerWithConnectedEnvironments(
+function sendState(environmentId: EnvironmentId, state: DirectApnsState) {
+  const options = { reportFailure: false, reportDefect: false };
+  return state.kind === "registered"
+    ? runAtomCommand(
+        appAtomRegistry,
+        serverEnvironment.registerPushDevice,
+        { environmentId, input: state.registration },
+        options,
+      )
+    : runAtomCommand(
+        appAtomRegistry,
+        serverEnvironment.unregisterPushDevice,
+        { environmentId, input: { deviceId: state.deviceId } },
+        options,
+      );
+}
+
+async function reconcileEnabledEnvironments(
   request: RelayDeviceRegistrationRequest,
 ): Promise<void> {
-  const registration = toPushDeviceRegistration(request);
-  if (registration === null) return;
-  const signature = JSON.stringify(registration);
+  const state = desiredState(request);
+  if (state === null) return;
+  const signature = JSON.stringify(state);
   const catalog = appAtomRegistry.get(environmentCatalog.catalogValueAtom);
   await Promise.all(
     [...enabledEnvironmentIds(catalog)].map(async (environmentId) => {
-      if (registeredSignatures.get(environmentId) === signature) return;
-      const result = await runAtomCommand(
-        appAtomRegistry,
-        serverEnvironment.registerPushDevice,
-        { environmentId, input: registration },
-        { reportFailure: false, reportDefect: false },
+      const generation = appAtomRegistry.get(
+        environmentCatalog.sessionGenerationAtom(environmentId),
       );
-      if (result._tag === "Success") setRegisteredSignature(environmentId, signature);
+      const sent = sentStates.get(environmentId);
+      if (sent?.generation === generation && sent.signature === signature) return;
+      const result = await sendState(environmentId, state);
+      if (result._tag !== "Success") return;
+      updateSentStates(() => {
+        sentStates.set(environmentId, {
+          generation,
+          signature,
+          registered: state.kind === "registered",
+        });
+      });
     }),
   );
 }
@@ -91,15 +152,45 @@ export async function registerDirectApnsDevice(
   request: RelayDeviceRegistrationRequest,
 ): Promise<void> {
   lastRequest = request;
-  // Environments connect after the app registers its token, and nothing else
-  // re-triggers registration for them.
-  if (!watchingCatalog) {
-    watchingCatalog = true;
-    appAtomRegistry.subscribe(environmentCatalog.catalogValueAtom, () => {
-      if (lastRequest) void registerWithConnectedEnvironments(lastRequest);
+  // Servers connect, reconnect and get re-paired after the app registers its token, and
+  // nothing else re-triggers registration for them.
+  if (!watchingSessions) {
+    watchingSessions = true;
+    appAtomRegistry.subscribe(enabledSessionsAtom, () => {
+      if (lastRequest) void reconcileEnabledEnvironments(lastRequest);
     });
   }
-  await registerWithConnectedEnvironments(request);
+  await reconcileEnabledEnvironments(request);
+}
+
+function settleWithin(promise: Promise<unknown>, timeoutMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, timeoutMs);
+    const done = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    promise.then(done, done);
+  });
+}
+
+// Call before removing servers, while they are still connected. A server that does not
+// answer in time keeps the device until it next rejects or revokes it.
+export async function forgetDirectApnsEnvironments(
+  environmentIds: ReadonlyArray<EnvironmentId>,
+): Promise<void> {
+  const request = lastRequest;
+  if (request?.platform === "ios") {
+    const state: DirectApnsState = { kind: "unregistered", deviceId: request.deviceId };
+    await Promise.all(
+      environmentIds.map((environmentId) =>
+        settleWithin(sendState(environmentId, state), FORGET_TIMEOUT_MS),
+      ),
+    );
+  }
+  updateSentStates(() => {
+    for (const environmentId of environmentIds) sentStates.delete(environmentId);
+  });
 }
 
 // Only servers that already hold this device can push to its Live Activity.
@@ -107,7 +198,7 @@ export async function registerDirectLiveActivity(
   registration: PushLiveActivityRegistration,
 ): Promise<void> {
   await Promise.all(
-    [...registeredSignatures.keys()].map((environmentId) =>
+    registeredEnvironmentIds().map((environmentId) =>
       runAtomCommand(
         appAtomRegistry,
         serverEnvironment.registerPushLiveActivity,
@@ -118,13 +209,9 @@ export async function registerDirectLiveActivity(
   );
 }
 
-export async function forgetDirectApnsEnvironments(
-  _environmentIds: ReadonlyArray<EnvironmentId>,
-): Promise<void> {}
-
 export function __resetDirectApnsRegistrationForTest(): void {
-  registeredSignatures.clear();
+  sentStates.clear();
   registeredListeners.clear();
   lastRequest = null;
-  watchingCatalog = false;
+  watchingSessions = false;
 }

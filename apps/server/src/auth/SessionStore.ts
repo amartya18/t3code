@@ -79,6 +79,8 @@ export type SessionCredentialChange =
   | {
       readonly type: "clientRemoved";
       readonly sessionId: AuthSessionId;
+      /** False when an expired session only lost its last socket. */
+      readonly revoked: boolean;
     };
 
 export class MalformedSessionTokenError extends Schema.TaggedError<MalformedSessionTokenError>()(
@@ -611,10 +613,11 @@ const make = Effect.gen(function* () {
       clientSession,
     }).pipe(Effect.asVoid);
 
-  const emitRemoved = (sessionId: AuthSessionId) =>
+  const emitRemoved = (sessionId: AuthSessionId, revoked: boolean) =>
     PubSub.publish(changesPubSub, {
       type: "clientRemoved",
       sessionId,
+      revoked,
     }).pipe(Effect.asVoid);
 
   const loadActiveSession = Effect.fn("SessionStore.loadActiveSession")(function* (
@@ -693,7 +696,7 @@ const make = Effect.gen(function* () {
     }).pipe(
       Effect.flatMap(() => loadActiveSession(sessionId)),
       Effect.flatMap((session) =>
-        Option.isSome(session) ? emitUpsert(session.value) : emitRemoved(sessionId),
+        Option.isSome(session) ? emitUpsert(session.value) : emitRemoved(sessionId, false),
       ),
       Effect.catchCause((cause) =>
         Effect.logError("Failed to publish disconnected-session auth update.").pipe(
@@ -792,7 +795,7 @@ const make = Effect.gen(function* () {
           }
           return next;
         });
-        yield* Effect.forEach(replacedSessionIds, emitRemoved, {
+        yield* Effect.forEach(replacedSessionIds, (replaced) => emitRemoved(replaced, true), {
           concurrency: "unbounded",
           discard: true,
         });
@@ -1196,7 +1199,7 @@ const make = Effect.gen(function* () {
           next.delete(sessionId);
           return next;
         });
-        yield* emitRemoved(sessionId);
+        yield* emitRemoved(sessionId, true);
       }
       return revoked;
     },
@@ -1219,7 +1222,13 @@ const make = Effect.gen(function* () {
       for (const revokedSessionId of revokedSessionIds) next.delete(revokedSessionId);
       return next;
     });
-    yield* Effect.forEach(revokedSessionIds, emitRemoved, { discard: true });
+    yield* Effect.forEach(
+      revokedSessionIds,
+      (revokedSessionId) => emitRemoved(revokedSessionId, true),
+      {
+        discard: true,
+      },
+    );
     return revokedSessionIds.length;
   });
 
@@ -1247,7 +1256,7 @@ const make = Effect.gen(function* () {
       });
       yield* Effect.forEach(
         revokedSessionIds,
-        (revokedSessionId) => emitRemoved(revokedSessionId),
+        (revokedSessionId) => emitRemoved(revokedSessionId, true),
         {
           concurrency: "unbounded",
           discard: true,

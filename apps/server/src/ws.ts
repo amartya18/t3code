@@ -2903,6 +2903,13 @@ export const layerWsRpc = (
             ),
             Effect.orDie,
           ),
+        [WS_METHODS.notificationsUnregisterDevice]: (input) =>
+          directApnsDevices.unregister(input.deviceId).pipe(
+            Effect.tapError((cause) =>
+              Effect.logWarning("push device unregistration failed", { cause }),
+            ),
+            Effect.orDie,
+          ),
         [WS_METHODS.notificationsRegisterLiveActivity]: (input) =>
           directAgentActivity.registerLiveActivity(input).pipe(
             Effect.tapError((cause) =>

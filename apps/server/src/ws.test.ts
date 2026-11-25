@@ -1362,6 +1362,7 @@ it.effect("access changes made while the snapshot loads reach the client after i
                   PubSub.publish(sessionChanges, {
                     type: "clientRemoved",
                     sessionId: revokedElsewhere,
+                    revoked: true,
                   }).pipe(Effect.as([])),
               }),
               Layer.mock(PairingGrantStore.PairingGrantStore)({

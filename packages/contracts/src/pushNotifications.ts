@@ -7,7 +7,7 @@ export type PushApsEnvironment = typeof PushApsEnvironment.Type;
 
 // Tokens are interpolated into the APNs request path, so only hex is accepted.
 const ApnsToken = Schema.String.check(Schema.isPattern(/^[0-9a-fA-F]{32,400}$/));
-const PushDeviceId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
+export const PushDeviceId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
 
 export const PushDeviceRegistration = Schema.Struct({
   deviceId: PushDeviceId,

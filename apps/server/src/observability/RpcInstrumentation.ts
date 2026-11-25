@@ -106,6 +106,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.serverSignalProcess]: "server",
   [WS_METHODS.serverReportClientActivity]: "server",
   [WS_METHODS.notificationsRegisterDevice]: "server",
+  [WS_METHODS.notificationsUnregisterDevice]: "server",
   [WS_METHODS.notificationsRegisterLiveActivity]: "server",
   [WS_METHODS.workflowsSubscribe]: "workflows",
   [WS_METHODS.workflowsCounts]: "workflows",
