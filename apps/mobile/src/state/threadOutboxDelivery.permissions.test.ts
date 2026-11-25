@@ -272,6 +272,7 @@ describe("queued PR checkout", () => {
         branch: "fork/feature",
         worktreePath: null,
         pullRequestReference: "https://github.com/acme/repo/pull/123",
+        customMode: "review",
       },
     });
   const preparedCheckout = {
@@ -280,7 +281,7 @@ describe("queued PR checkout", () => {
     isOnPullRequestHead: true,
   };
 
-  it("waits for the provider's PR checkout and launches in that worktree", async () => {
+  it("waits for the provider's PR checkout and launches in that worktree and mode", async () => {
     setOperateGrant("secondary", true);
     await state.manager.enqueue(queuedPullRequest());
     const started = Promise.withResolvers<void>();
@@ -304,6 +305,7 @@ describe("queued PR checkout", () => {
     expect(bootstrap.createThread).toMatchObject({
       branch: "pr-123",
       worktreePath: preparedCheckout.worktreePath,
+      customMode: "review",
     });
     expect(bootstrap.prepareWorktree).toBeUndefined();
     expect(remaining()).toEqual([]);

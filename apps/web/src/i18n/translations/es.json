@@ -3545,6 +3545,17 @@
   "0e7b21ab11721ca7": "Ningún comando coincide.",
   "2029db2cc30beb6d": "Abrir ajustes del proveedor",
   "517cfb8f24123f5b": "No hay ningún proveedor disponible",
+  "75ef6f4149b8c826": "Turn off custom mode {skill}",
+  "f74e29147dbedc9d": [
+    "Custom mode: every message follows ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "."
+  ],
+  "244cd6f39cba983a": "use as mode",
   "7ff1a0ef1490668d": "La API del portapapeles no está disponible al copiar el ID del hilo de comentarios de Codex.",
   "1967731535386826": "No se pudo copiar el ID del hilo de comentarios de Codex al portapapeles.",
   "9c5afbfbbe8b305d": "No se pudo copiar el ID del hilo",

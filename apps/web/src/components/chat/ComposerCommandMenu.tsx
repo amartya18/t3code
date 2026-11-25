@@ -5,6 +5,7 @@ import {
   type ProviderSkillSourceKind,
 } from "@t3tools/client-runtime/providerSkills";
 import {
+  isCustomModeSkillName,
   type EnvironmentId,
   type EnvironmentMachineKind,
   type ProjectEntry,
@@ -37,6 +38,7 @@ import { PierreEntryIcon } from "./PierreEntryIcon";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { ComposerBanner } from "./ComposerBanner";
 import { resolvePullRequestState } from "../pullRequest/pullRequestPresentation";
+import { ComposerCustomModeMenuHint } from "./ComposerCustomModeChip";
 
 export type ComposerCommandItem =
   | {
@@ -106,6 +108,9 @@ export type ComposerCommandItem =
       description: string;
     };
 
+/** `asCustomMode` pins a skill to the thread instead of inserting it. */
+export type ComposerCommandSelectOptions = { readonly asCustomMode?: boolean };
+
 export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
   listId: string;
   items: ComposerCommandItem[];
@@ -115,7 +120,9 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
   emptyStateText?: string;
   activeItemId: string | null;
   onHighlightedItemChange: (itemId: string | null) => void;
-  onSelect: (item: ComposerCommandItem) => void;
+  onSelect: (item: ComposerCommandItem, options?: ComposerCommandSelectOptions) => void;
+  /** The composer can pin the highlighted skill as a custom mode. */
+  customModeHint?: boolean;
 }) {
   const gt = useGT();
   const m = useMessages();
@@ -164,6 +171,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
                   isActive={props.activeItemId === item.id}
                   onHighlight={props.onHighlightedItemChange}
                   onSelect={props.onSelect}
+                  customModeHint={props.customModeHint === true}
                 />
               ))}
             </CommandGroup>
@@ -198,7 +206,8 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
   resolvedTheme: "light" | "dark";
   isActive: boolean;
   onHighlight: (itemId: string | null) => void;
-  onSelect: (item: ComposerCommandItem) => void;
+  onSelect: (item: ComposerCommandItem, options?: ComposerCommandSelectOptions) => void;
+  customModeHint: boolean;
 }) {
   const m = useMessages();
   const skillSourceKind =
@@ -230,8 +239,8 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
       onMouseDown={(event) => {
         event.preventDefault();
       }}
-      onClick={() => {
-        props.onSelect(props.item);
+      onClick={(event) => {
+        props.onSelect(props.item, event.altKey ? { asCustomMode: true } : undefined);
       }}
     >
       {props.item.type === "path" ? (
@@ -293,6 +302,12 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
           </TooltipTrigger>
           <TooltipPopup>{props.item.description}</TooltipPopup>
         </Tooltip>
+        {props.customModeHint &&
+        props.isActive &&
+        props.item.type === "skill" &&
+        isCustomModeSkillName(props.item.skill.name) ? (
+          <ComposerCustomModeMenuHint />
+        ) : null}
         {skillSourceKind ? (
           <SkillSourceBadge
             kind={skillSourceKind}

@@ -9,6 +9,7 @@ import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell
 import type { ThreadFamilyRead } from "@t3tools/client-runtime/state/threads";
 import {
   CommandId,
+  CustomModeSkillName,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   EnvironmentId,
   IsoDateTime,
@@ -49,6 +50,7 @@ const QueuedThreadCreationSchema = Schema.Struct({
   pullRequestReference: Schema.optional(Schema.String),
   repositories: Schema.optional(Schema.Array(Schema.String)),
   startsFromRepositoryDefaults: Schema.optional(Schema.Boolean),
+  customMode: Schema.optional(CustomModeSkillName),
 });
 
 export const QueuedThreadMessageSchema = Schema.Struct({
@@ -87,6 +89,7 @@ export interface QueuedThreadCreation {
   readonly repositories?: ReadonlyArray<string>;
   /** The project folder is no Git repository, so a new worktree needs no base branch. */
   readonly startsFromRepositoryDefaults?: boolean;
+  readonly customMode?: CustomModeSkillName;
 }
 
 export interface QueuedThreadMessage {

@@ -328,6 +328,19 @@ once the provider reports usage.
 Claude instances can also compact idle threads for you. See
 [compact long conversations](./providers-claude.md#compact-long-conversations).
 
+## Keep a skill on
+
+Use a skill as a mode to have every message in a thread follow it without typing
+it each time. In the `$` or `/` skill menu, highlight the skill and press
+Option+Enter, or Option-click it. Use Alt on Windows and Linux. On mobile,
+touch and hold the skill in the menu. The skill's name appears in the composer,
+and the agent follows it from your next message on. A mode chosen before the
+first message applies to the new thread.
+
+To turn the mode off, select × on the skill's name, or tap it on mobile. Your
+next message tells the agent to stop following the skill. Threads the agent
+delegates work to don't inherit the mode.
+
 ## Goals
 
 With Codex, Claude, and OpenCode 2.2.5 or later, send `/goal` followed by what "done" means, for example

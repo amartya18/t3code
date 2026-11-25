@@ -115,6 +115,7 @@ import {
   type WorktreeRepositorySelection,
 } from "@t3tools/client-runtime/state/thread-repositories";
 import { useConnectionsReady, useWorkspaceEnvironments } from "../../state/workspace";
+import { draftCustomModeCreation } from "./useComposerCustomMode";
 
 type WorkspaceMode = "local" | "worktree";
 
@@ -847,6 +848,7 @@ export function NewTaskFlowProvider(
           ? { startFromOrigin: true }
           : {}),
         ...(mode === "worktree" ? worktreeCreation(workspaceSelection.repositories) : {}),
+        ...draftCustomModeCreation(selectedProjectDraftKey),
       },
       createdAt: metadata.createdAt,
     };

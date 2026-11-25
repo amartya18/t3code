@@ -123,6 +123,7 @@ function shouldPublishAgentAwarenessEvent(
     case "thread.marked-unread":
     case "thread.runtime-mode-updated":
     case "thread.interaction-mode-updated":
+    case "thread.custom-mode-updated":
     case "run.background-work-cancelled":
     case "run.output-submitted":
     case "run-attempt.created":
