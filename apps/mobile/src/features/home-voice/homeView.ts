@@ -96,11 +96,13 @@ export function readHomeView(input: {
 }
 
 const MARKDOWN_LINK = /\[([^\]]*)\]\([^)]*\)/g;
-const URL = /\b(?:https?:\/\/|www\.)\S+/gi;
+const URL = /\b(?:https?:\/\/|www\.)[^\s)]+/gi;
 const THREAD_REF = /\b(?:thread|home(?:-launched)?|home-report):\S*/gi;
 const UUID = /\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b/gi;
 // Requires a digit so words that happen to be hex letters, like "defaced", survive.
 const HEX_RUN = /\b(?=[0-9a-f]*\d)[0-9a-f]{7,}\b/gi;
+// Ids like task handles interleave letters and digits; names like laptop13 end in theirs.
+const MIXED_ID = /\b(?=[a-z0-9]*\d[a-z]+\d)[a-z0-9]{7,}\b/gi;
 const MARKDOWN_MARKS = /[`*_#>|]+/g;
 
 /** One line the voice agent can read aloud: no ids, refs, links, hashes or markdown. */
@@ -111,6 +113,7 @@ export function speakable(text: string, maxLength: number): string {
     .replace(THREAD_REF, "")
     .replace(UUID, "")
     .replace(HEX_RUN, "")
+    .replace(MIXED_ID, "")
     .replace(MARKDOWN_MARKS, "")
     .replace(/\(\s*\)/g, "")
     .replace(/\s+/g, " ")
