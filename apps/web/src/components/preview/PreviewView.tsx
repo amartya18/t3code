@@ -1180,7 +1180,7 @@ export function PreviewView({
                 />
               </div>
             </>
-          ) : runtimeTabId && snapshot && !showEmptyState ? (
+          ) : runtimeTabId && snapshot && (inWindow || !showEmptyState) ? (
             previewBridge ? (
               inWindow ? (
                 <PreviewWindowPlaceholder
@@ -1203,7 +1203,7 @@ export function PreviewView({
               </div>
             )
           ) : null}
-          {emptyState}
+          {inWindow ? null : emptyState}
           {snapshot && desktopOverlay ? (
             <ZoomIndicator zoomFactor={desktopOverlay.zoomFactor} />
           ) : null}
