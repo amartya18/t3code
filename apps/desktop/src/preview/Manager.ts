@@ -429,7 +429,7 @@ interface WindowSession {
   readonly page: Electron.WebContents;
   readonly bar: Electron.WebContents;
   readonly webContentsId: number;
-  /** A bar menu is open, so the bar covers the page to draw it there. */
+  /** The bar draws over the page, such as a menu or the empty state, so it covers the window. */
   overlay: boolean;
 }
 

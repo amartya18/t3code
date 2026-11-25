@@ -7,7 +7,10 @@ const STYLE_SELECTOR = 'style, link[rel~="stylesheet"]';
 export interface PreviewWindowDocument {
   /** The browser bar renders here. */
   readonly root: HTMLElement;
-  /** Menus and tooltips portal here, so the desktop can lift the bar over the page for them. */
+  /**
+   * Whatever draws over the page, such as a menu or the empty state, portals here so the desktop
+   * lifts the bar over the page for it.
+   */
   readonly overlays: HTMLElement;
   readonly dispose: () => void;
 }
@@ -25,7 +28,7 @@ function syncAttributes(from: Element, to: Element): void {
 /**
  * Prepares a popup the app opened for a preview tab's own window: the app's stylesheets and
  * theme, kept in sync as Vite and the theme change them, and the elements the bar renders into.
- * `onOverlayChange` reports whether a menu or tooltip is open.
+ * `onOverlayChange` reports whether anything draws over the page.
  */
 export function preparePreviewWindowDocument(
   target: Document,

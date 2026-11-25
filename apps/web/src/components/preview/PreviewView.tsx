@@ -12,6 +12,7 @@ import {
 import {
   AuthOrchestrationOperateScope,
   DEFAULT_BROWSER_PROFILE_ID,
+  DESKTOP_PREVIEW_WINDOW_BAR_HEIGHT,
   INCOGNITO_BROWSER_PROFILE_ID,
   FILL_PREVIEW_VIEWPORT,
   type PreviewAnnotationPayload,
@@ -29,6 +30,7 @@ import {
 } from "@t3tools/shared/preview";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import {
   BROWSER_HISTORY_MAX_ENTRIES_PER_PROJECT,
@@ -91,6 +93,7 @@ import { PreviewFileNotShown, PreviewUnreachable } from "./PreviewUnreachable";
 import type { MessageResolver } from "~/i18n/messages";
 import { revealInFileExplorerLabel } from "./fileExplorerLabel";
 import { Badge } from "~/components/ui/badge";
+import { usePortalContainer } from "~/components/ui/portal-container";
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
 import {
   alternatePreviewRuntime,
@@ -202,6 +205,7 @@ export function PreviewView({
     threadRef,
     BROWSER_HISTORY_MAX_ENTRIES_PER_PROJECT,
   );
+  const portalContainer = usePortalContainer();
   const miniPlayerTabId = usePreviewMiniPlayerStore((state) =>
     selectThreadPreviewMiniPlayerTabId(state.byThreadKey, threadRef),
   );
@@ -1008,6 +1012,17 @@ export function PreviewView({
     };
   }, [chromeOnly, visible]);
 
+  const emptyState = showEmptyState ? (
+    <PreviewEmptyState
+      threadRef={threadRef}
+      environmentId={threadRef.environmentId}
+      configuredUrls={configuredUrls}
+      recentEntries={recentHistoryEntries}
+      onRemoveRecent={(url) => removeUrlForThread(threadRef, url)}
+      onOpenUrl={(next) => void handleOpenServerUrl(next)}
+    />
+  ) : null;
+
   return (
     <div
       className="flex min-h-0 flex-1 flex-col bg-background"
@@ -1101,7 +1116,20 @@ export function PreviewView({
         }
       />
 
-      {chromeOnly ? null : (
+      {chromeOnly ? (
+        // Among the window's overlays, so the desktop lifts the bar over the native page for it.
+        emptyState && portalContainer ? (
+          createPortal(
+            <div
+              className="fixed inset-x-0 bottom-0 flex flex-col bg-background"
+              style={{ top: DESKTOP_PREVIEW_WINDOW_BAR_HEIGHT }}
+            >
+              {emptyState}
+            </div>,
+            portalContainer,
+          )
+        ) : null
+      ) : (
         <div ref={serverBodyRef} className="relative min-h-0 flex-1 overflow-hidden">
           {runtimeTabId && snapshot && isServerTab ? (
             <>
@@ -1175,16 +1203,7 @@ export function PreviewView({
               </div>
             )
           ) : null}
-          {showEmptyState ? (
-            <PreviewEmptyState
-              threadRef={threadRef}
-              environmentId={threadRef.environmentId}
-              configuredUrls={configuredUrls}
-              recentEntries={recentHistoryEntries}
-              onRemoveRecent={(url) => removeUrlForThread(threadRef, url)}
-              onOpenUrl={(next) => void handleOpenServerUrl(next)}
-            />
-          ) : null}
+          {emptyState}
           {snapshot && desktopOverlay ? (
             <ZoomIndicator zoomFactor={desktopOverlay.zoomFactor} />
           ) : null}
