@@ -515,6 +515,14 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       close: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_WINDOW_CLOSE_CHANNEL, { tabId }),
       setOverlay: (tabId, open) =>
         ipcRenderer.invoke(IpcChannels.PREVIEW_WINDOW_OVERLAY_CHANNEL, { tabId, open }),
+      onFocusUrl: (listener) => {
+        const wrappedListener = (_event: Electron.IpcRendererEvent, tabId: unknown) => {
+          if (typeof tabId === "string") listener(tabId);
+        };
+        ipcRenderer.on(IpcChannels.PREVIEW_WINDOW_FOCUS_URL_CHANNEL, wrappedListener);
+        return () =>
+          ipcRenderer.removeListener(IpcChannels.PREVIEW_WINDOW_FOCUS_URL_CHANNEL, wrappedListener);
+      },
     },
     recording: {
       onInput: (listener) => {

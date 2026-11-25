@@ -1011,6 +1011,16 @@ export function PreviewView({
       unsubscribeMenu?.();
     };
   }, [chromeOnly, visible]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the desktop reports the focus-url shortcut pressed in this tab's own window
+  useEffect(() => {
+    if (!chromeOnly || !runtimeTabId || !previewBridge) return;
+    return previewBridge.window.onFocusUrl((tabId) => {
+      if (tabId !== runtimeTabId) return;
+      onPreviewAction("focus-url");
+      // An address that already has focus keeps its caret, so select it all again.
+      urlInputRef.current?.select();
+    });
+  }, [chromeOnly, runtimeTabId]);
 
   const emptyState = showEmptyState ? (
     <PreviewEmptyState

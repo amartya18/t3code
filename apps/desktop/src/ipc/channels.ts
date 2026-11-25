@@ -123,6 +123,7 @@ export const PREVIEW_PICTURE_IN_PICTURE_FRAME_CHANNEL = "desktop:preview-pip-fra
 export const PREVIEW_WINDOW_FOCUS_CHANNEL = "desktop:preview-window-focus";
 export const PREVIEW_WINDOW_CLOSE_CHANNEL = "desktop:preview-window-close";
 export const PREVIEW_WINDOW_OVERLAY_CHANNEL = "desktop:preview-window-overlay";
+export const PREVIEW_WINDOW_FOCUS_URL_CHANNEL = "desktop:preview-window-focus-url";
 export const PREVIEW_RECORDING_START_CHANNEL = "desktop:preview-recording-start";
 export const PREVIEW_RECORDING_STOP_CHANNEL = "desktop:preview-recording-stop";
 export const PREVIEW_RECORDING_SAVE_CHANNEL = "desktop:preview-recording-save";

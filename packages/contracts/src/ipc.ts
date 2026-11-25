@@ -1455,6 +1455,8 @@ export interface DesktopPreviewBridge {
     close: (tabId: string) => Promise<void>;
     /** While a bar menu is open the bar covers the page, so the menu can draw over it. */
     setOverlay: (tabId: string, open: boolean) => Promise<void>;
+    /** The focus-URL shortcut was pressed in the tab's window, whose bar now has keyboard focus. */
+    onFocusUrl: (listener: (tabId: string) => void) => () => void;
   };
   recording: {
     onInput: (listener: (event: DesktopPreviewRecordingInputEvent) => void) => () => void;

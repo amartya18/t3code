@@ -76,6 +76,7 @@ import {
   MENU_ACTION_CHANNEL,
   PREVIEW_ANNOTATION_VOICE_EVENT_CHANNEL,
   PREVIEW_PICTURE_IN_PICTURE_FRAME_CHANNEL,
+  PREVIEW_WINDOW_FOCUS_URL_CHANNEL,
 } from "../ipc/channels.ts";
 import * as DesktopBrowserHost from "./DesktopBrowserHost.ts";
 import * as PreviewPasskeys from "./Passkeys.ts";
@@ -538,6 +539,15 @@ export const previewWindowOpenAction = (details: {
     : "navigate";
 };
 
+const inputKeys = (input: Electron.Input) => ({
+  key: input.key,
+  code: input.code,
+  metaKey: input.meta,
+  ctrlKey: input.control,
+  shiftKey: input.shift,
+  altKey: input.alt,
+});
+
 const isPrimaryModifierShortcut = (
   input: Electron.Input,
   platform: NodeJS.Platform,
@@ -616,6 +626,25 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const resolvedArtifactDirectory = path.resolve(artifactDirectory);
 
   let forwardedShortcuts: ReadonlyArray<PreviewForwardedShortcut> = [];
+  const findForwardedShortcut = (keys: Parameters<typeof matchesKeybindingShortcut>[0]) =>
+    !(
+      hostPlatform !== "darwin" &&
+      keys.ctrlKey &&
+      keys.altKey &&
+      /^(?:[^a-zA-Z0-9]|Dead)$/u.test(keys.key)
+    ) &&
+    forwardedShortcuts.find(({ shortcut }) =>
+      matchesKeybindingShortcut(
+        keys,
+        shortcut,
+        hostPlatform === "darwin" ? "MacIntel" : hostPlatform,
+      ),
+    );
+  const focusesUrl = (input: Electron.Input) => {
+    if (input.type !== "keyDown" || input.isComposing) return false;
+    const forwarded = findForwardedShortcut(inputKeys(input));
+    return forwarded !== false && forwarded?.command === "preview.focusUrl";
+  };
   const annotationThemeRef = yield* Ref.make(DEFAULT_ANNOTATION_THEME);
   const annotationSendEnabled = new Map<string, boolean>();
   const mainWindowRef = yield* Ref.make<Option.Option<BrowserWindow>>(Option.none());
@@ -1634,20 +1663,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         syncMenuShortcuts(window.webContents, input);
       });
     };
-    const findForwardedShortcut = (keys: Parameters<typeof matchesKeybindingShortcut>[0]) =>
-      !(
-        hostPlatform !== "darwin" &&
-        keys.ctrlKey &&
-        keys.altKey &&
-        /^(?:[^a-zA-Z0-9]|Dead)$/u.test(keys.key)
-      ) &&
-      forwardedShortcuts.find(({ shortcut }) =>
-        matchesKeybindingShortcut(
-          keys,
-          shortcut,
-          hostPlatform === "darwin" ? "MacIntel" : hostPlatform,
-        ),
-      );
     // A tab's own window is an ordinary app window, so the app menu keeps its shortcuts there.
     const inPanel = wc.getType() === "webview";
     const beforeInput = (event: Electron.Event, input: Electron.Input): void => {
@@ -1659,14 +1674,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         host &&
         !host.isDestroyed() &&
         holdsKeyboardFocus(wc) &&
-        findForwardedShortcut({
-          key: input.key,
-          code: input.code,
-          metaKey: input.meta,
-          ctrlKey: input.control,
-          shiftKey: input.shift,
-          altKey: input.alt,
-        });
+        findForwardedShortcut(inputKeys(input));
       if (forwarded && host) {
         // The page keeps these keys. Only the main-frame preload can report one it
         // left unhandled, so a focused iframe (e.g. Google Docs' input) keeps its own find or zoom.
@@ -2397,6 +2405,17 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
                     } else if (reloads && isPrimaryModifierShortcut(input, hostPlatform, "r")) {
                       event.preventDefault();
                       runFork(refresh(tabId).pipe(Effect.ignore));
+                    } else if (focusesUrl(input)) {
+                      // No panel hears this window's keys, so its own bar takes the address focus.
+                      event.preventDefault();
+                      if (input.isAutoRepeat || bar.isDestroyed()) return;
+                      bar.focus();
+                      runFork(
+                        attempt(
+                          { operation: "window.focusUrl", tabId, webContentsId: bar.id },
+                          () => appFrame.send(PREVIEW_WINDOW_FOCUS_URL_CHANNEL, tabId),
+                        ).pipe(Effect.ignore),
+                      );
                     }
                   };
                 // The page's own listeners already reload it.

@@ -722,7 +722,7 @@ const makeTestNavigableWebContents = (
 };
 
 /** The main window's main frame, which opens every tab's own window. */
-const testAppFrame = { frameTreeNodeId: 1 } as Electron.WebFrameMain;
+const testAppFrame = { frameTreeNodeId: 1, send: vi.fn() } as unknown as Electron.WebFrameMain;
 
 /** What the main window's open handler is told about the renderer's `window.open`. */
 const testWindowOpen = (frameName: string, url = "about:blank") => ({ frameName, url });
@@ -809,6 +809,7 @@ const makeTestPreviewWindow = (page: Electron.WebContents, opener = testAppFrame
     barView,
     addChildView,
     maximize,
+    emitBar: barEvents.emit,
   };
 };
 
@@ -860,6 +861,7 @@ describe("PreviewManager", () => {
     writeClipboard.mockClear();
     createFromPath.mockClear();
     webviewSend.mockClear();
+    vi.mocked(testAppFrame.send).mockClear();
   });
 
   effectIt.effect("preserves recording artifacts saved in the same millisecond", () =>
@@ -3793,6 +3795,67 @@ describe("PreviewManager", () => {
         yield* manager.registerWebview("tab_window", 43);
         expect(returned.restore).toHaveBeenCalledOnce();
         expect(states).toHaveLength(seen);
+      }),
+    ),
+  );
+
+  // The window's keys reach no panel, so the renderer that draws its bar focuses the address there.
+  effectIt.effect("focuses a tab window's address bar for the focus-url shortcut", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const restored = makeChangeSignal();
+        const history = { entries: [{ url: "https://example.com/a", title: "A" }], index: 0 };
+        const guest = makeTestNavigableWebContents(46, history, restored);
+        const page = makeTestNavigableWebContents(80, history, restored, "browserView", {
+          empty: true,
+        });
+        const contentsById = new Map([guest, page].map(({ wc }) => [wc.id, wc]));
+        fromId.mockImplementation((id) =>
+          id === undefined ? null : (contentsById.get(id) ?? null),
+        );
+        const preview = makeTestPreviewWindow(page.wc);
+        yield* manager.createTab("tab_window_focus_url");
+        yield* manager.registerWebview("tab_window_focus_url", 46);
+        yield* manager.setForwardedShortcuts([
+          { command: "preview.focusUrl", shortcut: parseKeybindingShortcut("mod+l")! },
+        ]);
+        yield* openTestWindow(manager, "tab_window_focus_url", preview.bar);
+        const focusBar = vi.mocked(preview.bar.focus);
+        const send = vi.mocked(testAppFrame.send);
+        const key = {
+          type: "keyDown",
+          key: "l",
+          meta: true,
+          control: false,
+          shift: false,
+          alt: false,
+        };
+
+        const fromPage = vi.fn();
+        page.emit("before-input-event", { preventDefault: fromPage }, key);
+        expect(fromPage).toHaveBeenCalled();
+        expect(focusBar).toHaveBeenCalledOnce();
+        expect(send).toHaveBeenCalledExactlyOnceWith(
+          "desktop:preview-window-focus-url",
+          "tab_window_focus_url",
+        );
+        expect(focusBar.mock.invocationCallOrder[0]).toBeLessThan(
+          send.mock.invocationCallOrder[0]!,
+        );
+
+        page.emit(
+          "before-input-event",
+          { preventDefault: vi.fn() },
+          { ...key, isAutoRepeat: true },
+        );
+        preview.emitBar("before-input-event", { preventDefault: vi.fn() }, { ...key, key: "k" });
+        expect(send).toHaveBeenCalledOnce();
+
+        const fromBar = vi.fn();
+        preview.emitBar("before-input-event", { preventDefault: fromBar }, key);
+        expect(fromBar).toHaveBeenCalled();
+        expect(focusBar).toHaveBeenCalledTimes(2);
+        expect(send).toHaveBeenCalledTimes(2);
       }),
     ),
   );
