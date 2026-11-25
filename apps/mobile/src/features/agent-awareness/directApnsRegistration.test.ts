@@ -1,10 +1,11 @@
-import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId } from "@t3tools/contracts";
 import type { RelayDeviceRegistrationRequest } from "@t3tools/contracts/relay";
 
 const mocks = vi.hoisted(() => ({
   runAtomCommand: vi.fn(),
   environmentIds: [] as string[],
+  generations: new Map<string, number>(),
   catalogListeners: [] as Array<() => void>,
 }));
 
@@ -15,11 +16,17 @@ vi.mock("@t3tools/client-runtime/state/connections", () => ({
   enabledEnvironmentIds: () => mocks.environmentIds,
 }));
 vi.mock("../../connection/catalog", () => ({
-  environmentCatalog: { catalogValueAtom: Symbol("catalog") },
+  environmentCatalog: {
+    catalogValueAtom: Symbol("catalog"),
+    sessionGenerationAtom: (environmentId: string) => ({ generationOf: environmentId }),
+  },
 }));
 vi.mock("../../state/atom-registry", () => ({
   appAtomRegistry: {
-    get: () => ({}),
+    get: (atom: unknown) =>
+      typeof atom === "object" && atom !== null && "generationOf" in atom
+        ? (mocks.generations.get(String(atom.generationOf)) ?? 1)
+        : {},
     subscribe: (_atom: unknown, listener: () => void) => {
       mocks.catalogListeners.push(listener);
       return () => undefined;
@@ -29,12 +36,14 @@ vi.mock("../../state/atom-registry", () => ({
 vi.mock("../../state/server", () => ({
   serverEnvironment: {
     registerPushDevice: { label: "register" },
+    unregisterPushDevice: { label: "unregister" },
     registerPushLiveActivity: { label: "register-live-activity" },
   },
 }));
 
 import {
   __resetDirectApnsRegistrationForTest,
+  forgetDirectApnsEnvironments,
   isDirectApnsRegistered,
   registerDirectApnsDevice,
   registerDirectLiveActivity,
@@ -69,9 +78,21 @@ beforeEach(() => {
   mocks.runAtomCommand.mockReset();
   mocks.runAtomCommand.mockResolvedValue({ _tag: "Success" });
   mocks.environmentIds = [ENV_A, ENV_B];
+  mocks.generations.clear();
   mocks.catalogListeners.length = 0;
   __resetDirectApnsRegistrationForTest();
 });
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+const sent = () =>
+  mocks.runAtomCommand.mock.calls.map(([, command, target]) => [
+    command.label,
+    target.environmentId,
+    target.input,
+  ]);
 
 describe("toPushDeviceRegistration", () => {
   it("maps the relay registration onto the direct push registration", () => {
@@ -170,5 +191,63 @@ describe("registerDirectLiveActivity", () => {
     expect(mocks.runAtomCommand.mock.calls.map(([, command, target]) => [command, target])).toEqual(
       [[{ label: "register-live-activity" }, { environmentId: ENV_A, input: registration }]],
     );
+  });
+});
+
+describe("leaving a server's push list", () => {
+  it("unregisters once notification permission is off, and registers again once it is back", async () => {
+    await registerDirectApnsDevice(request());
+    mocks.runAtomCommand.mockClear();
+    const { pushToken: _token, ...withoutToken } = request();
+    await registerDirectApnsDevice(withoutToken);
+    expect(sent()).toEqual([
+      ["unregister", ENV_A, { deviceId: "device-1" }],
+      ["unregister", ENV_B, { deviceId: "device-1" }],
+    ]);
+    expect(isDirectApnsRegistered()).toBe(false);
+
+    mocks.runAtomCommand.mockClear();
+    await registerDirectApnsDevice(request());
+    expect(sent().map(([label, environmentId]) => [label, environmentId])).toEqual([
+      ["register", ENV_A],
+      ["register", ENV_B],
+    ]);
+  });
+
+  it("unregisters from a forgotten server without waiting on one that never answers", async () => {
+    await registerDirectApnsDevice(request());
+    mocks.runAtomCommand.mockClear();
+    mocks.runAtomCommand.mockReturnValue(new Promise(() => undefined));
+    vi.useFakeTimers();
+    const forgotten = forgetDirectApnsEnvironments([ENV_A]);
+    await vi.runAllTimersAsync();
+    await expect(forgotten).resolves.toBeUndefined();
+    expect(sent()).toEqual([["unregister", ENV_A, { deviceId: "device-1" }]]);
+
+    mocks.runAtomCommand.mockReset();
+    mocks.runAtomCommand.mockResolvedValue({ _tag: "Success" });
+    const registration = { deviceId: "device-1", activityPushToken: "ef".repeat(40) };
+    await registerDirectLiveActivity(registration);
+    expect(sent()).toEqual([["register-live-activity", ENV_B, registration]]);
+  });
+
+  it("registers again on each new session, so a re-paired server holds the device", async () => {
+    mocks.environmentIds = [ENV_A];
+    await registerDirectApnsDevice(request());
+    expect(mocks.runAtomCommand).toHaveBeenCalledTimes(1);
+    mocks.generations.set(ENV_A, 2);
+    mocks.catalogListeners[0]?.();
+    await vi.waitFor(() => expect(mocks.runAtomCommand).toHaveBeenCalledTimes(2));
+    expect(sent()[1]?.slice(0, 2)).toEqual(["register", ENV_A]);
+  });
+
+  it("leaves servers alone on Android", async () => {
+    const android = request({
+      platform: "android",
+      androidApiLevel: 35,
+    } as Partial<RelayDeviceRegistrationRequest>);
+    await registerDirectApnsDevice(android);
+    await forgetDirectApnsEnvironments([ENV_A]);
+    expect(mocks.runAtomCommand).not.toHaveBeenCalled();
   });
 });

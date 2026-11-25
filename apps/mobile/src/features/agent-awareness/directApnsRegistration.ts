@@ -118,6 +118,10 @@ export async function registerDirectLiveActivity(
   );
 }
 
+export async function forgetDirectApnsEnvironments(
+  _environmentIds: ReadonlyArray<EnvironmentId>,
+): Promise<void> {}
+
 export function __resetDirectApnsRegistrationForTest(): void {
   registeredSignatures.clear();
   registeredListeners.clear();

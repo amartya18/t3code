@@ -1,4 +1,4 @@
-import { PushDeviceRegistration } from "@t3tools/contracts";
+import { type AuthSessionId, PushDeviceRegistration } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -28,6 +28,10 @@ export class DirectApnsDevices extends Context.Service<
     /** Keeps the device's Live Activity token: a preference refresh does not end its card. */
     readonly register: (
       device: PushDeviceRegistration,
+      sessionId: AuthSessionId,
+    ) => Effect.Effect<void, ServerSecretStore.SecretStoreError>;
+    readonly unregister: (
+      deviceId: string,
     ) => Effect.Effect<void, ServerSecretStore.SecretStoreError>;
     readonly list: Effect.Effect<
       ReadonlyArray<DirectPushDevice>,
@@ -107,6 +111,7 @@ const make = Effect.gen(function* () {
         return [...devices.filter((other) => other.deviceId !== device.deviceId), device];
       });
     }),
+    unregister: () => Effect.void,
     list: lock.withPermits(1)(read),
     setActivityToken: Effect.fn("DirectApnsDevices.setActivityToken")(function* (input) {
       const devices = yield* updateDevice(input.deviceId, (device) =>

@@ -2897,7 +2897,7 @@ export const layerWsRpc = (
         [WS_METHODS.serverPrepareTriage]: (input) => triage.prepare(input),
         [WS_METHODS.serverSignalProcess]: (input) => processDiagnostics.signal(input),
         [WS_METHODS.notificationsRegisterDevice]: (input) =>
-          directApnsDevices.register(input).pipe(
+          directApnsDevices.register(input, currentSessionId).pipe(
             Effect.tapError((cause) =>
               Effect.logWarning("push device registration failed", { cause }),
             ),
