@@ -183,7 +183,7 @@ function SwitchPlan({
                           version: release.version,
                         }),
                   );
-                  return;
+                  return false;
                 }
                 return installLocalUpdate(bridge, reportError, downloadedVersion);
               },

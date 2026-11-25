@@ -54,13 +54,16 @@ import { scrollToSettingsTarget } from "./settingsLayout";
 import {
   searchSettings,
   revealSettingsSearchTarget,
-  SETTINGS_NAV_GROUPS,
+  settingsNavGroups,
   SETTINGS_NAV_LABELS,
   SETTINGS_SECTION_LABELS,
   type SettingsPath,
   type SettingsSearchItem,
 } from "./settingsSearch";
-import { useAvailableSettingsSearchItems } from "./useAvailableSettingsSearchItems";
+import {
+  useAvailableSettingsSearchItems,
+  useHasSecretProvidersEnvironment,
+} from "./useAvailableSettingsSearchItems";
 import { handleSettingsSectionKeyDown } from "./settingsSectionNavigation";
 import { workspaceAreaProps } from "../../lib/workspaceFocus";
 
@@ -139,13 +142,13 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const navigate = useNavigate();
   const currentHash = useLocation({ select: (location) => location.hash });
   const activePath = SETTINGS_DETAIL_PAGE_PARENTS[pathname] ?? pathname;
-  const navGroups = SETTINGS_NAV_GROUPS;
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   // Below md the nav is an icon rail; searching expands it over the page.
   const [compactSearchOpen, setCompactSearchOpen] = useState(false);
   const [activeResultIndex, setActiveResultIndex] = useState(0);
   const searchableItems = useAvailableSettingsSearchItems();
+  const navGroups = settingsNavGroups(useHasSecretProvidersEnvironment());
   const results = searchSettings(query, searchableItems, m);
   const isSearching = query.trim().length > 0;
   const hasResults = results.length > 0;
@@ -233,7 +236,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
 
   const handleSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-    if (event.key === "Escape" && isSearching) {
+    if (event.key === "Escape" && (query || event.repeat)) {
       event.preventDefault();
       event.stopPropagation();
       clearSearch();
