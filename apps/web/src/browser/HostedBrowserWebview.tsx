@@ -1,6 +1,6 @@
 import {
   type DesktopPreviewColorScheme,
-  DESKTOP_PREVIEW_WINDOW_RETURN_URL,
+  desktopPreviewWindowReturnUrl,
   type PreviewViewportSetting,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -152,7 +152,7 @@ export function HostedBrowserWebview(props: {
   if (previousInWindow !== inWindow) {
     setPreviousInWindow(inWindow);
     if (!inWindow) {
-      setRecoverySrc(DESKTOP_PREVIEW_WINDOW_RETURN_URL);
+      setRecoverySrc(desktopPreviewWindowReturnUrl(runtimeTabId));
       setWebviewGeneration((generation) => generation + 1);
     }
   }

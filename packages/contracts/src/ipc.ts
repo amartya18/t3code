@@ -1265,8 +1265,21 @@ export interface DesktopBridge {
 /** Renderer callback invoked by Electron with a fresh user gesture before display-media capture. */
 export const DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER = "__t3DesktopPreviewRecordingCapture";
 
-/** A webview `src` the desktop attaches as an empty guest, so a tab's window history can be restored into it. */
-export const DESKTOP_PREVIEW_WINDOW_RETURN_URL = "about:blank#t3-preview-window-return";
+/**
+ * A webview `src` the desktop attaches as an empty guest for the tab, which then restores the
+ * history of the tab's window into it.
+ */
+const DESKTOP_PREVIEW_WINDOW_RETURN_URL_PREFIX = "about:blank#t3-preview-window-return:";
+export const desktopPreviewWindowReturnUrl = (tabId: string): string =>
+  `${DESKTOP_PREVIEW_WINDOW_RETURN_URL_PREFIX}${encodeURIComponent(tabId)}`;
+export const parseDesktopPreviewWindowReturnUrl = (src: string): string | null => {
+  if (!src.startsWith(DESKTOP_PREVIEW_WINDOW_RETURN_URL_PREFIX)) return null;
+  try {
+    return decodeURIComponent(src.slice(DESKTOP_PREVIEW_WINDOW_RETURN_URL_PREFIX.length)) || null;
+  } catch {
+    return null;
+  }
+};
 
 /**
  * The renderer opens a tab's own window with `window.open` under this frame name and draws the

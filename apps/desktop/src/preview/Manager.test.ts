@@ -3781,12 +3781,18 @@ describe("PreviewManager", () => {
         expect(preview.window.destroy).toHaveBeenCalledOnce();
         expect(preview.bar.isDestroyed()).toBe(true);
 
-        // The returning guest attaches empty, as the main window's did-attach-webview prepares it.
+        // The returning guest attaches empty, and the main window registers it as it attaches.
         yield* manager.prepareWebview(returned.wc);
-        yield* manager.registerWebview("tab_window", 43);
+        yield* manager.registerReturningWebview("tab_window", returned.wc);
         yield* restored.until(() => returned.restore.mock.calls.length > 0);
         expect(returned.restore).toHaveBeenCalledWith(windowHistory);
         expect(states.at(-1)).toMatchObject({ webContentsId: 43, inWindow: false });
+
+        // The renderer registers it too once the restored page is ready.
+        const seen = states.length;
+        yield* manager.registerWebview("tab_window", 43);
+        expect(returned.restore).toHaveBeenCalledOnce();
+        expect(states).toHaveLength(seen);
       }),
     ),
   );
@@ -3827,7 +3833,7 @@ describe("PreviewManager", () => {
         expect(page.wc.isDestroyed()).toBe(true);
         expect(preview.bar.isDestroyed()).toBe(true);
         yield* manager.prepareWebview(returned.wc);
-        yield* manager.registerWebview("tab_window_reload", 43);
+        yield* manager.registerReturningWebview("tab_window_reload", returned.wc);
         yield* restored.until(() => returned.restore.mock.calls.length > 0);
         expect(returned.restore).toHaveBeenCalledWith(windowHistory);
       }),

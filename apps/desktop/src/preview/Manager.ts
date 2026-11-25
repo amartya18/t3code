@@ -2156,6 +2156,20 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
   });
 
+  // The renderer reads a guest's id only once it is ready, which the empty guest a tab returns
+  // to from its window never is; the main window registers it as it attaches.
+  const registerReturningWebview = Effect.fn("PreviewManager.registerReturningWebview")(
+    function* (tabId: string, wc: Electron.WebContents) {
+      yield* registerWebview(tabId, wc.id);
+    },
+    (effect) =>
+      effect.pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("Preview tab's returning guest was not registered.", { error }),
+        ),
+      ),
+  );
+
   const readNavigation = (wc: Electron.WebContents): NavigationSnapshot => ({
     entries: wc.navigationHistory.getAllEntries(),
     index: wc.navigationHistory.getActiveIndex(),
@@ -4248,6 +4262,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     reapplyZoom,
     refresh,
     stopLoading,
+    registerReturningWebview,
     registerWebview,
     resetZoom: (tabId: string) => applyZoom(tabId, () => DEFAULT_ZOOM_FACTOR),
     setZoomFactor: (tabId: string, zoomFactor: number) =>
@@ -4459,6 +4474,11 @@ export class PreviewManager extends Context.Service<
       tabId: string,
       webContentsId: number,
     ) => Effect.Effect<void, PreviewManagerError>;
+    /** Registers the empty guest a tab returns to from its window, as the main window attaches it. */
+    readonly registerReturningWebview: (
+      tabId: string,
+      webContents: Electron.WebContents,
+    ) => Effect.Effect<void>;
     readonly prepareWebview: (webContents: Electron.WebContents) => Effect.Effect<void>;
     readonly navigate: (tabId: string, url: string) => Effect.Effect<void, PreviewManagerError>;
     readonly goBack: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
@@ -4654,6 +4674,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     isBrowserPartition: browserSession.isPartition,
     createTab: operations.createTab,
     closeTab: operations.closeTab,
+    registerReturningWebview: operations.registerReturningWebview,
     registerWebview: operations.registerWebview,
     prepareWebview: operations.prepareWebview,
     navigate: operations.navigate,

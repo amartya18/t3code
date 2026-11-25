@@ -16,7 +16,7 @@ import {
   type DatabaseMigrationProgress,
   type DesktopSnapShotEvent,
   DEFAULT_CLIENT_SETTINGS,
-  DESKTOP_PREVIEW_WINDOW_RETURN_URL,
+  parseDesktopPreviewWindowReturnUrl,
 } from "@t3tools/contracts";
 
 import * as DesktopAssets from "../app/DesktopAssets.ts";
@@ -619,7 +619,10 @@ export const make = Effect.gen(function* () {
       yield* electronWindow.destroyAll;
       return Option.none();
     }
+    // Electron emits each guest's did-attach-webview right after its will-attach-webview.
+    let returningTabId: string | null = null;
     window.webContents.on("will-attach-webview", (event, webPreferences, params) => {
+      returningTabId = null;
       if (
         typeof params.partition !== "string" ||
         !previewManager.isBrowserPartition(params.partition)
@@ -633,7 +636,8 @@ export const make = Effect.gen(function* () {
       });
       webPreferences.disableHtmlFullscreenWindowResize = true;
       // An empty guest has loaded nothing, so a tab's window history can be restored into it.
-      if (params.src === DESKTOP_PREVIEW_WINDOW_RETURN_URL) params.src = "";
+      returningTabId = parseDesktopPreviewWindowReturnUrl(params.src ?? "");
+      if (returningTabId !== null) params.src = "";
     });
 
     const contextMenuContents = new WeakSet<Electron.WebContents>();
@@ -757,8 +761,20 @@ export const make = Effect.gen(function* () {
     installContextMenu(window, window.webContents);
     yield* previewManager.setGuestContextMenu(installContextMenu);
     window.webContents.on("did-attach-webview", (_event, contents) => {
+      const tabId = returningTabId;
+      returningTabId = null;
       installContextMenu(window, contents, true);
-      void runPromise(previewManager.prepareWebview(contents));
+      void runPromise(
+        previewManager
+          .prepareWebview(contents)
+          .pipe(
+            Effect.andThen(
+              tabId === null
+                ? Effect.void
+                : previewManager.registerReturningWebview(tabId, contents),
+            ),
+          ),
+      );
     });
 
     // Popups from every frame in this window arrive here without a caller, so only web links
