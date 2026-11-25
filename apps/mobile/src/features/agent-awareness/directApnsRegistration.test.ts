@@ -199,7 +199,10 @@ describe("leaving a server's push list", () => {
     await registerDirectApnsDevice(request());
     mocks.runAtomCommand.mockClear();
     const { pushToken: _token, ...withoutToken } = request();
-    await registerDirectApnsDevice(withoutToken);
+    await registerDirectApnsDevice({
+      ...withoutToken,
+      preferences: { ...withoutToken.preferences, notificationsEnabled: false },
+    });
     expect(sent()).toEqual([
       ["unregister", ENV_A, { deviceId: "device-1" }],
       ["unregister", ENV_B, { deviceId: "device-1" }],
@@ -212,6 +215,15 @@ describe("leaving a server's push list", () => {
       ["register", ENV_A],
       ["register", ENV_B],
     ]);
+  });
+
+  it("stays registered when the token lookup fails while permission is granted", async () => {
+    await registerDirectApnsDevice(request());
+    mocks.runAtomCommand.mockClear();
+    const { pushToken: _token, ...withoutToken } = request();
+    await registerDirectApnsDevice(withoutToken);
+    expect(sent()).toEqual([]);
+    expect(isDirectApnsRegistered()).toBe(true);
   });
 
   it("unregisters from a forgotten server without waiting on one that never answers", async () => {
