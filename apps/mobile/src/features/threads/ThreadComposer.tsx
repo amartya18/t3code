@@ -1078,7 +1078,6 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   onStart={voiceInput.start}
                   onCancel={voiceInput.cancel}
                 />
-                <HomeVoiceSlot thread={props.selectedThread} large={usesLargeControls} />
                 {showStopAction ? (
                   <ComposerActionButton
                     size={usesLargeControls ? "large" : "regular"}
@@ -1097,13 +1096,19 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                     onPress={() => void handleResumeQueue()}
                   />
                 ) : (
-                  <SendActionButton
-                    size={usesLargeControls ? "large" : "regular"}
-                    accessibilityLabel={sendBlockedReason ?? sendLabel}
-                    presentation={sendPresentation}
-                    disabled={!canSend}
-                    onSend={handleSend}
-                  />
+                  <HomeVoiceSlot
+                    thread={props.selectedThread}
+                    large={usesLargeControls}
+                    hasContent={hasContent}
+                  >
+                    <SendActionButton
+                      size={usesLargeControls ? "large" : "regular"}
+                      accessibilityLabel={sendBlockedReason ?? sendLabel}
+                      presentation={sendPresentation}
+                      disabled={!canSend}
+                      onSend={handleSend}
+                    />
+                  </HomeVoiceSlot>
                 )}
               </View>
             </ComposerDictationDraftContent>

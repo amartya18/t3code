@@ -5,7 +5,7 @@ import { useNavigation } from "@react-navigation/native";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import { useGT } from "gt-react-native";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Pressable, View } from "react-native";
 
 import * as Dialog from "../../components/ui/Dialog";
@@ -18,12 +18,14 @@ import { VoiceWaveIcon } from "./VoiceWaveIcon";
 import { startVoiceSession, voiceSessionAtom } from "./voiceSession";
 import { useVoiceModeSettings } from "./voiceSettings";
 
-/** Fork hook in ThreadComposer: the Voice button in Home's thread. */
+/** Fork hook in ThreadComposer: in Home's thread, an empty composer's send slot starts voice mode. */
 export function HomeVoiceSlot(props: {
   readonly thread: EnvironmentThreadShell;
   readonly large: boolean;
+  readonly hasContent: boolean;
+  readonly children: ReactNode;
 }) {
-  if (!isHomeThreadId(props.thread.id)) return null;
+  if (props.hasContent || !isHomeThreadId(props.thread.id)) return props.children;
   return <HomeVoiceButton home={props.thread} large={props.large} />;
 }
 
