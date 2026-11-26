@@ -253,7 +253,6 @@ const clientLaunchHarness = (input: {
       ? Layer.mergeAll(
           Layer.mock(HomeService.HomeService)({
             isHome: (threadId) => Effect.succeed(threadId === callerId),
-            updateWatches: () => Effect.void as never,
           }),
           Layer.mock(FleetService.FleetService)({
             execute: (call) => {

@@ -81,19 +81,9 @@ export class HomeService extends Context.Service<
 const watchKey = (watch: Pick<HomeWatch, "environmentId" | "threadId">) =>
   `${watch.environmentId}\u0000${watch.threadId}`;
 
-/** Adds a watch, keeping the stronger "launched" reason when one exists. */
 export function addWatch(home: HomeSettings, watch: HomeWatch): HomeSettings {
-  const existing = home.watches.find((candidate) => watchKey(candidate) === watchKey(watch));
-  if (existing !== undefined && (existing.reason === "launched" || watch.reason === "requested")) {
-    return home;
-  }
-  return {
-    ...home,
-    watches: [
-      ...home.watches.filter((candidate) => watchKey(candidate) !== watchKey(watch)),
-      watch,
-    ],
-  };
+  if (home.watches.some((candidate) => watchKey(candidate) === watchKey(watch))) return home;
+  return { ...home, watches: [...home.watches, watch] };
 }
 
 export function removeWatch(
@@ -461,7 +451,9 @@ const make = Effect.gen(function* () {
             (event) =>
               event.kind !== "ended" &&
               event.threadId !== home.threadId &&
-              (home.watchAll || watched.has(watchKey(event))),
+              (home.watchAll ||
+                isHomeLaunchedThreadId(event.threadId) ||
+                watched.has(watchKey(event))),
           );
           if (wake.length > 0) yield* deliver(home.threadId, wake);
           // Watches end only after delivery, so a retried batch is still eligible.
