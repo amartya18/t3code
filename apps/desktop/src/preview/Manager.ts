@@ -1216,7 +1216,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           let dropped = false;
           const onDetach = () => {
             dropped = true;
-            runFork(recoverDetachedControlSession(wc, control));
+            // Chromium emits this from a loop that ends once the target has no session, so
+            // attaching inside the event never returns. Recovery waits for it to unwind.
+            runFork(
+              Effect.yieldNow.pipe(Effect.andThen(recoverDetachedControlSession(wc, control))),
+            );
           };
           // The listener comes off before detach() so a detach this manager requested
           // never looks like a dropped one. A dropped session has nothing left to
