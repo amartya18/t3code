@@ -9,6 +9,7 @@ import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import Animated, {
   cancelAnimation,
   Easing,
+  FadeIn,
   useAnimatedStyle,
   useSharedValue,
   withTiming,
@@ -44,7 +45,7 @@ import {
   type VoiceSession,
 } from "./voiceSession";
 import { useVoiceModeSettings } from "./voiceSettings";
-import { TRANSCRIPT_LINES, voiceTranscript, type TranscriptLine } from "./voiceTranscript";
+import { voiceTranscript, type TranscriptLine } from "./voiceTranscript";
 
 /** The full-screen call: the session's time, its last few lines, mute and hang up. */
 export function VoiceCallScreen() {
@@ -165,7 +166,6 @@ function VoiceTranscript(props: { readonly session: VoiceSession }) {
   const { thread } = props.session;
   const state = useEnvironmentThread(thread.environmentId, thread.threadId);
   const connection = useVoiceConnection(thread);
-  const speech = useAtomValue(voiceSpeechAtom);
   const sent = Option.match(state.data, {
     onNone: () => [],
     onSome: (data) =>
@@ -185,44 +185,21 @@ function VoiceTranscript(props: { readonly session: VoiceSession }) {
       text: message.text,
     })),
   );
-  const spoken = [speech?.sending, speech?.current].filter((text) => text != null);
-  const shown = lines.slice(Math.max(0, lines.length + spoken.length - TRANSCRIPT_LINES));
+  const lastLine = lines.at(-1);
 
   return (
     <View className="gap-3 px-6" accessibilityLiveRegion="polite">
-      {shown.map((line, index) => (
-        <TranscriptRow
-          key={line.id}
-          line={line}
-          newest={spoken.length === 0 && index === shown.length - 1}
-        />
-      ))}
-      {spoken.map((text, index) => {
-        const newest = index === spoken.length - 1;
-        return (
-          <View
-            key={newest ? "current" : "sending"}
-            className="items-end gap-1.5 self-end"
-            style={{ maxWidth: "80%" }}
-          >
-            <Text
-              className={cn(
-                newest ? "text-base" : "text-sm opacity-70",
-                "text-right text-foreground-muted",
-              )}
-            >
-              {text}
-            </Text>
-            {newest && speech?.pause != null ? <SendCountdown {...speech.pause} /> : null}
-          </View>
-        );
-      })}
-      {speech === null ? null : <EngineNote engine={speech.engine} />}
-      {VOICE_ENGINE_SUPPORT === "unsafeIos" ? (
-        <Text className="text-xs text-foreground-muted">
-          {gt("Voice is off on iOS 26.4 and later, where it crashes for now")}
-        </Text>
-      ) : null}
+      {lines.map((line, index) =>
+        line.kind === "user" ? (
+          <TranscriptRow key={line.id} line={line} newest={index === lines.length - 1} />
+        ) : (
+          <Animated.View key={line.id} entering={FadeIn.duration(180)}>
+            <TranscriptRow line={line} newest={index === lines.length - 1} />
+          </Animated.View>
+        ),
+      )}
+      <LiveWords landed={lastLine?.kind === "user" ? lastLine.text : null} />
+      <SpeechNotes />
       {connection.offline ? (
         <Text className="text-xs text-foreground-muted">
           {gt("Reconnecting")}
@@ -240,6 +217,34 @@ function VoiceTranscript(props: { readonly session: VoiceSession }) {
         </Text>
       ) : null}
     </View>
+  );
+}
+
+/** Amar's words while he talks and while they send; the only part that changes on every partial. */
+function LiveWords(props: { readonly landed: string | null }) {
+  const speech = useAtomValue(voiceSpeechAtom);
+  const text = speech?.current ?? (speech?.sending === props.landed ? null : speech?.sending);
+  if (text == null) return null;
+  return (
+    <View className="items-end gap-1.5 self-end" style={{ maxWidth: "80%" }}>
+      <Text className="text-base text-right text-foreground-muted">{text}</Text>
+      {speech?.current != null && speech.pause != null ? <SendCountdown {...speech.pause} /> : null}
+    </View>
+  );
+}
+
+function SpeechNotes() {
+  const gt = useGT();
+  const speech = useAtomValue(voiceSpeechAtom);
+  return (
+    <>
+      {speech === null ? null : <EngineNote engine={speech.engine} />}
+      {VOICE_ENGINE_SUPPORT === "unsafeIos" ? (
+        <Text className="text-xs text-foreground-muted">
+          {gt("Voice is off on iOS 26.4 and later, where it crashes for now")}
+        </Text>
+      ) : null}
+    </>
   );
 }
 
@@ -347,11 +352,10 @@ function TranscriptRow(props: { readonly line: TranscriptLine; readonly newest: 
       </View>
     );
   }
-  const size = props.newest ? "text-base" : "text-sm";
   if (line.kind === "agent") {
     return (
       <Text
-        className={cn(size, props.newest ? "text-foreground" : "text-foreground-muted")}
+        className={cn("text-base", props.newest ? "text-foreground" : "text-foreground-muted")}
         style={{ maxWidth: "88%" }}
       >
         {line.text}
@@ -361,9 +365,8 @@ function TranscriptRow(props: { readonly line: TranscriptLine; readonly newest: 
   return (
     <Text
       className={cn(
-        size,
-        "self-end text-right text-foreground-muted",
-        (!props.newest || line.pending) && "opacity-70",
+        "text-base self-end text-right text-foreground-muted",
+        !props.newest && "opacity-70",
       )}
       style={{ maxWidth: "80%" }}
     >
