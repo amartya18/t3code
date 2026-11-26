@@ -216,6 +216,7 @@ import { ThreadFeed, type ThreadFeedHistoryControls } from "./ThreadFeed";
 import { WorkspaceMutationIdProvider } from "./WorkspaceMutationIdProvider";
 import { useThreadTurnSubagents } from "./ThreadAgentsSheet";
 import { ComposerQueuedEditBanner } from "./ComposerQueuedEdit";
+import { HomeVoicePill } from "../home-voice/HomeVoicePill";
 import { useThreadQueuedCount } from "./ThreadQueueControl";
 import { ThreadGuestShareBar } from "./ThreadGuestShareBar";
 import { ThreadSideChatsRow } from "./ThreadSideChatsRow";
@@ -1604,6 +1605,14 @@ function ThreadDetailBody(
       ) : (
         <View className="flex-1" />
       )}
+
+      {showContent ? (
+        <HomeVoicePill
+          environmentId={props.environmentId}
+          threadId={props.selectedThread.id}
+          top={navigationHeaderHeight + 8}
+        />
+      ) : null}
 
       {showContent ? (
         <ThreadBrowserFloat
