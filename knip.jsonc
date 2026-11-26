@@ -126,6 +126,8 @@
         "scripts/generate-device-stream.mts",
         "src/features/devices/device-stream.browser.ts!",
         "src/features/browser/preview-stream.browser.ts!",
+        // Fork: the voice-mode wrapper's first caller lands in a separate PR.
+        "modules/t3-voice-mode/index.ts!",
       ],
       // Fonts are configured as asset paths; Expo autolinks the native packages.
       "ignoreDependencies": [
