@@ -298,10 +298,8 @@ const nativePushTokenRegistration = Effect.fn("remoteRegistration.nativePushToke
           cause,
         }),
     });
-    // Android FCM data delivery is independent of notification presentation permission.
-    if (!permissions.granted && Platform.OS !== "android") {
-      return { notificationsEnabled: false, pushToken: null, notificationPermissionGranted: false };
-    }
+    // Android FCM data delivery is independent of notification presentation permission, and
+    // iOS issues an APNs token without it, which a T3 server needs to update a Live Activity.
     const alertsEnabled =
       permissions.granted &&
       (Platform.OS === "android" && Number(Platform.Version) >= 26

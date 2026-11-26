@@ -48,19 +48,24 @@ type DirectApnsState =
 
 // Android pushes go through the relay, so only iOS requests reach the server's device list.
 // A missing token with permission granted is a failed lookup (cold start), not a way out.
+// Live Activity pushes need no notification permission, so with notifications off the device
+// stays registered card-only (notificationsEnabled false), and servers never alert it.
 function desiredState(request: RelayDeviceRegistrationRequest): DirectApnsState | null {
   if (request.platform !== "ios") return null;
-  if (!request.preferences.notificationsEnabled) {
-    return { kind: "unregistered", deviceId: request.deviceId };
-  }
   const registration = toPushDeviceRegistration(request);
-  return registration === null ? null : { kind: "registered", registration };
+  if (request.preferences.notificationsEnabled) {
+    return registration === null ? null : { kind: "registered", registration };
+  }
+  if (request.preferences.liveActivitiesEnabled && registration !== null) {
+    return { kind: "registered", registration };
+  }
+  return { kind: "unregistered", deviceId: request.deviceId };
 }
 
 interface SentState {
   readonly generation: number;
   readonly signature: string;
-  readonly registered: boolean;
+  readonly registration: PushDeviceRegistration | null;
 }
 
 // What each server last accepted, on which connection. Only successes are remembered, so an
@@ -86,13 +91,13 @@ const enabledSessionsAtom = Atom.make((get) =>
 
 function registeredEnvironmentIds(): EnvironmentId[] {
   return [...sentStates]
-    .filter(([, sent]) => sent.registered)
+    .filter(([, sent]) => sent.registration !== null)
     .map(([environmentId]) => environmentId);
 }
 
-// True once any T3 server holds this device's token.
+// True once any T3 server can alert this device. A card-only registration does not count.
 export function isDirectApnsRegistered(): boolean {
-  return registeredEnvironmentIds().length > 0;
+  return [...sentStates.values()].some((sent) => sent.registration?.notificationsEnabled === true);
 }
 
 export function subscribeDirectApnsRegistered(listener: () => void): () => void {
@@ -147,7 +152,7 @@ async function reconcileEnabledEnvironments(
         sentStates.set(environmentId, {
           generation,
           signature,
-          registered: state.kind === "registered",
+          registration: state.kind === "registered" ? state.registration : null,
         });
       });
       if (state.kind === "registered") {
@@ -196,7 +201,7 @@ export async function forgetDirectApnsEnvironments(
     const state: DirectApnsState = { kind: "unregistered", deviceId: request.deviceId };
     await Promise.all(
       environmentIds
-        .filter((environmentId) => sentStates.get(environmentId)?.registered === true)
+        .filter((environmentId) => sentStates.get(environmentId)?.registration)
         .map((environmentId) => settleWithin(sendState(environmentId, state), FORGET_TIMEOUT_MS)),
     );
   }

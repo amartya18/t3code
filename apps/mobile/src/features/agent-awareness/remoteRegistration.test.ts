@@ -906,7 +906,8 @@ describe("makeRelayDeviceRegistrationRequest", () => {
             preferences: { notificationsEnabled: false, liveActivitiesEnabled: false },
           });
         } else {
-          expect(registrations.at(-1)).not.toHaveProperty("pushToken");
+          // The token stays, so a T3 server can still update the card; alerts stay off.
+          expect(registrations.at(-1)).toMatchObject({ pushToken: "rotated" });
         }
       }).pipe(
         Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
