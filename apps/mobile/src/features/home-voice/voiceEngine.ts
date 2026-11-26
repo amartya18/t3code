@@ -14,13 +14,16 @@ export function isVoiceEngineAvailable(): boolean {
   return VOICE_ENGINE_SUPPORT === "available";
 }
 
+// Off while voice processing restarts the engine into a 0 Hz mic on Amar's iPhone; the native fix needs a build.
+export const ECHO_CANCELLATION = false;
+
 /** Tuning for the native engine; it holds no policy, so all of this ships over the air. */
 export function voiceEngineConfig(voiceId: string): VoiceEngineConfig {
   return {
     asr: { chunkMs: 320, eouDebounceMs: 640 },
     vad: { threshold: 0.5, minSpeechMs: 150, minSilenceMs: 300 },
     tts: { voiceId, speed: 1, vocoderFloat32: false },
-    aec: { enabled: true },
+    aec: { enabled: ECHO_CANCELLATION },
     logStages: __DEV__,
   };
 }

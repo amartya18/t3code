@@ -78,11 +78,14 @@ export interface VoiceSpeechState {
 export interface VoiceSpeechConfig {
   readonly endOfTurn: EndOfTurnConfig;
   readonly bargeIn: BargeInConfig;
+  /** Without echo cancellation the mic hears the voice itself, so only a tap interrupts. */
+  readonly voiceBargeIn: boolean;
 }
 
 export const DEFAULT_VOICE_SPEECH_CONFIG: VoiceSpeechConfig = {
   endOfTurn: DEFAULT_END_OF_TURN_CONFIG,
   bargeIn: DEFAULT_BARGE_IN_CONFIG,
+  voiceBargeIn: true,
 };
 
 type ModelPart = "vad" | "asr" | "tts";
@@ -332,7 +335,9 @@ function stepHeard(
 ): VoiceSpeechStep {
   const overheard =
     event.type === "partial" && event.text.trim() !== "" ? event.text : state.overheard;
-  const step = stepBargeIn(state.bargeIn, event, isSpeaking(state.queue), config.bargeIn);
+  const step = config.voiceBargeIn
+    ? stepBargeIn(state.bargeIn, event, isSpeaking(state.queue), config.bargeIn)
+    : { state: state.bargeIn, effects: [] };
   if (step.state === state.bargeIn && step.effects.length === 0 && overheard === state.overheard) {
     return stay(state);
   }

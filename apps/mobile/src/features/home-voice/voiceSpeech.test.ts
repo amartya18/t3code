@@ -34,6 +34,7 @@ function call(
     readonly models?: "ready" | "missing";
     readonly startError?: string;
     readonly previous?: VoiceSpeechState;
+    readonly config?: VoiceSpeechConfig;
   } = {},
 ) {
   let now = 0;
@@ -114,7 +115,13 @@ function call(
   };
 
   const send = (input: Input) => {
-    apply(stepVoiceSpeech(state, { ...input, atMs: now } as VoiceSpeechEvent, TIMER_ONLY));
+    apply(
+      stepVoiceSpeech(
+        state,
+        { ...input, atMs: now } as VoiceSpeechEvent,
+        options.config ?? TIMER_ONLY,
+      ),
+    );
   };
 
   const settle = () => {
@@ -265,6 +272,22 @@ describe("voice speech", () => {
     voice.playAll();
     expect(voice.played).toEqual(["A long answer that keeps going."]);
     expect(voice.engine.discarded).toBe(1);
+    expect(voice.sent).toEqual([]);
+  });
+
+  it("without echo cancellation, only a tap stops the voice", () => {
+    const voice = call({ config: { ...TIMER_ONLY, voiceBargeIn: false } });
+    voice.reply("r1", "One. Two. Three.");
+    voice.send({ type: "vad", speaking: true });
+    voice.engine.transcript = "one two";
+    voice.send({ type: "partial", text: "one two" });
+    voice.wait(2_000);
+    expect(voice.engine.volume).toBe(1);
+    expect(voice.engine.stops).toEqual([]);
+
+    voice.send({ type: "tap" });
+    expect(voice.engine.stops).toHaveLength(1);
+    voice.playAll();
     expect(voice.sent).toEqual([]);
   });
 

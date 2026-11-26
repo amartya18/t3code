@@ -8,7 +8,7 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import { useEnvironmentThread } from "../../state/threads";
 import { DEFAULT_END_OF_TURN_CONFIG, sendCountdown } from "./endOfTurn";
 import { DEFAULT_BARGE_IN_CONFIG } from "./speechQueue";
-import { voiceEngineConfig } from "./voiceEngine";
+import { ECHO_CANCELLATION, voiceEngineConfig } from "./voiceEngine";
 import { sendVoiceMessage, type VoiceSession } from "./voiceSession";
 import { useVoiceModeSettings } from "./voiceSettings";
 import {
@@ -76,6 +76,7 @@ export function useVoiceSpeech(session: VoiceSession) {
         earlySend: settings?.earlySend ?? DEFAULT_END_OF_TURN_CONFIG.earlySend,
       },
       bargeIn: DEFAULT_BARGE_IN_CONFIG,
+      voiceBargeIn: ECHO_CANCELLATION,
     },
     send: (text) =>
       settings === null
