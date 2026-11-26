@@ -15,10 +15,21 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import { useProjects } from "../../state/entities";
 import { userHomeAtom } from "../../state/home";
 
+export const KOKORO_VOICES = ["af_heart", "am_michael", "bf_emma"] as const;
+export type KokoroVoiceId = (typeof KOKORO_VOICES)[number];
+
+export const PAUSE_MIN_MS = 500;
+export const PAUSE_MAX_MS = 5_000;
+
 export interface VoiceModeSettings {
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
   readonly modelSelection: ModelSelectionType;
+  readonly voiceId: KokoroVoiceId;
+  /** Silence before a spoken message sends. */
+  readonly pauseMs: number;
+  /** Send before the pause ends when the speech sounds finished. */
+  readonly earlySend: boolean;
 }
 
 const DEFAULT_VOICE_MODEL: ModelSelectionType = {
@@ -33,6 +44,9 @@ const StoredVoiceSettings = Schema.Struct({
   environmentId: Schema.optional(EnvironmentId),
   projectId: Schema.optional(ProjectId),
   modelSelection: Schema.optional(ModelSelection),
+  voiceId: Schema.optional(Schema.Literals(KOKORO_VOICES)),
+  pauseMs: Schema.optional(Schema.Number),
+  earlySend: Schema.optional(Schema.Boolean),
 });
 type StoredVoiceSettings = typeof StoredVoiceSettings.Type;
 const StoredVoiceSettingsJson = Schema.fromJsonString(StoredVoiceSettings);
@@ -90,5 +104,8 @@ export function useVoiceModeSettings(): VoiceModeSettings | null {
         environmentId: project.environmentId,
         projectId: project.id,
         modelSelection: stored.modelSelection ?? DEFAULT_VOICE_MODEL,
+        voiceId: stored.voiceId ?? "af_heart",
+        pauseMs: Math.min(PAUSE_MAX_MS, Math.max(PAUSE_MIN_MS, stored.pauseMs ?? 3_000)),
+        earlySend: stored.earlySend ?? true,
       };
 }

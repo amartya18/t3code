@@ -1,30 +1,18 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { MenuAction } from "@react-native-menu/menu";
 import { userHomeThreadRef } from "@t3tools/client-runtime/state/home";
-import type { ModelSelection } from "@t3tools/contracts";
 import { useGT } from "gt-react-native";
 import type { ComponentProps } from "react";
 import { Pressable } from "react-native";
 
 import { ListRowLayout } from "../../components/ui/ListRowLayout";
 import { Menu } from "../../components/ui/Menu";
-import { buildModelOptions, groupByProvider, type ModelOption } from "../../lib/modelOptions";
-import { useEnvironmentServerConfig, useProjects } from "../../state/entities";
+import { groupByProvider } from "../../lib/modelOptions";
+import { useProjects } from "../../state/entities";
 import { userHomeAtom } from "../../state/home";
 import { SettingsSection } from "../settings/components/SettingsSection";
+import { useVoiceModelOptions, withLowEffort } from "./voiceModels";
 import { saveVoiceSettings, useVoiceModeSettings } from "./voiceSettings";
-
-// Voice replies should start fast, so a pick keeps low effort wherever the model offers it.
-function withLowEffort(option: ModelOption): ModelSelection {
-  const offersLow = option.capabilities?.optionDescriptors?.some(
-    (descriptor) =>
-      descriptor.id === "effort" &&
-      descriptor.type === "select" &&
-      descriptor.options.some((choice) => choice.id === "low"),
-  );
-  const { options: _options, ...selection } = option.selection;
-  return offersLow ? { ...selection, options: [{ id: "effort", value: "low" }] } : selection;
-}
 
 function MenuRow(props: {
   readonly icon: ComponentProps<typeof ListRowLayout>["icon"];
@@ -58,19 +46,8 @@ export function HomeVoiceSettingsSection() {
   const home = userHomeThreadRef(useAtomValue(userHomeAtom));
   const environmentId = settings?.environmentId ?? home?.environmentId ?? null;
   const projects = useProjects().filter((project) => project.environmentId === environmentId);
-  const config = useEnvironmentServerConfig(environmentId);
-  const modelOptions = buildModelOptions(
-    config,
-    settings?.modelSelection ?? null,
-    undefined,
-    settings?.projectId ?? null,
-  ).filter((option) => !option.isUnavailable);
+  const { options: modelOptions, selected: model } = useVoiceModelOptions(settings, environmentId);
   const project = projects.find((candidate) => candidate.id === settings?.projectId);
-  const model = modelOptions.find(
-    (option) =>
-      option.selection.instanceId === settings?.modelSelection.instanceId &&
-      option.selection.model === settings.modelSelection.model,
-  );
 
   return (
     <SettingsSection

@@ -31,6 +31,7 @@ export const VOICE_THREAD_TAG = "voice";
 export interface VoiceSession extends HomeUpdateCursor {
   readonly thread: ScopedThreadRef;
   readonly home: ScopedThreadRef;
+  readonly muted: boolean;
 }
 
 export const voiceSessionAtom = Atom.make<VoiceSession | null>(null).pipe(
@@ -74,16 +75,40 @@ export async function startVoiceSession(input: {
   appAtomRegistry.set(voiceSessionAtom, {
     thread,
     home: input.home,
+    muted: false,
     ...startHomeUpdateCursor(input.view, input.nowMs),
   });
   return thread;
 }
 
-export function endVoiceSession(thread: ScopedThreadRef) {
+export function endVoiceSession() {
+  appAtomRegistry.set(voiceSessionAtom, null);
+}
+
+export function toggleVoiceMuted() {
   const session = appAtomRegistry.get(voiceSessionAtom);
-  if (session !== null && sameThread(session.thread, thread)) {
-    appAtomRegistry.set(voiceSessionAtom, null);
-  }
+  if (session !== null)
+    appAtomRegistry.set(voiceSessionAtom, { ...session, muted: !session.muted });
+}
+
+/** Queues what Amar said (or typed) in the voice thread, on the session's current model. */
+export function sendVoiceMessage(
+  thread: ScopedThreadRef,
+  settings: VoiceModeSettings,
+  text: string,
+) {
+  const metadata = makeQueuedMessageMetadata();
+  return enqueueThreadOutboxMessage({
+    ...thread,
+    messageId: MessageId.make(metadata.messageId),
+    commandId: CommandId.make(metadata.commandId),
+    text,
+    attachments: [],
+    modelSelection: settings.modelSelection,
+    runtimeMode: "full-access",
+    interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+    createdAt: metadata.createdAt,
+  });
 }
 
 /** Sends what changed at Home since the session last reported; repeat calls send nothing new. */
