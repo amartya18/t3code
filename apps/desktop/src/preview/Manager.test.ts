@@ -1987,6 +1987,8 @@ describe("PreviewManager", () => {
         expect(guest.attach).toHaveBeenCalledTimes(1);
 
         guest.chromiumDetach();
+        // Chromium detaches again for as long as a session is attached when its listeners return.
+        expect(guest.attach).toHaveBeenCalledTimes(1);
         yield* Effect.yieldNow;
         yield* Effect.yieldNow;
         expect(guest.attach).toHaveBeenCalledTimes(2);
