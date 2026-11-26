@@ -1,5 +1,5 @@
 import ExpoModulesCore
-import FluidAudio
+@_implementationOnly import FluidAudio
 import Foundation
 
 struct AsrConfigRecord: Record {

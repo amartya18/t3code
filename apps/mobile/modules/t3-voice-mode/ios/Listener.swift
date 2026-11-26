@@ -1,6 +1,6 @@
 import AVFoundation
 import CoreML
-import FluidAudio
+@_implementationOnly import FluidAudio
 import Foundation
 
 /// Parakeet streaming ASR plus Silero VAD. One loop consumes every command in order, so a finalize

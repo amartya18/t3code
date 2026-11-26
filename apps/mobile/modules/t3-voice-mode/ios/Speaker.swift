@@ -1,5 +1,5 @@
 import AVFoundation
-import FluidAudio
+@_implementationOnly import FluidAudio
 import Foundation
 
 /// Kokoro synthesis in call order onto a player node in the voice engine's graph, so the echo

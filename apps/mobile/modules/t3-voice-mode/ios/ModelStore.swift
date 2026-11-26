@@ -1,4 +1,4 @@
-import FluidAudio
+@_implementationOnly import FluidAudio
 import Foundation
 
 /// Every model lives under one directory we own, so status, size and delete agree with FluidAudio's loaders.

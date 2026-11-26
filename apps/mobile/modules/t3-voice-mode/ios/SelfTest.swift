@@ -1,5 +1,5 @@
 import AVFoundation
-import FluidAudio
+@_implementationOnly import FluidAudio
 import Foundation
 
 extension VoiceEngine {
