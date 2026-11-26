@@ -538,6 +538,49 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
+  it.effect("shows a custom mode set before the cache was written by a client without modes", () =>
+    Effect.gen(function* () {
+      const schema = Schema.fromJsonString(StoredOrchestrationThreadSnapshot);
+      const encoded = yield* Schema.encodeEffect(schema)({
+        schemaVersion: ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
+        environmentId: TARGET.environmentId,
+        threadId: THREAD_ID,
+        snapshot: { snapshotSequence: CACHED_SNAPSHOT_SEQUENCE, projection: BASE_PROJECTION },
+      });
+      const preCustomModeCache = encoded.replace(
+        `"schemaVersion":${ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION}`,
+        '"schemaVersion":5',
+      );
+      const serverProjection: OrchestrationV2ThreadProjection = {
+        ...BASE_PROJECTION,
+        thread: {
+          ...BASE_PROJECTION.thread,
+          customMode: {
+            status: "on",
+            skill: "t3-pstack:poteto-mode",
+            updatedAt: "2026-11-26T02:33:45.165Z",
+          },
+        },
+      };
+      const h = yield* makeHarness({
+        loadCached: decodeOrDiscardOrchestrationCache(
+          Schema.decodeEffect(schema)(preCustomModeCache).pipe(
+            Effect.map((stored) => Option.some(stored.snapshot)),
+          ),
+          Effect.void,
+        ),
+        httpSnapshot: {
+          _tag: "present",
+          snapshot: { snapshotSequence: CACHED_SNAPSHOT_SEQUENCE, projection: serverProjection },
+        },
+        completionMarker: true,
+      });
+      yield* Queue.offer(h.inputs, synchronized());
+      const state = yield* awaitThreadState(h.observed, (value) => value.status === "live");
+      expect(Option.getOrThrow(state.data).thread.customMode?.skill).toBe("t3-pstack:poteto-mode");
+    }),
+  );
+
   it.effect.each(["read failure", "cache miss"] as const)(
     "loads the server thread after a %s",
     (scenario) =>
