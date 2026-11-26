@@ -45,8 +45,8 @@ export function isAgentActivityPublishingEnabledValue(value: string | null): boo
 }
 
 /**
- * Mirrors the per-publish gate in AgentAwarenessRelay, so the descriptor
-    capability never advertises publishing that the publisher would skip.
+ * Whether relay publishing is on: the relay half of AgentAwarenessRelay's per-publish
+ * gate. The other half is direct APNs (`readDirectApnsConfigured`).
  */
 export const readAgentActivityPublishingActive: (
   secrets: ServerSecretStore.ServerSecretStore["Service"],
