@@ -22,8 +22,8 @@ jobs:
   ios:
     name: iOS simulator build
     if: github.repository == 'amartya18/t3code'
-    # Expo SDK 58 needs Xcode 27, which only the macos-26 image has (macos-15 stops at 26.3).
-    runs-on: macos-26
+    # macos-latest is the macos-26 image. Expo SDK 58 doesn't build with macos-15's Xcode 26.3.
+    runs-on: macos-latest
     timeout-minutes: 150
     env:
       NODE_OPTIONS: --max-old-space-size=8192
@@ -48,7 +48,7 @@ jobs:
           done
           rm -f "$RUNNER_TEMP"/git-credentials-*.config
 
-      # EAS builds with Xcode 27.1; use the newest 27.x here, else the newest Xcode installed.
+      # EAS builds with Xcode 27.1; use 27.x when the image has it, else its newest Xcode.
       - name: Select Xcode
         run: |
           ls -d /Applications/Xcode*.app
