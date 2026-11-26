@@ -123,6 +123,7 @@ import {
   ComposerDictationToolbar,
 } from "../voice-input/ComposerDictationControl";
 import { useVoiceInputController } from "../voice-input/useVoiceInputController";
+import { HomeVoiceSlot } from "../home-voice/HomeVoiceSlot";
 import { resolveVoiceComposerPresentation } from "../voice-input/voiceInputPresentation";
 import type { ExistingThreadSettingsRouteParams } from "./ThreadSettingsSheet";
 import {
@@ -1095,13 +1096,19 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                     onPress={() => void handleResumeQueue()}
                   />
                 ) : (
-                  <SendActionButton
-                    size={usesLargeControls ? "large" : "regular"}
-                    accessibilityLabel={sendBlockedReason ?? sendLabel}
-                    presentation={sendPresentation}
-                    disabled={!canSend}
-                    onSend={handleSend}
-                  />
+                  <HomeVoiceSlot
+                    thread={props.selectedThread}
+                    large={usesLargeControls}
+                    hasContent={hasContent}
+                  >
+                    <SendActionButton
+                      size={usesLargeControls ? "large" : "regular"}
+                      accessibilityLabel={sendBlockedReason ?? sendLabel}
+                      presentation={sendPresentation}
+                      disabled={!canSend}
+                      onSend={handleSend}
+                    />
+                  </HomeVoiceSlot>
                 )}
               </View>
             </ComposerDictationDraftContent>

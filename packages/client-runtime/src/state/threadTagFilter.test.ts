@@ -91,6 +91,16 @@ describe("hiddenThreadKeys", () => {
     expect(keys(null, null)).toEqual([]);
   });
 
+  // Fork: voice mode keeps its threads out of every list with this filter alone.
+  it("hides a voice-tagged thread while the voice tag is hidden, and only then", () => {
+    const voice = [thread("voice-session", ["voice"]), thread("plain", [])];
+    const hidden = (hiddenTags: Array<string> | null) => [
+      ...hiddenThreadKeys([{ environmentId: local, threads: voice, hiddenTags }]),
+    ];
+    expect(hidden(["voice"])).toEqual([key(local, "voice-session")]);
+    expect(hidden(null)).toEqual([]);
+  });
+
   it("applies each environment's own tags", () => {
     expect(hiddenIds(null, ["client", "private"])).toEqual([key(linked, "linked-client")]);
   });
