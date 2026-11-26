@@ -114,11 +114,7 @@ export const HomeHandlersLive = McpToolAccess.toLayer(HomeToolkit, {
             case "unwatch_all":
               return { ...current, watchAll: false };
             case "watch":
-              return HomeService.addWatch(current, {
-                environmentId,
-                threadId: threadId!,
-                reason: "requested",
-              });
+              return HomeService.addWatch(current, { environmentId, threadId: threadId! });
             case "unwatch":
               return HomeService.removeWatch(current, { environmentId, threadId: threadId! });
           }
