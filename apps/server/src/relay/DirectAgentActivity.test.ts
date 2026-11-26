@@ -162,6 +162,42 @@ describe("DirectAgentActivity", () => {
     }),
   );
 
+  it.effect("quietly repaints a running card every sweep so it never goes stale", () =>
+    Effect.gen(function* () {
+      const { service, publish, sent } = yield* harness();
+      yield* service.registerLiveActivity({ deviceId: "iphone", activityPushToken: CARD_TOKEN });
+      yield* publish(state({ phase: "running" }));
+      sent.splice(0);
+
+      for (const minutes of [5, 10]) {
+        yield* TestClock.adjust("5 minutes");
+        yield* service.drain;
+        const [refresh, ...rest] = sent.splice(0);
+        assert.strictEqual(rest.length, 0);
+        assert.strictEqual(refresh?.token, CARD_TOKEN);
+        assert.strictEqual(refresh?.pushType, "liveactivity");
+        assert.strictEqual(refresh?.priority, "5");
+        const aps = apsOf(refresh);
+        assert.strictEqual(aps?.event, "update");
+        assert.strictEqual(aps?.alert, undefined);
+        const pushedAtSeconds = (START_MS + minutes * 60_000) / 1_000;
+        assert.strictEqual(aps?.timestamp, pushedAtSeconds);
+        assert.strictEqual(aps?.["stale-date"], pushedAtSeconds + 900);
+      }
+
+      yield* publish(state({ phase: "completed", updatedAt: at(10 * 60_000) }));
+      sent.splice(0);
+      for (let sweep = 0; sweep < 3; sweep += 1) {
+        yield* TestClock.adjust("5 minutes");
+        yield* service.drain;
+        assert.deepStrictEqual(
+          sent.splice(0).filter((request) => apsOf(request)?.event === "update"),
+          [],
+        );
+      }
+    }),
+  );
+
   it.effect("falls back to alerts once APNs rejects the card's token", () =>
     Effect.gen(function* () {
       const { service, devices, publish, kinds } = yield* harness((request) =>
