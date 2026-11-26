@@ -46,17 +46,17 @@ type DirectApnsState =
   | { readonly kind: "registered"; readonly registration: PushDeviceRegistration }
   | { readonly kind: "unregistered"; readonly deviceId: string };
 
-// Android pushes go through the relay, so only iOS requests reach the server's device list.
-// A missing token with permission granted is a failed lookup (cold start), not a way out.
-// Live Activity pushes need no notification permission, so with notifications off the device
-// stays registered card-only (notificationsEnabled false), and servers never alert it.
+// Only iOS reaches the server's list. A missing token with permission granted is a failed lookup.
+// Live Activity pushes need no notification permission, so with it off the device stays card-only
+// (notificationsEnabled false), never alerted. With Live Activities off too, it stays only until
+// the server has ended the card still showing.
 function desiredState(request: RelayDeviceRegistrationRequest): DirectApnsState | null {
   if (request.platform !== "ios") return null;
   const registration = toPushDeviceRegistration(request);
   if (request.preferences.notificationsEnabled) {
     return registration === null ? null : { kind: "registered", registration };
   }
-  if (request.preferences.liveActivitiesEnabled && registration !== null) {
+  if (registration !== null && (request.preferences.liveActivitiesEnabled || cardShown())) {
     return { kind: "registered", registration };
   }
   return { kind: "unregistered", deviceId: request.deviceId };
@@ -210,19 +210,23 @@ export async function forgetDirectApnsEnvironments(
   });
 }
 
-// An ended card's token must never come back: the server would put alerts inside updates to
-// a card that no longer shows, instead of sending them plainly.
-function shownLiveActivity(): PushLiveActivityRegistration | null {
+function cardShown(): boolean {
   try {
     dismissEndedAgentLiveActivities();
   } catch {
     // Binaries built before the native dismissEnded method throw; listing still works.
   }
   try {
-    if (getAgentLiveActivities().length === 0) lastLiveActivity = null;
+    return getAgentLiveActivities().length > 0;
   } catch {
-    lastLiveActivity = null;
+    return false;
   }
+}
+
+// An ended card's token must never come back: the server would put alerts inside updates to
+// a card that no longer shows, instead of sending them plainly.
+function shownLiveActivity(): PushLiveActivityRegistration | null {
+  if (!cardShown()) lastLiveActivity = null;
   return lastLiveActivity;
 }
 

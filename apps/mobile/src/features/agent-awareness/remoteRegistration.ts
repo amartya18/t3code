@@ -391,6 +391,9 @@ function registrationSignature(body: RelayDeviceRegistrationRequest): string {
   ].join("|");
 }
 
+const canAlert = (body: RelayDeviceRegistrationRequest) =>
+  Boolean(body.pushToken) && body.preferences.notificationsEnabled;
+
 const registerDeviceWithRelay = Effect.fn("remoteRegistration.registerDeviceWithRelay")(function* (
   body: RelayDeviceRegistrationRequest,
   expectedGeneration: number,
@@ -441,7 +444,7 @@ const registerDeviceWithRelay = Effect.fn("remoteRegistration.registerDeviceWith
     persisted.signature === signature &&
     !needsAndroidReplay
   ) {
-    setRegistrationStatus("registered", Boolean(payload.pushToken));
+    setRegistrationStatus("registered", canAlert(payload));
     return;
   }
 
@@ -457,7 +460,7 @@ const registerDeviceWithRelay = Effect.fn("remoteRegistration.registerDeviceWith
     return;
   }
   if (body.platform === "android") androidDeviceReplayedAt = yield* Clock.currentTimeMillis;
-  setRegistrationStatus("registered", Boolean(payload.pushToken));
+  setRegistrationStatus("registered", canAlert(payload));
   yield* storage.saveAgentAwarenessRegistrationRecord({ identity, signature }).pipe(
     Effect.catch((error) =>
       Effect.sync(() => {

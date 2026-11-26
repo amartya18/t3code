@@ -273,13 +273,18 @@ describe("card-only registration", () => {
     expect(isDirectApnsRegistered()).toBe(true);
   });
 
-  it("unregisters once Live Activities are off too", async () => {
+  it("with Live Activities off too, stays until the card still showing is gone, then unregisters", async () => {
     mocks.environmentIds = [ENV_A];
     await registerDirectApnsDevice(withPreferences({ notificationsEnabled: false }));
     mocks.runAtomCommand.mockClear();
-    await registerDirectApnsDevice(
-      withPreferences({ notificationsEnabled: false, liveActivitiesEnabled: false }),
-    );
+    const bothOff = withPreferences({ notificationsEnabled: false, liveActivitiesEnabled: false });
+    // The server ends a card it holds once the device says Live Activities are off.
+    await registerDirectApnsDevice(bothOff);
+    expect(sent()).toEqual([["register", ENV_A, toPushDeviceRegistration(bothOff)]]);
+
+    mocks.runAtomCommand.mockClear();
+    mocks.shownCards = 0;
+    await registerDirectApnsDevice(bothOff);
     expect(sent()).toEqual([["unregister", ENV_A, { deviceId: "device-1" }]]);
 
     mocks.runAtomCommand.mockClear();
