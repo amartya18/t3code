@@ -276,6 +276,7 @@ import {
 } from "./pending-thread-feed";
 import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
 import { resolveThreadFeedFixedItemSize } from "./thread-feed-item-size";
+import { useVoiceRelayFeed, voiceRelayFoldLabels } from "../home-voice/useVoiceRelayFeed";
 import { htmlRenderFrameHeight } from "@t3tools/shared/htmlRender";
 import { htmlRenderRowHeight, ThreadHtmlRender } from "./HtmlRenderWebView";
 import { ThreadMcpApp } from "./McpAppWebView";
@@ -1621,6 +1622,7 @@ function AgentMessageFoldHeader(props: {
   readonly senderThreadId?: ThreadId;
   /** A linked environment's sender title, for when this client cannot reach it. */
   readonly senderTitle?: string;
+  readonly label?: string;
   readonly summary: string;
   readonly expanded: boolean;
   readonly onToggle: () => void;
@@ -1630,7 +1632,8 @@ function AgentMessageFoldHeader(props: {
     props.senderThreadId ? scopeThreadRef(props.environmentId, props.senderThreadId) : null,
   );
   const gt = useGT();
-  const label = senderShell?.title.trim() || props.senderTitle?.trim() || gt("Agent");
+  const label =
+    props.label ?? (senderShell?.title.trim() || props.senderTitle?.trim() || gt("Agent"));
   return (
     <Pressable
       accessibilityRole="button"
@@ -2467,6 +2470,7 @@ function renderFeedEntry(
                       .find((line) => line.trim().length > 0)
                       ?.trim() ?? ""
                   }
+                  {...voiceRelayFoldLabels(message, m)}
                   expanded={foldExpanded}
                   onToggle={() => props.onToggleWorkRow(foldRowId, entry.id)}
                   iconSubtleColor={iconSubtleColor}
@@ -2975,9 +2979,10 @@ function useThreadFeedPresentation(
   const [feedCache] = useState(createThreadFeedCache);
   const messages = useMessages();
   const locale = useLocale();
+  const feed = useVoiceRelayFeed(props.feed, props.environmentId, props.threadId);
   return appendPendingThreadMessages(
     deriveThreadFeedPresentation(
-      props.feed,
+      feed,
       props.latestRun,
       expandedTurnIds,
       new Set(
@@ -2992,7 +2997,7 @@ function useThreadFeedPresentation(
       messages,
       locale,
     ),
-    props.feed,
+    feed,
     props.queuedMessages,
   );
 }

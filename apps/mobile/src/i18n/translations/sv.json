@@ -2441,6 +2441,8 @@
   "265febdb31af0b5f": "Start voice mode",
   "eee29be5381d1b55": "This voice thread shows in your thread lists. Turn on hiding for the voice tag in this server's settings to keep it out.",
   "8e9e6d97832c7fa4": "Voice thread not hidden",
+  "bad0e2d8ca36dcd9": "Röstsession",
+  "66ec4cf525d6d926": "{requests, plural, one {{requests} begäran} other {{requests} begäranden}} · {minutes} min",
   "a91b941fbd5a6c44": "Kunde inte ändra tilldelade",
   "c2ed09c676ad0e9a": "Tilldelade",
   "29104e67cd9cd72b": "Att ändra tilldelade kräver triageåtkomst i den här ärendehanteraren.",

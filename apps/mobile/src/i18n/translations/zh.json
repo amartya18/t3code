@@ -2444,6 +2444,8 @@
   "265febdb31af0b5f": "Start voice mode",
   "eee29be5381d1b55": "This voice thread shows in your thread lists. Turn on hiding for the voice tag in this server's settings to keep it out.",
   "8e9e6d97832c7fa4": "Voice thread not hidden",
+  "bad0e2d8ca36dcd9": "语音会话",
+  "66ec4cf525d6d926": "{requests, plural, other {{requests} 个请求}} · {minutes} 分钟",
   "a91b941fbd5a6c44": "无法更改受理人",
   "c2ed09c676ad0e9a": "受理人",
   "29104e67cd9cd72b": "更改受理人需要此跟踪器的分类权限。",
