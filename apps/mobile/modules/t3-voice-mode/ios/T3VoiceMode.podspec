@@ -19,7 +19,12 @@ Pod::Spec.new do |s|
     name: 'Drop the umbrella from the T3VoiceMode module map',
     execution_position: :before_compile,
     always_out_of_date: '1',
-    script: 'sed -i "" -e "/umbrella header/d" -e "/module \\* {/d" "${SRCROOT}/${MODULEMAP_FILE}"'
+    # MODULEMAP_FILE is a symlink, so write through it instead of editing in place.
+    script: <<~'SH'
+      map="${SRCROOT}/${MODULEMAP_FILE}"
+      stripped="$(grep -v -e 'umbrella header' -e 'module \* {' "$map")"
+      printf '%s\n' "$stripped" > "$map"
+    SH
   }
 
   # CocoaPods trunk stops at FluidAudio 0.7.8, so it comes from GitHub through React Native's SwiftPM hook.
