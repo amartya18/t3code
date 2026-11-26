@@ -97,7 +97,7 @@ export function readHomeView(input: {
 
 const MARKDOWN_LINK = /\[([^\]]*)\]\([^)]*\)/g;
 const URL = /\b(?:https?:\/\/|www\.)[^\s)]+/gi;
-const THREAD_REF = /\b(?:thread|home(?:-launched)?|home-report):\S*/gi;
+const THREAD_REF = /\b(?:thread|home(?:-launched)?|home-report):\S+/gi;
 const UUID = /\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b/gi;
 // Requires a digit so words that happen to be hex letters, like "defaced", survive.
 const HEX_RUN = /\b(?=[0-9a-f]*\d)[0-9a-f]{7,}\b/gi;
