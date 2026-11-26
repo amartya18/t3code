@@ -38,6 +38,7 @@ import {
   OrchestrationV2ThreadLaunchWorkspaceStrategy,
 } from "./orchestrationV2.ts";
 import { Project } from "./project.ts";
+import { CustomModeSkillName } from "./threadCustomMode.ts";
 import { ThreadMetadataMcpUpdateResult } from "./threadMetadataMcp.ts";
 import {
   ProviderApprovalDecision,
@@ -146,6 +147,7 @@ export const FleetThreadLaunchInput = Schema.Struct({
   modelSelection: Schema.optional(ModelSelection),
   runtimeMode: Schema.optional(RuntimeMode),
   interactionMode: Schema.optional(ProviderInteractionMode),
+  customMode: Schema.optional(CustomModeSkillName),
   workspaceStrategy: Schema.optional(
     OrchestrationV2ThreadLaunchWorkspaceStrategy.annotate({
       description:
@@ -167,6 +169,7 @@ export const FleetThreadLaunchResult = Schema.Struct({
   link: Schema.String,
   projectId: ProjectId,
   modelSelection: ModelSelection,
+  customMode: Schema.optional(Schema.NullOr(CustomModeSkillName)),
   runId: Schema.NullOr(RunId),
   status: Schema.NullOr(OrchestrationV2RunStatus),
 });
