@@ -291,7 +291,7 @@ function makeDatabase() {
 }
 
 describe("mobile SQLite environment cache store", () => {
-  it.effect("loads a V5 record and migrates to V6 on the next save without losing items", () =>
+  it.effect("loads a full record and saves it compact without losing items", () =>
     Effect.gen(function* () {
       const memory = makeDatabase();
       const store = yield* make().pipe(
@@ -398,7 +398,7 @@ describe("mobile SQLite environment cache store", () => {
     }),
   );
 
-  it.effect("round-trips V5 exactly and restores shared items before returning to a consumer", () =>
+  it.effect("round-trips compact records and restores shared items before a consumer reads", () =>
     Effect.gen(function* () {
       const memory = makeDatabase();
       const store = yield* make().pipe(
@@ -463,8 +463,8 @@ describe("mobile SQLite environment cache store", () => {
       yield* store.saveThread(ENVIRONMENT_ID, snapshot);
       const id = cacheId(ENVIRONMENT_ID, "thread", THREAD_ID);
       const encoded = JSON.parse(memory.values.get(id)!);
-      expect(encoded.schemaVersion).toBe(6);
-      expect(memory.schemaVersions.get(id)).toBe(6);
+      expect(encoded.schemaVersion).toBe(COMPACT_THREAD_CACHE_SCHEMA_VERSION);
+      expect(memory.schemaVersions.get(id)).toBe(COMPACT_THREAD_CACHE_SCHEMA_VERSION);
       expect(encoded.snapshot.turnItemsOmitLocalVisible).toBe(true);
       expect(encoded.snapshot.turnItemCount).toBe(3);
       expect(encoded.snapshot.visibleTurnItemCount).toBe(4);
@@ -512,7 +512,7 @@ describe("mobile SQLite environment cache store", () => {
         yield* store.saveThread(ENVIRONMENT_ID, snapshot);
         const raw = memory.values.get(cacheId(ENVIRONMENT_ID, "thread", THREAD_ID))!;
         const encoded = JSON.parse(raw);
-        expect(encoded.schemaVersion).toBe(6);
+        expect(encoded.schemaVersion).toBe(COMPACT_THREAD_CACHE_SCHEMA_VERSION);
         expect(encoded.snapshot.turnItemsOmitLocalVisible).toBe(false);
         expect(encoded.snapshot.turnItemCount).toBe(2);
         expect(encoded.snapshot.projection.turnItems).toHaveLength(2);

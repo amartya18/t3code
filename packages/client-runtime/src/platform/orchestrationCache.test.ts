@@ -81,7 +81,7 @@ describe("orchestration cache envelopes", () => {
       threadId: v2ThreadId,
       snapshot: { snapshotSequence: 4, projection: v2Projection },
     });
-    for (const staleVersion of [3, 4]) {
+    for (const staleVersion of [3, 4, 5]) {
       const staleThread = currentThread.replace(
         `"schemaVersion":${ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION}`,
         `"schemaVersion":${staleVersion}`,

@@ -10,8 +10,9 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 export const ORCHESTRATION_CACHE_SCHEMA_VERSION = 3 as const;
-// Older caches may contain human turns that bypassed server history budgets.
-export const ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION = 5 as const;
+// Older caches may contain human turns that bypassed server history budgets, or come from a client
+// that dropped the thread's custom mode, which replay after the cached sequence never restores.
+export const ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION = 7 as const;
 
 /**
  * The server snapshot the cached rows descend from. Written only for rows that have one, so a
