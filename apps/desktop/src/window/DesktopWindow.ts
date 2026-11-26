@@ -156,10 +156,6 @@ export class DesktopWindow extends Context.Service<
 const { logInfo: logWindowInfo, logWarning: logWindowWarning } =
   makeComponentLogger("desktop-window");
 
-function getInitialWindowBackgroundColor(shouldUseDarkColors: boolean): string {
-  return shouldUseDarkColors ? "#000000" : "#ffffff";
-}
-
 type DisplayBounds = Pick<Electron.Rectangle, "x" | "y" | "width" | "height">;
 
 // A window snapped to a display edge can be reported 1px past that edge.
@@ -259,7 +255,7 @@ function buildConnectingSplashDataUrl(
   shouldUseDarkColors: boolean,
   progress: DatabaseMigrationProgress | null,
 ): string {
-  const background = getInitialWindowBackgroundColor(shouldUseDarkColors);
+  const background = ElectronTheme.getInitialWindowBackgroundColor(shouldUseDarkColors);
   const label = shouldUseDarkColors ? "#9ca3af" : "#6b7280";
   const accent = shouldUseDarkColors ? "#f8fafc" : "#1f2937";
   const track = shouldUseDarkColors ? "rgba(248,250,252,0.18)" : "rgba(31,41,55,0.18)";
@@ -353,7 +349,7 @@ function syncWindowAppearance(
       return;
     }
 
-    window.setBackgroundColor(getInitialWindowBackgroundColor(shouldUseDarkColors));
+    window.setBackgroundColor(ElectronTheme.getInitialWindowBackgroundColor(shouldUseDarkColors));
     const { titleBarOverlay } = getWindowTitleBarOptions(shouldUseDarkColors, platform);
     if (hasTitleBarOverlay && typeof titleBarOverlay === "object") {
       window.setTitleBarOverlay(titleBarOverlay);
@@ -482,7 +478,7 @@ export const make = Effect.gen(function* () {
       show: false,
       autoHideMenuBar: true,
       ...(environment.platform === "darwin" ? { disableAutoHideCursor: true } : {}),
-      backgroundColor: getInitialWindowBackgroundColor(shouldUseDarkColors),
+      backgroundColor: ElectronTheme.getInitialWindowBackgroundColor(shouldUseDarkColors),
       ...iconOption,
       title: environment.displayName,
       ...getWindowTitleBarOptions(shouldUseDarkColors, environment.platform),
@@ -635,6 +631,9 @@ export const make = Effect.gen(function* () {
         primaryPaste: primaryPaste.enabled,
       });
       webPreferences.disableHtmlFullscreenWindowResize = true;
+      // A guest is transparent by default, so a fresh one shows its host until it paints;
+      // opaque, it paints a browser's default canvas itself.
+      webPreferences.transparent = false;
       // An empty guest has loaded nothing, so a tab's window history can be restored into it.
       returningTabId = parseDesktopPreviewWindowReturnUrl(params.src ?? "");
       if (returningTabId !== null) params.src = "";
@@ -1155,7 +1154,7 @@ export const make = Effect.gen(function* () {
       center: true,
       show: false,
       skipTaskbar: false,
-      backgroundColor: getInitialWindowBackgroundColor(shouldUseDarkColors),
+      backgroundColor: ElectronTheme.getInitialWindowBackgroundColor(shouldUseDarkColors),
       title: environment.displayName,
       webPreferences: {
         contextIsolation: true,

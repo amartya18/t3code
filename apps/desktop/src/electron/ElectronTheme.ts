@@ -31,6 +31,11 @@ export class ElectronTheme extends Context.Service<
   }
 >()("@t3tools/desktop/electron/ElectronTheme") {}
 
+/** What a window shows before its contents paint, so it doesn't flash white in dark mode. */
+export function getInitialWindowBackgroundColor(shouldUseDarkColors: boolean): string {
+  return shouldUseDarkColors ? "#000000" : "#ffffff";
+}
+
 type WatchSystemColorScheme = (onChange: (scheme: LinuxColorScheme) => void) => {
   readonly stop: () => void;
 };

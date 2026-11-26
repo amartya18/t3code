@@ -39,6 +39,7 @@ import {
   clipboard,
   dialog,
   nativeImage,
+  nativeTheme,
   shell,
   WebContentsView,
   webContents,
@@ -70,6 +71,7 @@ import { msg } from "gt-i18n";
 import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopPrimaryPaste from "../app/DesktopPrimaryPaste.ts";
+import { getInitialWindowBackgroundColor } from "../electron/ElectronTheme.ts";
 import { m } from "../i18n/messages.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import {
@@ -2317,12 +2319,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           const session = yield* attempt(
             { operation: "window.create", tabId, webContentsId: wc.id },
             (): WindowSession => {
+              const background = getInitialWindowBackgroundColor(nativeTheme.shouldUseDarkColors);
               const window = new BrowserWindow({
                 width: WINDOW_INITIAL_WIDTH,
                 height: WINDOW_INITIAL_HEIGHT,
                 title: title.length > 0 ? title : fallbackTitle,
                 show: false,
                 autoHideMenuBar: true,
+                backgroundColor: background,
                 ...windowIcon,
               });
               let pageView: WebContentsView | undefined;
@@ -2334,6 +2338,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
                     { passkeyBridge: passkeys.bridgeEnabled, primaryPaste: primaryPaste.enabled },
                   ),
                 });
+                // The page reloads in a fresh view, which shows this until its first frame.
+                pageView.setBackgroundColor(background);
                 const barView = new WebContentsView({ webContents: bar });
                 // Clear, so the page shows through while the bar covers it for a menu.
                 barView.setBackgroundColor("#00000000");
@@ -2368,6 +2374,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
                 const layout = () => layoutWindow(session);
                 layout();
                 window.contentView.on("bounds-changed", layout);
+                // The view's color is also the page's default canvas, which is white in a browser.
+                contents.once("dom-ready", () => session.pageView.setBackgroundColor("#ffffff"));
                 contents.on("page-title-updated", (_event, pageTitle) => {
                   if (!window.isDestroyed()) window.setTitle(pageTitle.trim() || fallbackTitle);
                 });
