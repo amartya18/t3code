@@ -20,9 +20,14 @@ concurrency:
 
 jobs:
   ios:
-    name: iOS simulator build
+    name: iOS simulator build (${{ matrix.runner }})
     if: github.repository == 'amartya18/t3code'
-    runs-on: macos-26
+    # Hosted macOS arm64 runners are often short; whichever image gets a runner first gives the answer.
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-26, macos-15]
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 150
     env:
       NODE_OPTIONS: --max-old-space-size=8192
