@@ -3,7 +3,7 @@ import { useNavigation } from "@react-navigation/native";
 import * as Option from "effect/Option";
 import * as Haptics from "expo-haptics";
 import { useGT } from "gt-react-native";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Linking, Pressable, View } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import Animated, {
@@ -85,10 +85,16 @@ function VoiceCall(props: { readonly session: VoiceSession }) {
           <SessionSettingsButton size={44} raised />
         </View>
         <HiddenThreadNotice environmentId={thread.environmentId} />
-        {VOICE_ENGINE_SUPPORT === "available" ? <VoiceStage /> : <View className="flex-1" />}
-        <VoiceTranscript session={props.session} />
-        {VOICE_ENGINE_SUPPORT === "available" ? null : (
-          <TypedMessageField session={props.session} />
+        {VOICE_ENGINE_SUPPORT === "available" ? (
+          <VoiceStage>
+            <VoiceTranscript session={props.session} />
+          </VoiceStage>
+        ) : (
+          <>
+            <View className="flex-1" />
+            <VoiceTranscript session={props.session} />
+            <TypedMessageField session={props.session} />
+          </>
         )}
         <View className="flex-row items-center justify-between px-7 pt-5">
           <MuteButton muted={props.session.muted} size={58} />
@@ -126,8 +132,8 @@ function HiddenThreadNotice(props: {
   );
 }
 
-/** The empty middle: a tap sends the pause now or stops the voice, a press and hold waits. */
-function VoiceStage() {
+/** Everything above the controls: a tap sends the pause now or stops the voice, a press and hold waits. */
+function VoiceStage(props: { readonly children: ReactNode }) {
   const gt = useGT();
   const holding = useRef(false);
   return (
@@ -135,7 +141,7 @@ function VoiceStage() {
       accessibilityRole="button"
       accessibilityLabel={gt("Send now or interrupt")}
       accessibilityHint={gt("Press and hold to keep waiting")}
-      className="flex-1"
+      className="flex-1 justify-end"
       delayLongPress={350}
       onPress={tapVoiceStage}
       onLongPress={() => {
@@ -148,7 +154,9 @@ function VoiceStage() {
         holding.current = false;
         holdVoiceStage(false);
       }}
-    />
+    >
+      {props.children}
+    </Pressable>
   );
 }
 

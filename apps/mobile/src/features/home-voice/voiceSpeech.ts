@@ -220,7 +220,10 @@ export function stepVoiceSpeech(
       return onMuted(state, event, config);
     case "tap":
       return isSpeaking(state.queue)
-        ? interrupt(state, config.bargeIn.fadeMs, false)
+        ? then(interrupt(state, config.bargeIn.fadeMs, false), (next) => ({
+            state: next,
+            effects: [{ type: "log", line: "[voice] tap stopped the voice" }],
+          }))
         : stepTurn(state, event, config);
     case "holdStart":
     case "holdEnd":
