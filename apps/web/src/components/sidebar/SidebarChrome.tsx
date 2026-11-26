@@ -1,6 +1,12 @@
-import { ArrowLeftIcon, ArrowRightIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
+import {
+  ArrowLeftIcon,
+  ArrowRightIcon,
+  CalendarClockIcon,
+  ChartNoAxesColumnIcon,
+  SettingsIcon,
+} from "lucide-react";
 import type { ReactNode } from "react";
-import { T, useGT } from "gt-react";
+import { T, useGT, useMessages } from "gt-react";
 import { memo } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 
@@ -36,6 +42,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { readPullRequestListPreferences } from "../pullRequest/pullRequestListPreferences";
 import { readIssueListPreferences } from "../issue/issueListPreferences";
 import { IssueGlyph } from "../issue/issuePresentation";
+import { SETTINGS_SECTION_LABELS } from "../settings/settingsSearch";
 import { isSidebarUtilityPage, useNavigateToMainApp } from "./mainAppLocation";
 import { SidebarThreadUndoNotice } from "./SidebarThreadUndoNotice";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
@@ -226,6 +233,7 @@ function SidebarUtilityItem({
 }
 
 const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
+  const m = useMessages();
   const navigate = useNavigate();
   const navigateToMainApp = useNavigateToMainApp();
   const gt = useGT();
@@ -304,6 +312,14 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
             icon={<ChartNoAxesColumnIcon />}
             label={gt("Usage")}
             onClick={handleUsageClick}
+          />
+          <SidebarUtilityItem
+            icon={<CalendarClockIcon />}
+            label={m(SETTINGS_SECTION_LABELS["/settings/scheduled-tasks"])}
+            onClick={() => {
+              closeMobileSidebar();
+              void navigate({ to: "/scheduled-tasks" });
+            }}
           />
         </>
       )}
