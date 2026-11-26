@@ -295,14 +295,13 @@ describe("card-only registration", () => {
 });
 
 describe("leaving a server's push list", () => {
-  it("unregisters once notification permission is off with no token, and registers again once it is back", async () => {
+  it("unregisters once notifications and Live Activities are off with no card, and registers again once permission is back", async () => {
     await registerDirectApnsDevice(request());
     mocks.runAtomCommand.mockClear();
-    const { pushToken: _token, ...withoutToken } = request();
-    await registerDirectApnsDevice({
-      ...withoutToken,
-      preferences: { ...withoutToken.preferences, notificationsEnabled: false },
-    });
+    mocks.shownCards = 0;
+    await registerDirectApnsDevice(
+      withPreferences({ notificationsEnabled: false, liveActivitiesEnabled: false }),
+    );
     expect(sent()).toEqual([
       ["unregister", ENV_A, { deviceId: "device-1" }],
       ["unregister", ENV_B, { deviceId: "device-1" }],
@@ -324,6 +323,19 @@ describe("leaving a server's push list", () => {
     await registerDirectApnsDevice(withoutToken);
     expect(sent()).toEqual([]);
     expect(isDirectApnsRegistered()).toBe(true);
+  });
+
+  it("stays card-only when the token lookup fails while notifications are off", async () => {
+    mocks.environmentIds = [ENV_A];
+    await registerDirectApnsDevice(withPreferences({ notificationsEnabled: false }));
+    mocks.runAtomCommand.mockClear();
+    const { pushToken: _token, ...withoutToken } = withPreferences({ notificationsEnabled: false });
+    await registerDirectApnsDevice(withoutToken);
+    expect(sent()).toEqual([]);
+
+    const registration = { deviceId: "device-1", activityPushToken: "ef".repeat(40) };
+    await registerDirectLiveActivity(registration);
+    expect(sent()).toEqual([["register-live-activity", ENV_A, registration]]);
   });
 
   it("unregisters from a forgotten server without waiting on one that never answers", async () => {

@@ -46,20 +46,18 @@ type DirectApnsState =
   | { readonly kind: "registered"; readonly registration: PushDeviceRegistration }
   | { readonly kind: "unregistered"; readonly deviceId: string };
 
-// Only iOS reaches the server's list. A missing token with permission granted is a failed lookup.
-// Live Activity pushes need no notification permission, so with it off the device stays card-only
-// (notificationsEnabled false), never alerted. With Live Activities off too, it stays only until
-// the server has ended the card still showing.
+// Only iOS reaches the server's list; Android pushes go through the relay. iOS issues a token
+// without notification permission, so a missing one is a failed lookup, not a way out. With
+// notifications off the device stays card-only (notificationsEnabled false). With Live
+// Activities off too, it stays only until the server has ended the card still showing.
 function desiredState(request: RelayDeviceRegistrationRequest): DirectApnsState | null {
   if (request.platform !== "ios") return null;
+  const { notificationsEnabled, liveActivitiesEnabled } = request.preferences;
+  if (!notificationsEnabled && !liveActivitiesEnabled && !cardShown()) {
+    return { kind: "unregistered", deviceId: request.deviceId };
+  }
   const registration = toPushDeviceRegistration(request);
-  if (request.preferences.notificationsEnabled) {
-    return registration === null ? null : { kind: "registered", registration };
-  }
-  if (registration !== null && (request.preferences.liveActivitiesEnabled || cardShown())) {
-    return { kind: "registered", registration };
-  }
-  return { kind: "unregistered", deviceId: request.deviceId };
+  return registration === null ? null : { kind: "registered", registration };
 }
 
 interface SentState {
