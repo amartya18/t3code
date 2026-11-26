@@ -92,3 +92,36 @@ it("keeps an imported or agent theme's CSS, which no element carries, ahead of t
   applyThemeCss(".theme-probe { color: green; }");
   expect(ownStyles().at(-2)).toBe(".theme-probe { color: blue; }");
 });
+
+it("draws the bar once the app's stylesheets load, so no control keeps the browser's default look", async () => {
+  const source = document.implementation.createHTMLDocument("app");
+  const sheet = URL.createObjectURL(
+    new Blob(
+      // The app's inputs hold their background for an age so autofill never paints them.
+      ["input { background-color: transparent; transition: background-color 5000000s; }"],
+      { type: "text/css" },
+    ),
+  );
+  using _sheet = { [Symbol.dispose]: () => URL.revokeObjectURL(sheet) };
+  const link = source.createElement("link");
+  link.rel = "stylesheet";
+  link.href = sheet;
+  source.head.append(link);
+  const frame = document.createElement("iframe");
+  document.body.append(frame);
+  using _frame = { [Symbol.dispose]: () => frame.remove() };
+  const target = frame.contentDocument;
+  const view = frame.contentWindow;
+  if (!target || !view) throw new Error("The frame has no document");
+
+  const popup = preparePreviewWindowDocument(target, source, vi.fn());
+  const input = target.createElement("input");
+  popup.root.append(input);
+  // The window paints before the sheet arrives.
+  view.getComputedStyle(input).backgroundColor;
+
+  await vi.waitFor(() =>
+    expect(view.getComputedStyle(input).backgroundColor).toBe("rgba(0, 0, 0, 0)"),
+  );
+  popup.dispose();
+});
