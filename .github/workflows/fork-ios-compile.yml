@@ -20,15 +20,10 @@ concurrency:
 
 jobs:
   ios:
-    name: iOS simulator build (${{ matrix.runner }})
+    name: iOS simulator build
     if: github.repository == 'amartya18/t3code'
-    # Hosted macOS arm64 runners are often short. Intel runners have their own pool and still
-    # cross-compile the arm64 simulator slice; whichever gets a runner gives the answer.
-    strategy:
-      fail-fast: false
-      matrix:
-        runner: [macos-26, macos-15-intel]
-    runs-on: ${{ matrix.runner }}
+    # Expo SDK 58 needs Xcode 27, which only the macos-26 image has (macos-15 stops at 26.3).
+    runs-on: macos-26
     timeout-minutes: 150
     env:
       NODE_OPTIONS: --max-old-space-size=8192
