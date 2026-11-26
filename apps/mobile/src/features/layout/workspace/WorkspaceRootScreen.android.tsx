@@ -91,14 +91,14 @@ function WorkspaceRoot() {
               <WorkspaceNoTabs />
             )
           ) : (
-            <WorkspaceAppBarScope enabled={!layout.usesSplitView}>
+            <WorkspaceAppBarScope enabled={!layout.usesSplitView && tab !== "scheduledTasks"}>
               <WorkspaceTabPanes
                 tabs={TABS}
                 selected={tab}
                 renderTab={(tab) =>
                   tab === "threads" ? (
                     <HomeRouteScreen />
-                  ) : tab === "usage" || tab === "workflows" ? (
+                  ) : tab === "usage" || tab === "workflows" || tab === "scheduledTasks" ? (
                     <WorkspacePageFrame width={workspacePageWidth ?? null}>
                       <WorkspaceExtraTab tab={tab} />
                     </WorkspacePageFrame>
