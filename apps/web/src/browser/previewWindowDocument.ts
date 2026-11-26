@@ -86,7 +86,17 @@ export function preparePreviewWindowDocument(
   const root = target.createElement("div");
   root.style.height = `${DESKTOP_PREVIEW_WINDOW_BAR_HEIGHT}px`;
   const overlays = target.createElement("div");
-  target.body.replaceChildren(root, overlays);
+  // A control styled before the copied sheets load keeps the browser's look: inputs hold their
+  // background for an age so autofill never paints them, so the address bar would stay white.
+  const sheetsLoading = Array.from(target.head.querySelectorAll("link"), (link) =>
+    link.sheet
+      ? undefined
+      : new Promise((resolve) => {
+          link.addEventListener("load", resolve, { once: true });
+          link.addEventListener("error", resolve, { once: true });
+        }),
+  );
+  void Promise.all(sheetsLoading).then(() => target.body.replaceChildren(root, overlays));
 
   let overlayOpen = false;
   const syncOverlay = () => {
