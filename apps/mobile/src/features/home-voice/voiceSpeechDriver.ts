@@ -11,6 +11,9 @@ import {
 
 const TICK_MS = 100;
 
+// A hung-up session's stop must finish before the next session starts: native start does not wait for it.
+let stopping: Promise<unknown> = Promise.resolve();
+
 export interface VoiceSpeechInputs {
   readonly engineConfig: VoiceEngineConfig;
   readonly config: VoiceSpeechConfig;
@@ -81,8 +84,8 @@ export function createVoiceSpeechDriver(options: {
         );
         return;
       case "start":
-        engine
-          .stop()
+        stopping
+          .then(() => engine.stop())
           .then(() => engine.start())
           .then(
             () => dispatch({ type: "started" }),
@@ -170,7 +173,8 @@ export function createVoiceSpeechDriver(options: {
       disposed = true;
       if (ticker !== null) clearInterval(ticker);
       for (const subscription of subscriptions) subscription.remove();
-      void engine.stop();
+      engine.stopSpeech(0);
+      stopping = engine.stop().catch(() => {});
     },
   };
 }
