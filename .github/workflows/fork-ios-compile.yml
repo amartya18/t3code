@@ -1,0 +1,100 @@
+name: Fork iOS compile check
+
+# Builds the development client for an arm64 iOS Simulator on a free GitHub-hosted
+# runner: prebuild, pod install, unsigned xcodebuild. It proves the voice-mode
+# module, its SwiftPM dependency and the app link before an EAS build is spent.
+on:
+  push:
+    branches-ignore: [main]
+    paths:
+      - apps/mobile/modules/t3-voice-mode/**
+      - .github/workflows/fork-ios-compile.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-ios-compile-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ios:
+    name: iOS simulator build
+    if: github.repository == 'amartya18/t3code'
+    # Expo SDK 58 needs Xcode 27, which only the macos-26 image has (macos-15 stops at 26.3).
+    runs-on: macos-26
+    timeout-minutes: 150
+    env:
+      NODE_OPTIONS: --max-old-space-size=8192
+      APP_VARIANT: development
+      MOBILE_VERSION_POLICY: appVersion
+      T3CODE_IOS_PERSONAL_TEAM: "0"
+      CI: "1"
+      EXPO_NO_GIT_STATUS: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      # Dependency scripts run below, so the checkout token goes first (see mobile-dev-client.yml).
+      - name: Drop checkout credentials
+        run: |
+          git config --local --get-regexp '^includeif\..*\.path$' | while read -r key file; do
+            rm -f "$file"
+            git config --local --unset-all "$key"
+          done
+          git config --local --name-only --get-regexp '^http\..*\.extraheader$' | while read -r key; do
+            git config --local --unset-all "$key"
+          done
+          rm -f "$RUNNER_TEMP"/git-credentials-*.config
+
+      # EAS builds with Xcode 27.1; use the newest 27.x here, else the newest Xcode installed.
+      - name: Select Xcode
+        run: |
+          ls -d /Applications/Xcode*.app
+          xcode="$(ls -d /Applications/Xcode_27*.app 2>/dev/null | sort -V | tail -n 1)"
+          if [ -z "$xcode" ]; then xcode="$(ls -d /Applications/Xcode_*.app | sort -V | tail -n 1)"; fi
+          sudo xcode-select -s "$xcode"
+          xcodebuild -version
+          xcrun simctl list runtimes
+
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          install-args: --filter=@t3tools/mobile...
+
+      - name: Prebuild
+        working-directory: apps/mobile
+        run: vp exec expo prebuild --clean --platform ios --no-install
+
+      - name: Pod install
+        working-directory: apps/mobile/ios
+        run: pod install
+
+      - name: Build
+        working-directory: apps/mobile
+        run: |
+          xcodebuild \
+            -workspace ios/T3CodeDev.xcworkspace \
+            -scheme T3CodeDev \
+            -configuration Debug \
+            -destination "generic/platform=iOS Simulator" \
+            -derivedDataPath "$RUNNER_TEMP/derived" \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO \
+            -quiet build
+
+      # A module autolinking skipped would still build green, so look for it in the binary.
+      - name: Check the module is linked
+        run: |
+          app="$RUNNER_TEMP/derived/Build/Products/Debug-iphonesimulator/T3CodeDev.app"
+          ls -la "$app" | head -n 40
+          for binary in "$app/T3CodeDev" "$app/T3CodeDev.debug.dylib"; do
+            [ -f "$binary" ] && nm -U "$binary" | xcrun swift-demangle --simplified >> "$RUNNER_TEMP/symbols.txt"
+          done
+          for symbol in T3VoiceMode.T3VoiceModeModule FluidAudio.StreamingEouAsrManager FluidAudio.KokoroAneManager FluidAudio.VadManager; do
+            if ! grep -q "$symbol" "$RUNNER_TEMP/symbols.txt"; then
+              echo "::error::$symbol is not in the app binary"
+              exit 1
+            fi
+            echo "found $symbol"
+          done
