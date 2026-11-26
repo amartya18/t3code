@@ -137,4 +137,37 @@ describe("chooseDirectPushes", () => {
     });
     expect(pushes.map((push) => push.kind)).toEqual(["live_activity_end"]);
   });
+
+  it("never alerts a card-only device, and still moves its card from running to done", () => {
+    const cardOnly = device({ notificationsEnabled: false, activityPushToken: CARD_TOKEN });
+    const running = state();
+    const phases = ["waiting_for_approval", "waiting_for_input", "completed", "failed"] as const;
+    for (const phase of phases) {
+      const next = state({ phase, updatedAt: "2026-09-04T11:59:59.000Z" });
+      const terminal = phase === "completed" || phase === "failed";
+      const aggregate = makeAggregateState({
+        activeStates: terminal ? [] : [next],
+        terminalState: terminal ? next : null,
+        nowMs: NOW_MS,
+      });
+      const pushes = choose({
+        device: cardOnly,
+        delivered: { token: CARD_TOKEN, aggregate: aggregateOf(running), deliveredAtMs: NOW_MS },
+        aggregate,
+        state: next,
+      });
+      expect(pushes.map((push) => push.kind)).toEqual(["live_activity_update"]);
+      expect(apsOf(pushes[0])).not.toHaveProperty("alert");
+      const contentState = apsOf(pushes[0])?.["content-state"] as { props: string } | undefined;
+      expect(JSON.parse(contentState?.props ?? "{}").activities[0].phase).toBe(phase);
+
+      expect(choose({ device: device({ notificationsEnabled: false }), state: next })).toEqual([]);
+      const off = choose({
+        device: device({ ...cardOnly, liveActivitiesEnabled: false }),
+        state: next,
+      });
+      expect(off.map((push) => push.request.pushType)).toEqual(["liveactivity"]);
+      expect(apsOf(off[0])).not.toHaveProperty("alert");
+    }
+  });
 });

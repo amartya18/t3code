@@ -893,21 +893,19 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         listener({ type: os, data: "rotated" });
         yield* runBackgroundOperations();
         expect(registrations.at(-1)).toMatchObject({
+          pushToken: "rotated",
           preferences: { notificationsEnabled: false, liveActivitiesEnabled: os === "ios" },
         });
-        if (os === "android") {
-          expect(registrations.at(-1)).toMatchObject({ pushToken: "rotated" });
-          vi.mocked(Notifications.getPermissionsAsync).mockResolvedValueOnce({
-            granted: false,
-          } as Awaited<ReturnType<typeof Notifications.getPermissionsAsync>>);
-          yield* refreshAgentAwarenessRegistration();
-          expect(registrations.at(-1)).toMatchObject({
-            pushToken: "initial",
-            preferences: { notificationsEnabled: false, liveActivitiesEnabled: false },
-          });
-        } else {
-          expect(registrations.at(-1)).not.toHaveProperty("pushToken");
-        }
+        expect(agentAwarenessNotificationsReady()).toBe(false);
+        vi.mocked(Notifications.getPermissionsAsync).mockResolvedValueOnce({
+          granted: false,
+        } as Awaited<ReturnType<typeof Notifications.getPermissionsAsync>>);
+        yield* refreshAgentAwarenessRegistration();
+        expect(registrations.at(-1)).toMatchObject({
+          pushToken: "initial",
+          preferences: { notificationsEnabled: false, liveActivitiesEnabled: os === "ios" },
+        });
+        expect(agentAwarenessNotificationsReady()).toBe(false);
       }).pipe(
         Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
         Effect.provide(
