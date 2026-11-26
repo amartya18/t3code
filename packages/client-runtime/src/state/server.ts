@@ -2048,6 +2048,18 @@ export function createServerEnvironmentAtoms<R, E>(
         key: ({ environmentId }) => environmentId,
       },
     }),
+    registerPushDevice: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:register-push-device",
+      tag: WS_METHODS.notificationsRegisterDevice,
+    }),
+    unregisterPushDevice: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:unregister-push-device",
+      tag: WS_METHODS.notificationsUnregisterDevice,
+    }),
+    registerPushLiveActivity: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:register-push-live-activity",
+      tag: WS_METHODS.notificationsRegisterLiveActivity,
+    }),
     checkOtlpEndpoint: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:check-otlp-endpoint",
       tag: WS_METHODS.serverCheckOtlpEndpoint,

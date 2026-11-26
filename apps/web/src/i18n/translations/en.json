@@ -3545,6 +3545,17 @@
   "0e7b21ab11721ca7": "No matching command.",
   "2029db2cc30beb6d": "Open provider settings",
   "517cfb8f24123f5b": "No provider available",
+  "75ef6f4149b8c826": "Turn off custom mode {skill}",
+  "f74e29147dbedc9d": [
+    "Custom mode: every message follows ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "."
+  ],
+  "244cd6f39cba983a": "use as mode",
   "7ff1a0ef1490668d": "Clipboard API is unavailable while copying Codex feedback thread ID.",
   "1967731535386826": "Failed to copy Codex feedback thread ID to the clipboard.",
   "9c5afbfbbe8b305d": "Could not copy thread ID",

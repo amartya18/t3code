@@ -8,6 +8,7 @@ import { msg } from "gt-react-native";
 import { connectionAtomRuntime } from "../../connection/runtime";
 import { m } from "../../i18n/messages";
 import { archiveCloudComposerDrafts } from "../../state/use-composer-drafts";
+import { forgetDirectApnsEnvironments } from "../agent-awareness/directApnsRegistration";
 
 export class CloudDraftArchiveError extends Schema.TaggedError<CloudDraftArchiveError>()(
   "CloudDraftArchiveError",
@@ -51,6 +52,9 @@ export const removeCloudEnvironments = createRuntimeCommand(connectionAtomRuntim
           cause,
         }),
     });
+    // Clerk's native profile view signs out before the app hears of it, so relay leases are
+    // already gone here; only servers still reachable on a direct route get the unregister.
+    yield* Effect.promise(() => forgetDirectApnsEnvironments([...environmentIds]));
     yield* registry.removeRelayEnvironments();
   }),
 });

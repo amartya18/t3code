@@ -22,6 +22,7 @@ import {
   type ProjectTrackedFolder,
   type ProviderApprovalDecision,
   type ProviderInteractionMode,
+  type CustomModeSkillName,
   type ProviderUserInputAnswers,
   type RunId,
   type RuntimeMode,
@@ -167,6 +168,11 @@ export interface SetThreadInteractionModeInput extends ThreadCommandInput {
   readonly interactionMode: ProviderInteractionMode;
 }
 
+export interface SetThreadCustomModeInput extends ThreadCommandInput {
+  /** Null turns the mode off. */
+  readonly skill: CustomModeSkillName | null;
+}
+
 interface StartThreadBootstrap {
   readonly createThread?: {
     readonly projectId: ProjectId;
@@ -174,6 +180,7 @@ interface StartThreadBootstrap {
     readonly modelSelection: ModelSelection;
     readonly runtimeMode: RuntimeMode;
     readonly interactionMode: ProviderInteractionMode;
+    readonly customMode?: CustomModeSkillName;
     readonly branch: string | null;
     readonly worktreePath: string | null;
     readonly createdAt: string;
@@ -775,6 +782,17 @@ export const setThreadInteractionMode = Effect.fn("EnvironmentCommands.setThread
   },
 );
 
+export const setThreadCustomMode = Effect.fn("EnvironmentCommands.setThreadCustomMode")(function* (
+  input: SetThreadCustomModeInput,
+) {
+  return yield* dispatch({
+    type: "thread.custom-mode.set",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    skill: input.skill,
+  });
+});
+
 // Servers without native resume dispatch command.text verbatim; newer ones clear
 // it when manualContinuationOfRunId is set.
 const MANUAL_CONTINUATION_FALLBACK_TEXT = "Continue where you left off.";
@@ -836,6 +854,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
       modelSelection: input.modelSelection ?? thread.modelSelection,
       runtimeMode: input.runtimeMode,
       interactionMode: input.interactionMode,
+      ...(bootstrap?.customMode === undefined ? {} : { customMode: bootstrap.customMode }),
       workspaceStrategy,
       initialMessage: {
         messageId: input.message.messageId,

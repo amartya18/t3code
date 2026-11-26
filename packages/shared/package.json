@@ -71,9 +71,25 @@
       "types": "./src/advertisedEndpoint.ts",
       "import": "./src/advertisedEndpoint.ts"
     },
+    "./apnsProviderToken": {
+      "types": "./src/apnsProviderToken.ts",
+      "import": "./src/apnsProviderToken.ts"
+    },
     "./agentAwareness": {
       "types": "./src/agentAwareness.ts",
       "import": "./src/agentAwareness.ts"
+    },
+    "./agentActivityAggregate": {
+      "types": "./src/agentActivityAggregate.ts",
+      "import": "./src/agentActivityAggregate.ts"
+    },
+    "./agentActivityAlerts": {
+      "types": "./src/agentActivityAlerts.ts",
+      "import": "./src/agentActivityAlerts.ts"
+    },
+    "./agentActivityPayloads": {
+      "types": "./src/agentActivityPayloads.ts",
+      "import": "./src/agentActivityPayloads.ts"
     },
     "./git": {
       "types": "./src/git.ts",

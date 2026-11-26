@@ -4,8 +4,8 @@ import { hashTelemetryId } from "@t3tools/shared/telemetryId";
 import {
   activityPhasePriority,
   TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS,
-} from "./agentActivityAggregate.ts";
-import { agentActivityExpiresAt } from "./agentActivityPayloads.ts";
+} from "@t3tools/shared/agentActivityAggregate";
+import { agentActivityExpiresAt } from "@t3tools/shared/agentActivityPayloads";
 
 /**
  * Lets the device ignore pushes for an account it no longer has without FCM

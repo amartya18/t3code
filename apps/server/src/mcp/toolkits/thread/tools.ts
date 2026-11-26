@@ -23,6 +23,7 @@ import {
   NonNegativeInt,
   ProjectId,
   clampedPositiveInt,
+  CustomModeSkillName,
 } from "@t3tools/contracts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Schema from "effect/Schema";
@@ -164,6 +165,7 @@ const threadConfiguration = Schema.Struct({
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
+  customMode: Schema.NullOr(CustomModeSkillName),
 });
 const ThreadConfigureTool = Tool.make("t3_thread_configure", {
   ...commandTool,
@@ -173,6 +175,12 @@ const ThreadConfigureTool = Tool.make("t3_thread_configure", {
     environmentId: OrchestratorMcpEnvironmentTarget,
     threadId: Schema.optional(ThreadId),
     modelSelection: Schema.optional(ModelSelection),
+    customMode: Schema.optional(
+      Schema.NullOr(CustomModeSkillName).annotate({
+        description:
+          "A skill name keeps that skill on for every later turn of the thread, as if each message invoked it. null turns it off.",
+      }),
+    ),
   }),
   success: Schema.Union([threadConfiguration, OrchestrationV2DispatchCommandResult]),
 }).annotate(Tool.Destructive, true);

@@ -125,6 +125,9 @@ import * as Keybindings from "./keybindings.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerOwnership from "./serverOwnership.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
+import * as DirectAgentActivity from "./relay/DirectAgentActivity.ts";
+import * as DirectApnsClient from "./relay/DirectApnsClient.ts";
+import * as DirectApnsDevices from "./relay/DirectApnsDevices.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as ManagedLimits from "./policy/managedLimits.ts";
@@ -735,8 +738,15 @@ const layerServerRestart = Layer.effect(
   }),
 );
 
+// One DirectApnsDevices instance serves the RPC handlers and the pusher, so its
+// write lock covers every registration and rejection.
+const layerDirectAgentActivity = DirectAgentActivity.layer.pipe(
+  Layer.provide(DirectApnsClient.layer.pipe(Layer.provide(DirectApnsClient.transportLayer))),
+  Layer.provideMerge(DirectApnsDevices.layer),
+);
+
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
-  AgentAwarenessRelay.layer,
+  AgentAwarenessRelay.layer.pipe(Layer.provideMerge(layerDirectAgentActivity)),
   ProviderHostPathWatcher.layer.pipe(Layer.provide(layerDesktopTelemetryReceiver)),
   HeldHooksWaker.layer,
   layerThreadSettlementWorker,

@@ -3545,6 +3545,17 @@
   "0e7b21ab11721ca7": "Nenhum comando correspondente.",
   "2029db2cc30beb6d": "Abrir configurações do provedor",
   "517cfb8f24123f5b": "Nenhum provedor disponível",
+  "75ef6f4149b8c826": "Turn off custom mode {skill}",
+  "f74e29147dbedc9d": [
+    "Custom mode: every message follows ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "."
+  ],
+  "244cd6f39cba983a": "use as mode",
   "7ff1a0ef1490668d": "A API da área de transferência não está disponível ao copiar o ID da thread de feedback do Codex.",
   "1967731535386826": "Falha ao copiar o ID da thread de feedback do Codex para a área de transferência.",
   "9c5afbfbbe8b305d": "Não foi possível copiar o ID da thread",

@@ -67,6 +67,7 @@ import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import { withInlineContext } from "./ContextHandoffDelivery.ts";
+import { renderCustomModeTurn } from "./threadCustomMode.ts";
 import * as EventSink from "./EventSink.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
@@ -2587,6 +2588,41 @@ effectIt.effect.each([
         [status, undefined],
         [status, undefined],
       ]);
+    }),
+);
+
+effectIt.effect.each([
+  { turn: "activate", modeUpdatedAt: "2026-09-04T11:30:00.000Z", prompt: "$review Fix the bug" },
+  { turn: "remind", modeUpdatedAt: "2026-09-04T10:00:00.000Z", prompt: "Fix the bug" },
+] as const)(
+  "sends custom mode as inline context and invokes the skill only to $turn",
+  ({ turn, modeUpdatedAt, prompt }) =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({
+        text: "Fix the bug",
+        sideChat: { contextRun: "delivered" },
+      });
+      const projection = harness.projection();
+      harness.setProjection({
+        ...projection,
+        thread: {
+          ...projection.thread,
+          customMode: { status: "on", skill: "review", updatedAt: modeUpdatedAt },
+        },
+        runs: projection.runs.map((run) =>
+          run.ordinal === 1
+            ? { ...run, startedAt: DateTime.makeUnsafe("2026-09-04T11:00:00.000Z") }
+            : run,
+        ),
+      });
+
+      yield* harness.start;
+
+      const sent = harness.startTurn.mock.calls[0]?.[0];
+      const { context } = renderCustomModeTurn({ kind: turn, skill: "review" });
+      expect(sent?.message.text).toBe(withInlineContext(context, prompt));
+      // Mentions before this offset stay plain text, so only the prompt's `$review` is invoked.
+      expect(sent?.inlineContextLength).toBe((sent?.message.text.length ?? 0) - prompt.length);
     }),
 );
 

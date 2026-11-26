@@ -8,6 +8,10 @@ name: Fork release
 # latest release that installed fork apps update to; any other version is a
 # prerelease.
 # X.Y.Z-fork.N sorts before X.Y.Z, so a fork release uses the next patch.
+# With `pr` set it is a dev build instead: that PR's head ships on the Nightly
+# update track as X.Y.Z-nightly.YYYYMMDD.RUN, X.Y.Z being the next fork release
+# it previews, and moves the `update-feed` pointer that nightly installs read.
+# It never becomes the latest release and skips the iOS preview app.
 
 on:
   push:
@@ -19,15 +23,21 @@ on:
         description: "Version to release. Leave blank for the next X.Y.Z-fork.N."
         required: false
         type: string
+      pr:
+        description: "Pull request number to ship as a Nightly dev build instead. Leave version blank."
+        required: false
+        type: string
 
 concurrency:
-  group: fork-release-${{ github.event_name == 'push' && github.ref_name || inputs.version }}
+  group: fork-release-${{ github.event_name == 'push' && github.ref_name || inputs.pr && format('pr-{0}', inputs.pr) || inputs.version }}
   cancel-in-progress: false
 
 permissions:
   # release-desktop.yml reads this run's artifact list.
   actions: read
   contents: read
+  # Dev builds read the pull request they ship.
+  pull-requests: read
 
 jobs:
   resolve:
@@ -40,6 +50,8 @@ jobs:
       tag: ${{ steps.meta.outputs.tag }}
       ref: ${{ steps.meta.outputs.ref }}
       prerelease: ${{ steps.meta.outputs.prerelease }}
+      dev_build: ${{ steps.meta.outputs.dev_build }}
+      title: ${{ steps.meta.outputs.title }}
       clerk_publishable_key: ${{ steps.public_config.outputs.T3CODE_CLERK_PUBLISHABLE_KEY }}
       clerk_jwt_template: ${{ steps.public_config.outputs.T3CODE_CLERK_JWT_TEMPLATE }}
       clerk_cli_oauth_client_id: ${{ steps.public_config.outputs.T3CODE_CLERK_CLI_OAUTH_CLIENT_ID }}
@@ -58,16 +70,45 @@ jobs:
         shell: bash
         env:
           INPUT_VERSION: ${{ inputs.version }}
+          INPUT_PR: ${{ inputs.pr }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          tags="$(git ls-remote --tags --refs origin 'v*' | sed 's#.*refs/tags/##')"
+          ref="$GITHUB_SHA"
+          title=""
+          dev_build=false
           if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
             requested="${GITHUB_REF_NAME#v}"
           else
             requested="${INPUT_VERSION#v}"
           fi
-          version="$(git ls-remote --tags --refs origin 'v*' | sed 's#.*refs/tags/##' | node .github/scripts/fork-release-version.cjs "$requested")"
+          if [[ -n "$INPUT_PR" ]]; then
+            if [[ -n "$requested" || ! "$INPUT_PR" =~ ^[0-9]+$ ]]; then
+              echo "::error::Give a pull request number and no version for a dev build."
+              exit 1
+            fi
+            pr="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$INPUT_PR")"
+            # The build runs with the signing secrets, so only this repository's branches qualify.
+            if [[ "$(jq -r .head.repo.full_name <<< "$pr")" != "$GITHUB_REPOSITORY" ]]; then
+              echo "::error::PR #$INPUT_PR's head is not a branch of $GITHUB_REPOSITORY."
+              exit 1
+            fi
+            ref="$(jq -r .head.sha <<< "$pr")"
+            next="$(node .github/scripts/fork-release-version.cjs "" <<< "$tags")"
+            # Date, then this workflow's run number, so each dev build sorts after the last.
+            version="${next%%-*}-nightly.$(date -u +%Y%m%d).$GITHUB_RUN_NUMBER"
+            title="v$version · PR #$INPUT_PR @ ${ref:0:7}"
+            dev_build=true
+          else
+            version="$(node .github/scripts/fork-release-version.cjs "$requested" <<< "$tags")"
+          fi
           if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
             echo "::error::'$version' is not a release version such as 1.2.3 or 1.2.3-fork.1."
+            exit 1
+          fi
+          if [[ "$dev_build" == "false" && "$version" =~ -nightly\. ]]; then
+            echo "::error::Nightly versions come only from dev builds. Give a pull request number instead."
             exit 1
           fi
           prerelease=true
@@ -75,10 +116,12 @@ jobs:
           {
             echo "version=$version"
             echo "tag=v$version"
-            echo "ref=$GITHUB_SHA"
+            echo "ref=$ref"
             echo "prerelease=$prerelease"
+            echo "dev_build=$dev_build"
+            echo "title=${title:-v$version}"
           } >> "$GITHUB_OUTPUT"
-          echo "Releasing $version from $GITHUB_SHA (prerelease: $prerelease)."
+          echo "Releasing $version from $ref (prerelease: $prerelease, dev build: $dev_build)."
 
       - name: Require macOS signing configuration
         shell: bash
@@ -155,6 +198,23 @@ jobs:
           T3CODE_TELEMETRY_CHANNEL: dev
         run: vp run build:desktop
 
+      # The npm launcher manifest, which the fork publishes as a release asset instead of to npm.
+      # Track switches read its version and database migration (apps/server/src/cloud/npmRelease.ts).
+      - name: Write release manifest
+        run: |
+          node scripts/build-npm-launcher.ts --version "${{ needs.resolve.outputs.version }}" --output-dir "$RUNNER_TEMP/npm"
+          mkdir -p release-manifest
+          cp "$RUNNER_TEMP/npm/t3/package.json" release-manifest/t3code.json
+          cat release-manifest/t3code.json
+
+      - name: Upload release manifest
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-manifest
+          path: release-manifest/t3code.json
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Upload JS bundle
         uses: actions/upload-artifact@v7
         with:
@@ -173,7 +233,7 @@ jobs:
     with:
       version: ${{ needs.resolve.outputs.version }}
       ref: ${{ needs.resolve.outputs.ref }}
-      release_channel: stable
+      release_channel: ${{ needs.resolve.outputs.dev_build == 'true' && 'nightly' || 'stable' }}
       relay_client_tracing: false
       clerk_publishable_key: ${{ needs.resolve.outputs.clerk_publishable_key }}
       clerk_jwt_template: ${{ needs.resolve.outputs.clerk_jwt_template }}
@@ -197,7 +257,7 @@ jobs:
     with:
       version: ${{ needs.resolve.outputs.version }}
       ref: ${{ needs.resolve.outputs.ref }}
-      release_channel: stable
+      release_channel: ${{ needs.resolve.outputs.dev_build == 'true' && 'nightly' || 'stable' }}
       relay_client_tracing: false
       clerk_publishable_key: ${{ needs.resolve.outputs.clerk_publishable_key }}
       clerk_jwt_template: ${{ needs.resolve.outputs.clerk_jwt_template }}
@@ -254,6 +314,7 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: write
+      pull-requests: read
     steps:
       - name: Download desktop artifacts
         uses: actions/download-artifact@v8
@@ -267,6 +328,12 @@ jobs:
         with:
           pattern: cli-*
           merge-multiple: true
+          path: release-assets
+
+      - name: Download release manifest
+        uses: actions/download-artifact@v8
+        with:
+          name: release-manifest
           path: release-assets
 
       # Installers verify archives against this file, so it is written from the bytes that get uploaded.
@@ -293,21 +360,47 @@ jobs:
           TAG: ${{ needs.resolve.outputs.tag }}
           REF: ${{ needs.resolve.outputs.ref }}
           PRERELEASE: ${{ needs.resolve.outputs.prerelease }}
+          TITLE: ${{ needs.resolve.outputs.title }}
+          PR: ${{ inputs.pr }}
         run: |
           set -euo pipefail
           shopt -s nullglob extglob
-          files=(release-assets/!(builder-debug).yml release-assets/*.AppImage release-assets/*.dmg release-assets/*.zip release-assets/*.blockmap release-assets/*.tar.gz release-assets/SHA256SUMS)
+          files=(release-assets/!(builder-debug).yml release-assets/*.AppImage release-assets/*.dmg release-assets/*.zip release-assets/*.blockmap release-assets/*.tar.gz release-assets/SHA256SUMS release-assets/t3code.json)
           flags=(--latest)
           if [[ "$PRERELEASE" == "true" ]]; then flags=(--prerelease --latest=false); fi
-          gh release create "$TAG" --draft --target "$REF" --title "$TAG" --generate-notes "${flags[@]}" "${files[@]}"
+          notes=(--generate-notes)
+          if [[ -n "$PR" ]]; then
+            pr_title="$(gh pr view "$PR" --json title --jq .title)"
+            notes=(--notes "Dev build of #$PR ($pr_title) at $REF, for the Nightly update track. Not a fork release.")
+          fi
+          gh release create "$TAG" --draft --target "$REF" --title "$TITLE" "${notes[@]}" "${flags[@]}" "${files[@]}"
           gh release edit "$TAG" --draft=false "${flags[@]}"
+
+      # Nightly installs read this fixed pointer to find the newest nightly, as upstream's do
+      # (docs/operations/03_release.md#update-feed). Never delete the `update-feed` release.
+      - name: Point the update feed at this dev build
+        if: needs.resolve.outputs.dev_build == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GH_REPO/releases/tags/$TAG" --jq '{tag_name, name, body}' > nightly.json
+          gh release view update-feed > /dev/null 2>&1 ||
+            gh release create update-feed --prerelease --latest=false --title "Update feed" \
+              --notes "Nightly fork installs read nightly.json here to find the newest dev build. Do not delete it."
+          gh release upload update-feed nightly.json --clobber
+          gh release edit update-feed --draft=false --prerelease --latest=false
 
   # Ships the release to the fork's ad hoc iOS preview app: an OTA update, or a new
   # build when native code changed. A failure here never fails the release.
+  # Dev builds skip it: the free Expo plan allows 15 builds a month.
   ios_preview:
     name: iOS preview app
     needs: [resolve, release]
-    if: github.repository != 'pingdotgg/t3code'
+    if: github.repository != 'pingdotgg/t3code' && needs.resolve.outputs.dev_build != 'true'
     continue-on-error: true
     runs-on: ubuntu-24.04
     timeout-minutes: 30

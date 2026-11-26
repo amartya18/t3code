@@ -1261,7 +1261,7 @@ describe("thread outbox", () => {
     ).toBe("remove");
   });
 
-  it("round-trips queued PR checkout sources and gates incomplete creations from sending", () => {
+  it("round-trips queued PR checkout sources and custom modes and gates incomplete creations from sending", () => {
     const base = queuedMessage({
       messageId: "message-1",
       createdAt: "2026-06-08T10:00:01.000Z",
@@ -1279,6 +1279,7 @@ describe("thread outbox", () => {
         worktreePath: null,
         startFromOrigin: false,
         pullRequestReference: "https://github.com/acme/repo/pull/123",
+        customMode: "review",
       },
     } satisfies QueuedThreadMessage;
 

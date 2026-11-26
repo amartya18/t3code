@@ -3546,6 +3546,17 @@
   "0e7b21ab11721ca7": "Kein passender Befehl.",
   "2029db2cc30beb6d": "Anbietereinstellungen öffnen",
   "517cfb8f24123f5b": "Kein Anbieter verfügbar",
+  "75ef6f4149b8c826": "Turn off custom mode {skill}",
+  "f74e29147dbedc9d": [
+    "Custom mode: every message follows ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "."
+  ],
+  "244cd6f39cba983a": "use as mode",
   "7ff1a0ef1490668d": "Die Zwischenablage-API ist beim Kopieren der Codex-Feedback-Thread-ID nicht verfügbar.",
   "1967731535386826": "Die Codex-Feedback-Thread-ID konnte nicht in die Zwischenablage kopiert werden.",
   "9c5afbfbbe8b305d": "Thread-ID konnte nicht kopiert werden",
