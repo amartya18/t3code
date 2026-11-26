@@ -1,4 +1,8 @@
 {
+  "enabledPlugins": {
+    "cloudflare@cloudflare": false,
+    "t3-pstack@t3-pstack": false
+  },
   "permissions": {
     "deny": [
       "Agent",
