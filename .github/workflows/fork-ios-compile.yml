@@ -87,14 +87,13 @@ jobs:
       - name: Check the module is linked
         run: |
           app="$RUNNER_TEMP/derived/Build/Products/Debug-iphonesimulator/T3CodeDev.app"
-          ls -la "$app" | head -n 40
           for binary in "$app/T3CodeDev" "$app/T3CodeDev.debug.dylib"; do
-            [ -f "$binary" ] && nm -U "$binary" | xcrun swift-demangle --simplified >> "$RUNNER_TEMP/symbols.txt"
+            if [ -f "$binary" ]; then nm -U "$binary" | xcrun swift-demangle >> "$RUNNER_TEMP/symbols.txt"; fi
           done
+          wc -l "$RUNNER_TEMP/symbols.txt"
           for symbol in T3VoiceMode.T3VoiceModeModule FluidAudio.StreamingEouAsrManager FluidAudio.KokoroAneManager FluidAudio.VadManager; do
-            if ! grep -q "$symbol" "$RUNNER_TEMP/symbols.txt"; then
+            if ! grep -m 1 -F "$symbol" "$RUNNER_TEMP/symbols.txt"; then
               echo "::error::$symbol is not in the app binary"
               exit 1
             fi
-            echo "found $symbol"
           done
