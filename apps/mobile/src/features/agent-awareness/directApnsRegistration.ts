@@ -11,6 +11,7 @@ import { Atom } from "effect/reactivity";
 import { environmentCatalog } from "../../connection/catalog";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { serverEnvironment } from "../../state/server";
+import { dismissEndedAgentLiveActivities, getAgentLiveActivities } from "./agentLiveActivity";
 
 // Forks whose bundle ID the official relay's APNs key cannot reach run their own
 // push sender on each T3 server. That server needs this device's token, which
@@ -149,11 +150,11 @@ async function reconcileEnabledEnvironments(
           registered: state.kind === "registered",
         });
       });
-      if (
-        state.kind === "registered" &&
-        lastLiveActivity?.deviceId === state.registration.deviceId
-      ) {
-        await sendLiveActivity(environmentId, lastLiveActivity);
+      if (state.kind === "registered") {
+        const liveActivity = shownLiveActivity();
+        if (liveActivity?.deviceId === state.registration.deviceId) {
+          await sendLiveActivity(environmentId, liveActivity);
+        }
       }
     }),
   );
@@ -202,6 +203,22 @@ export async function forgetDirectApnsEnvironments(
   updateSentStates(() => {
     for (const environmentId of environmentIds) sentStates.delete(environmentId);
   });
+}
+
+// An ended card's token must never come back: the server would put alerts inside updates to
+// a card that no longer shows, instead of sending them plainly.
+function shownLiveActivity(): PushLiveActivityRegistration | null {
+  try {
+    dismissEndedAgentLiveActivities();
+  } catch {
+    // Binaries built before the native dismissEnded method throw; listing still works.
+  }
+  try {
+    if (getAgentLiveActivities().length === 0) lastLiveActivity = null;
+  } catch {
+    lastLiveActivity = null;
+  }
+  return lastLiveActivity;
 }
 
 function sendLiveActivity(
