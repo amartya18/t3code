@@ -91,7 +91,7 @@ function WorkspaceRoot() {
               <WorkspaceNoTabs />
             )
           ) : (
-            <WorkspaceAppBarScope enabled={!layout.usesSplitView}>
+            <WorkspaceAppBarScope enabled={!layout.usesSplitView && tab !== "scheduledTasks"}>
               <WorkspaceTabPanes
                 tabs={TABS}
                 selected={tab}
