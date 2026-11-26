@@ -14,12 +14,14 @@ export function SliderRow(props: SliderRowProps) {
   const { colors } = useControlTheme();
   // The value of the drag in progress; null between drags.
   const draft = useRef<number | null>(null);
-  const commit = (value: number) => {
-    if (props.disabled) return;
-    const next = Math.min(
+  const snap = (value: number) =>
+    Math.min(
       props.max,
       Math.max(props.min, props.min + Math.round((value - props.min) / props.step) * props.step),
     );
+  const commit = (value: number) => {
+    if (props.disabled) return;
+    const next = snap(value);
     if (next === props.value) return;
     void Haptics.selectionAsync().catch(() => undefined);
     props.onChange(next);
@@ -64,6 +66,7 @@ export function SliderRow(props: SliderRowProps) {
               }}
               onValueChange={(value) => {
                 draft.current = value;
+                props.onDrag?.(snap(value));
               }}
               onValueChangeFinished={() => {
                 const value = draft.current;

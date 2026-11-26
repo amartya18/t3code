@@ -1,5 +1,6 @@
 import { useNavigation } from "@react-navigation/native";
 import { useGT } from "gt-react-native";
+import { useState } from "react";
 import { Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -34,6 +35,7 @@ export function VoiceSessionSheet() {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const settings = useVoiceModeSettings();
+  const [draggedPause, setDraggedPause] = useState<number | null>(null);
   const { options, selected } = useVoiceModelOptions(settings, settings?.environmentId ?? null);
   const close = () => navigation.goBack();
   const title = gt("Session settings");
@@ -71,12 +73,18 @@ export function VoiceSessionSheet() {
           <SliderRow
             icon="timer"
             label={gt("Pause before sending")}
-            valueLabel={gt("{seconds} s", { seconds: (settings.pauseMs / 1000).toFixed(1) })}
+            valueLabel={gt("{seconds} s", {
+              seconds: (draggedPause ?? settings.pauseMs / 1000).toFixed(1),
+            })}
             min={PAUSE_MIN_MS / 1000}
             max={PAUSE_MAX_MS / 1000}
             step={0.5}
             value={settings.pauseMs / 1000}
-            onChange={(seconds) => void saveVoiceSettings({ pauseMs: Math.round(seconds * 1000) })}
+            onDrag={setDraggedPause}
+            onChange={(seconds) => {
+              setDraggedPause(null);
+              void saveVoiceSettings({ pauseMs: Math.round(seconds * 1000) });
+            }}
           />
         </ListSection>
         <ListSection footer={gt("Kept for your next sessions.")}>
