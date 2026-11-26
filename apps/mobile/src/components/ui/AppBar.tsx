@@ -165,7 +165,8 @@ export function AppBar(props: AppBarProps) {
             splitBack === null &&
             !listBeside &&
             !(props.guardBack && props.onBack),
-          ...(props.guardBack ? { gestureEnabled: false } : undefined),
+          // setOptions merges, so a guard that lifts has to turn swipe and native Back on again.
+          ...(props.guardBack === undefined ? undefined : { gestureEnabled: !props.guardBack }),
           title: props.title,
           unstable_headerSubtitle: props.subtitle || undefined,
           ...(props.matchSearchSurface
