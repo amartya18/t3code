@@ -13,6 +13,8 @@ actor VoiceEngine {
   private var downloading = false
   private var sessionObservers: [NSObjectProtocol] = []
   private var engineObserver: NSObjectProtocol?
+  private var stopping: Task<Void, Never>?
+  private var restarting = false
 
   init() {
     let events = EventSink()
@@ -62,6 +64,7 @@ actor VoiceEngine {
   }
 
   func start() async throws {
+    await stopping?.value
     guard !running else { return }
     let config = try requireConfig()
     running = true
@@ -85,14 +88,22 @@ actor VoiceEngine {
   }
 
   func stop() async {
-    guard running else { return }
+    guard running else {
+      await stopping?.value
+      return
+    }
     running = false
     for observer in sessionObservers { NotificationCenter.default.removeObserver(observer) }
     sessionObservers.removeAll()
-    await teardownAudio()
-    await speaker.stopAll()
-    listener.input.yield(.reset)
-    try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    let task = Task {
+      await self.teardownAudio()
+      await self.speaker.stopAll()
+      self.listener.input.yield(.reset)
+      try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    }
+    stopping = task
+    await task.value
+    stopping = nil
   }
 
   func finalize() async throws -> String {
@@ -133,10 +144,29 @@ actor VoiceEngine {
 
   private func buildAudio(_ config: VoiceConfig) async throws {
     let engine = AVAudioEngine()
-    let input = engine.inputNode
     // Voice processing must be switched on while the engine is stopped, before reading the input format.
-    if config.aec { try input.setVoiceProcessingEnabled(true) }
-    let format = input.outputFormat(forBus: 0)
+    if config.aec { try engine.inputNode.setVoiceProcessingEnabled(true) }
+    try await run(engine, aec: config.aec)
+    audio = engine
+    engineObserver = NotificationCenter.default.addObserver(
+      forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil
+    ) { [weak self] _ in
+      Task { await self?.engineConfigurationChanged(engine) }
+    }
+    events.stage("mic.start")
+    emitRoute()
+  }
+
+  /// Taps the mic in its current format and starts the engine. Right after a route change or
+  /// voice processing reconfigures the session, the input can read 0 Hz for a moment, so wait it out.
+  private func run(_ engine: AVAudioEngine, aec: Bool) async throws {
+    let input = engine.inputNode
+    input.removeTap(onBus: 0)
+    var format = input.outputFormat(forBus: 0)
+    for _ in 0..<20 where format.sampleRate == 0 || format.channelCount == 0 {
+      try await Task.sleep(nanoseconds: 100_000_000)
+      format = input.outputFormat(forBus: 0)
+    }
     guard format.sampleRate > 0, format.channelCount > 0, let mic = MicConverter(from: format) else {
       throw VoiceModeError.noInput
     }
@@ -146,18 +176,10 @@ actor VoiceEngine {
       guard let converted = mic.convert(buffer, silence: controls.muted) else { return }
       sink.yield(.audio(converted))
     }
-    if config.aec { input.isVoiceProcessingInputMuted = controls.muted }
+    if aec { input.isVoiceProcessingInputMuted = controls.muted }
     await speaker.attach(engine)
     engine.prepare()
     try engine.start()
-    audio = engine
-    engineObserver = NotificationCenter.default.addObserver(
-      forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil
-    ) { [weak self] _ in
-      Task { await self?.engineConfigurationChanged(engine) }
-    }
-    events.stage("mic.start")
-    emitRoute()
   }
 
   private func teardownAudio() async {
@@ -181,9 +203,26 @@ actor VoiceEngine {
     }
   }
 
-  /// The engine stops itself when its I/O format changes, for example on a new route.
+  /// The engine stops itself when its I/O format changes, for example on a new route or when voice
+  /// processing reconfigures the session. A new engine then reads a 0 Hz mic, so restart this one
+  /// once iOS settles, and rebuild only if that keeps failing.
   private func engineConfigurationChanged(_ engine: AVAudioEngine) async {
-    guard engine === audio, !engine.isRunning else { return }
+    guard engine === audio, running, !restarting else { return }
+    restarting = true
+    defer { restarting = false }
+    for attempt in 1...3 {
+      try? await Task.sleep(nanoseconds: UInt64(attempt) * 250_000_000)
+      guard engine === audio, running, let config else { return }
+      if engine.isRunning { return emitRoute() }
+      do {
+        try activateSession(config)
+        try await run(engine, aec: config.aec)
+        events.stage("mic.restart")
+        return emitRoute()
+      } catch {
+        events.stage("mic.restart_failed:\(attempt)")
+      }
+    }
     await recover()
   }
 
@@ -210,11 +249,9 @@ actor VoiceEngine {
 
   private func interrupted(began: Bool) async {
     events.send("interruption", ["phase": began ? "began" : "ended"])
-    if began {
-      await teardownAudio()
-    } else {
-      await recover()
-    }
+    if began { return }
+    guard let engine = audio else { return await recover() }
+    await engineConfigurationChanged(engine)
   }
 
   private func emitRoute() {
