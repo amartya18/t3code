@@ -2374,6 +2374,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
                   if (closingWindowContentsIds.has(contents.id)) return;
                   closingWindowContentsIds.add(contents.id);
                   pendingNavigations.set(tabId, readNavigation(contents));
+                  // Chromium can wait up to 500 ms on the page's unload before it lets go,
+                  // and the window would sit on screen for it.
+                  window.hide();
                   contents.close({ waitForBeforeUnload: true });
                 });
                 contents.once("destroyed", () => {
@@ -2430,6 +2433,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
                 bar.setWindowOpenHandler(() => ({ action: "deny" }));
                 // Without an answer a page's beforeunload silently cancels every close and navigation.
                 contents.on("will-prevent-unload", (event) => {
+                  const closing = closingWindowContentsIds.has(contents.id);
+                  if (closing) window.show();
                   const options: Electron.MessageBoxOptions = {
                     type: "question",
                     buttons: [m(msg("Leave")), m(msg("Stay"))],
@@ -2447,6 +2452,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
                       : dialog.showMessageBoxSync(window, options);
                   if (response === 0) {
                     event.preventDefault();
+                    if (closing) window.hide();
                   } else if (closingWindowContentsIds.delete(contents.id)) {
                     // The page stays open; give back a session Chromium may have dropped meanwhile.
                     runFork(
