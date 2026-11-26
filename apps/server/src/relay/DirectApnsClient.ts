@@ -166,6 +166,50 @@ export const makeNodeHttp2Transport = Effect.gen(function* () {
 
 export const transportLayer = Layer.effect(DirectApnsTransport, makeNodeHttp2Transport);
 
+const readSecret = (name: string) =>
+  ServerSecretStore.ServerSecretStore.pipe(
+    Effect.flatMap((secrets) => secrets.get(name)),
+    Effect.map(Option.map((bytes) => new TextDecoder().decode(bytes).trim())),
+    Effect.orElseSucceed(() => Option.none<string>()),
+  );
+
+const readConfig = (name: string) =>
+  Config.String(name).pipe(
+    Config.option,
+    Effect.map(Option.filter((value) => value.trim().length > 0)),
+    Effect.orElseSucceed(() => Option.none<string>()),
+  );
+
+const readPrivateKey = Effect.gen(function* () {
+  const path = yield* readConfig(PRIVATE_KEY_PATH_ENV);
+  if (Option.isNone(path)) return yield* readSecret(PRIVATE_KEY_SECRET);
+  const fileSystem = yield* FileSystem.FileSystem;
+  // An unreadable key file is a misconfiguration, never a reason to fail a thread.
+  return yield* fileSystem.readFileString(path.value).pipe(
+    Effect.asSome,
+    Effect.tapError(() =>
+      Effect.logWarning("direct APNs key file could not be read", {
+        envVar: PRIVATE_KEY_PATH_ENV,
+      }),
+    ),
+    Effect.orElseSucceed(() => Option.none<string>()),
+  );
+});
+
+const readCredentials = Effect.gen(function* () {
+  const keyId = yield* readConfig(KEY_ID_ENV);
+  const teamId = yield* readConfig(TEAM_ID_ENV);
+  const privateKey = yield* readPrivateKey;
+  return Option.all({
+    keyId: Option.isSome(keyId) ? keyId : yield* readSecret(KEY_ID_SECRET),
+    teamId: Option.isSome(teamId) ? teamId : yield* readSecret(TEAM_ID_SECRET),
+    privateKey,
+  });
+});
+
+/** Whether direct APNs pushes would be sent; the same read the client's `isConfigured` uses. */
+export const readDirectApnsConfigured = readCredentials.pipe(Effect.map(Option.isSome));
+
 const make = Effect.gen(function* () {
   const transport = yield* DirectApnsTransport;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -173,52 +217,18 @@ const make = Effect.gen(function* () {
   const configProvider = yield* ConfigProvider.ConfigProvider;
   const providerTokens = makeApnsProviderTokenCache();
 
-  const readSecret = (name: string) =>
-    secrets.get(name).pipe(
-      Effect.map(Option.map((bytes) => new TextDecoder().decode(bytes).trim())),
-      Effect.orElseSucceed(() => Option.none<string>()),
-    );
-
-  const readConfig = (name: string) =>
-    Config.String(name).pipe(
-      Config.option,
-      // The send path runs outside the layer's context, so pin the provider it was built with.
-      Effect.provideService(ConfigProvider.ConfigProvider, configProvider),
-      Effect.map(Option.filter((value) => value.trim().length > 0)),
-      Effect.orElseSucceed(() => Option.none<string>()),
-    );
-
-  const readPrivateKey = Effect.gen(function* () {
-    const path = yield* readConfig(PRIVATE_KEY_PATH_ENV);
-    if (Option.isNone(path)) return yield* readSecret(PRIVATE_KEY_SECRET);
-    // An unreadable key file is a misconfiguration, never a reason to fail a thread.
-    return yield* fileSystem.readFileString(path.value).pipe(
-      Effect.asSome,
-      Effect.tapError(() =>
-        Effect.logWarning("direct APNs key file could not be read", {
-          envVar: PRIVATE_KEY_PATH_ENV,
-        }),
-      ),
-      Effect.orElseSucceed(() => Option.none<string>()),
-    );
-  });
-
-  const readCredentials = Effect.gen(function* () {
-    const keyId = yield* readConfig(KEY_ID_ENV);
-    const teamId = yield* readConfig(TEAM_ID_ENV);
-    const privateKey = yield* readPrivateKey;
-    return Option.all({
-      keyId: Option.isSome(keyId) ? keyId : yield* readSecret(KEY_ID_SECRET),
-      teamId: Option.isSome(teamId) ? teamId : yield* readSecret(TEAM_ID_SECRET),
-      privateKey,
-    });
-  });
+  // The send path runs outside the layer's context, so pin the services it was built with.
+  const readPinnedCredentials = readCredentials.pipe(
+    Effect.provideService(FileSystem.FileSystem, fileSystem),
+    Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
+    Effect.provideService(ConfigProvider.ConfigProvider, configProvider),
+  );
 
   const send: DirectApnsClient["Service"]["send"] = Effect.fn("DirectApnsClient.send")(function* ({
     device,
     request,
   }) {
-    const credentials = yield* readCredentials;
+    const credentials = yield* readPinnedCredentials;
     if (Option.isNone(credentials)) {
       yield* Effect.logDebug("direct APNs push skipped; credentials not configured");
       return { outcome: "unconfigured" } as const;
@@ -279,7 +289,7 @@ const make = Effect.gen(function* () {
   });
 
   return DirectApnsClient.of({
-    isConfigured: readCredentials.pipe(Effect.map(Option.isSome)),
+    isConfigured: readPinnedCredentials.pipe(Effect.map(Option.isSome)),
     send,
   });
 });

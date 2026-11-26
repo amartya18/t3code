@@ -7,6 +7,12 @@ const mocks = vi.hoisted(() => ({
   environmentIds: [] as string[],
   generations: new Map<string, number>(),
   catalogListeners: [] as Array<() => void>,
+  shownCards: 1,
+}));
+
+vi.mock("./agentLiveActivity", () => ({
+  dismissEndedAgentLiveActivities: () => undefined,
+  getAgentLiveActivities: () => Array.from({ length: mocks.shownCards }),
 }));
 
 vi.mock("@t3tools/client-runtime/state/runtime", () => ({
@@ -80,6 +86,7 @@ beforeEach(() => {
   mocks.environmentIds = [ENV_A, ENV_B];
   mocks.generations.clear();
   mocks.catalogListeners.length = 0;
+  mocks.shownCards = 1;
   __resetDirectApnsRegistrationForTest();
 });
 
@@ -191,6 +198,38 @@ describe("registerDirectLiveActivity", () => {
     expect(mocks.runAtomCommand.mock.calls.map(([, command, target]) => [command, target])).toEqual(
       [[{ label: "register-live-activity" }, { environmentId: ENV_A, input: registration }]],
     );
+  });
+
+  it("sends a card started before any server took the device once one does", async () => {
+    mocks.environmentIds = [ENV_A];
+    mocks.runAtomCommand.mockResolvedValueOnce({ _tag: "Failure" });
+    await registerDirectApnsDevice(request());
+    const registration = { deviceId: "device-1", activityPushToken: "ef".repeat(40) };
+    await registerDirectLiveActivity(registration);
+    expect(sent().filter(([label]) => label === "register-live-activity")).toEqual([]);
+
+    await registerDirectApnsDevice(request());
+    expect(sent().slice(-2)).toEqual([
+      ["register", ENV_A, toPushDeviceRegistration(request())],
+      ["register-live-activity", ENV_A, registration],
+    ]);
+  });
+
+  it("never brings back the token of a card that has ended", async () => {
+    mocks.environmentIds = [ENV_A];
+    await registerDirectApnsDevice(request());
+    await registerDirectLiveActivity({ deviceId: "device-1", activityPushToken: "ef".repeat(40) });
+    mocks.runAtomCommand.mockClear();
+
+    // The card ended, then the server reconnects twice; a later card must not revive it.
+    mocks.shownCards = 0;
+    mocks.generations.set(ENV_A, 2);
+    await registerDirectApnsDevice(request());
+    mocks.shownCards = 1;
+    mocks.generations.set(ENV_A, 3);
+    await registerDirectApnsDevice(request());
+
+    expect(sent().map(([label]) => label)).toEqual(["register", "register"]);
   });
 });
 
