@@ -148,6 +148,8 @@ const CAPTURE_PAGE_RETRY_ATTEMPTS = 3;
 const CAPTURE_PAGE_RETRY_DELAY_MS = 120;
 const CAPTURE_PAGE_ATTEMPT_TIMEOUT_MS = 1_000;
 const BUSY_PAGE_PROBE_MS = 1_000;
+const REATTACH_LIMIT = 3;
+const REATTACH_WINDOW_MS = 10_000;
 const PICTURE_IN_PICTURE_INITIAL_WIDTH = 480;
 const PICTURE_IN_PICTURE_INITIAL_HEIGHT = 320;
 const PICTURE_IN_PICTURE_MIN_WIDTH = 240;
@@ -678,6 +680,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const pendingNavigations = new Map<string, NavigationSnapshot>();
   // Chromium drops the debugger while a closing window unloads; reattaching restarts the close.
   const closingWindowContentsIds = new Set<number>();
+  // Electron reports every drop as "target closed", and a closing guest can still look alive after
+  // one, so only a cap tells a dying guest from one that lost its debugger once.
+  const reattachTimes = new WeakMap<Electron.WebContents, readonly number[]>();
   // Frame capture and each tab's window need the main renderer painting while it is hidden:
   // captured guests render through it, and Base UI unmounts a bar's closed menu on its next frame.
   let mainRendererHolds = 0;
@@ -3153,6 +3158,19 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       if (wc.isDestroyed()) return;
       const tabId = yield* tabIdForWebContents(wc.id);
       if (tabId === null) return;
+      const now = yield* Clock.currentTimeMillis;
+      const recent = (reattachTimes.get(wc) ?? []).filter((at) => now - at < REATTACH_WINDOW_MS);
+      if (recent.length >= REATTACH_LIMIT) {
+        yield* Effect.logWarning(
+          "Preview stopped reattaching a debugger Chromium keeps dropping.",
+          {
+            tabId,
+            webContentsId: wc.id,
+          },
+        );
+        return;
+      }
+      reattachTimes.set(wc, [...recent, now]);
       yield* restoreControlSession(tabId, wc);
     },
     (recover) => Effect.ignore(recover),

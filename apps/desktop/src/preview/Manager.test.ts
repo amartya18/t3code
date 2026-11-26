@@ -2003,6 +2003,49 @@ describe("PreviewManager", () => {
     ),
   );
 
+  // A guest that Chromium keeps dropping, such as one closing before Electron marks it destroyed.
+  effectIt.effect("stops reattaching a debugger that Chromium keeps dropping", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const guest = makeAttachingGuest(50);
+        fromId.mockReturnValue(guest.wc);
+        yield* manager.createTab("tab_detach_storm");
+        yield* manager.registerWebview("tab_detach_storm", 50);
+        yield* Effect.yieldNow;
+        expect(guest.attach).toHaveBeenCalledTimes(1);
+
+        for (let drop = 0; drop < 6; drop++) {
+          guest.chromiumDetach();
+          yield* Effect.yieldNow;
+          yield* Effect.yieldNow;
+        }
+
+        expect(guest.attach).toHaveBeenCalledTimes(4);
+      }),
+    ),
+  );
+
+  effectIt.effect("keeps reattaching a debugger that Chromium drops now and then", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const guest = makeAttachingGuest(51);
+        fromId.mockReturnValue(guest.wc);
+        yield* manager.createTab("tab_detach_spread");
+        yield* manager.registerWebview("tab_detach_spread", 51);
+        yield* Effect.yieldNow;
+
+        for (let drop = 0; drop < 6; drop++) {
+          guest.chromiumDetach();
+          yield* Effect.yieldNow;
+          yield* Effect.yieldNow;
+          yield* TestClock.adjust(5_000);
+        }
+
+        expect(guest.attach).toHaveBeenCalledTimes(7);
+      }),
+    ),
+  );
+
   effectIt.effect(
     "does not open picture-in-picture against a destroyed webview's WebContents",
     () =>
