@@ -1,4 +1,5 @@
 import {
+  activeCustomModeSkill,
   CommandId,
   HOME_LAUNCHED_THREAD_ID_PREFIX,
   MessageId,
@@ -295,6 +296,14 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             },
             { projectId: input.projectId, workspaceStrategy: input.workspaceStrategy },
           );
+        const customMode =
+          input.customMode === undefined && caller !== undefined
+            ? activeCustomModeSkill(
+                (yield* context.threads
+                  .getThreadRecords(caller.id, [])
+                  .pipe(Effect.mapError(unavailable))).thread.customMode,
+              )
+            : (input.customMode ?? null);
         if (isHome && attachments.length === 0) {
           // Provider instances differ per machine, so another machine uses its own default.
           const modelSelection =
@@ -307,6 +316,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             ...(modelSelection === undefined ? {} : { modelSelection }),
             runtimeMode,
             interactionMode,
+            ...(customMode === null ? {} : { customMode }),
             ...(input.workspaceStrategy === undefined
               ? {}
               : { workspaceStrategy: input.workspaceStrategy }),
@@ -522,6 +532,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           modelSelection,
           runtimeMode: startedRuntimeMode,
           interactionMode,
+          ...(customMode === null ? {} : { customMode }),
           workspaceStrategy: launchStrategy,
           ...(input.message === undefined && attachments.length === 0
             ? {}
@@ -574,6 +585,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           link: McpInvocationContext.threadLinkFor(scope, thread.id, thread.title),
           projectId: thread.projectId,
           modelSelection: thread.modelSelection,
+          customMode: activeCustomModeSkill(thread.customMode),
           runId: run?.id ?? null,
           status: run?.status ?? null,
         };

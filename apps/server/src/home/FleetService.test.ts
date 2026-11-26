@@ -76,6 +76,7 @@ const setup = () => {
   const dispatched: Array<OrchestrationV2ServerCommand> = [];
   const launched: Array<string> = [];
   const workspaces: Array<ThreadLaunch.ThreadLaunchWorkspaceStrategy> = [];
+  const customModes: Array<string | undefined> = [];
   const layer = FleetService.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -104,9 +105,17 @@ const setup = () => {
           launch: (input) => {
             launched.push(input.commandId);
             workspaces.push(input.workspaceStrategy);
+            customModes.push(input.customMode);
+            const customMode =
+              input.customMode === undefined
+                ? null
+                : { status: "on", skill: input.customMode, updatedAt: "2026-01-01T00:00:00Z" };
             return Effect.succeed({
               threadId: input.threadId,
-              projection: { thread: shell(String(input.threadId), "a", 1), runs: [] },
+              projection: {
+                thread: { ...shell(String(input.threadId), "a", 1), customMode },
+                runs: [],
+              },
               resumed: false,
             } as never);
           },
@@ -142,7 +151,7 @@ const setup = () => {
       ),
     ),
   );
-  return { layer, dispatched, launched, workspaces };
+  return { layer, dispatched, launched, workspaces, customModes };
 };
 
 it.effect("lists threads from every project, newest first, with snooze state", () => {
@@ -351,5 +360,30 @@ it.effect("only launches with a Home launch id it was given", () => {
       })
       .pipe(Effect.asVoid, Effect.flip);
     expect(error.code).toBe("invalid_request");
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("a Home launch starts with the custom mode it names, and reports it", () => {
+  const { layer, customModes } = setup();
+  return Effect.gen(function* () {
+    const fleet = yield* FleetService.FleetService;
+    const launch = (customMode?: string) =>
+      fleet.execute({
+        actor,
+        request: {
+          op: "threads.launch",
+          input: {
+            projectId: ProjectId.make("a"),
+            title: "Worker",
+            modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+            ...(customMode === undefined ? {} : { customMode }),
+          },
+        },
+      });
+    const named = yield* launch("t3-pstack:poteto-mode");
+    const plain = yield* launch();
+    expect(customModes).toEqual(["t3-pstack:poteto-mode", undefined]);
+    expect(named).toMatchObject({ customMode: "t3-pstack:poteto-mode" });
+    expect(plain).toMatchObject({ customMode: null });
   }).pipe(Effect.provide(layer));
 });
