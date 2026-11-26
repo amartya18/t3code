@@ -48,14 +48,10 @@ import {
   RuntimeMode,
 } from "./providerPolicy.ts";
 
-/** Why Home watches a thread. Threads Home launched also stop notifying the user. */
-export const HomeWatchReason = Schema.Literals(["launched", "requested"]);
-export type HomeWatchReason = typeof HomeWatchReason.Type;
-
+/** A thread Home chose to watch. Threads Home launched are watched without one. */
 export const HomeWatch = Schema.Struct({
   environmentId: EnvironmentId,
   threadId: ThreadId,
-  reason: HomeWatchReason,
 });
 export type HomeWatch = typeof HomeWatch.Type;
 

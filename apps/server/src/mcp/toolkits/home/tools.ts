@@ -24,7 +24,7 @@ const ThreadWatchTool = Tool.make("t3_thread_watch", {
     ...homeRoutingDependencies,
   ],
   description:
-    "Home only. Choose which threads in this environment wake Home. watch/unwatch one thread (threadId), or watch_all/unwatch_all for every thread here. Threads Home launches here are already watched. A watch ends when its thread is settled or archived. For a thread in a linked environment, use t3_thread_wait. Returns what Home now watches.",
+    "Home only. Choose which threads in this environment wake Home. watch/unwatch one thread (threadId), or watch_all/unwatch_all for every thread here. Threads Home launches here are always watched, settled or not. A watch ends when its thread is archived. For a thread in a linked environment, use t3_thread_wait. Returns what Home now watches.",
   parameters: Schema.Struct({
     action: Schema.Literals(["watch", "unwatch", "watch_all", "unwatch_all"]),
     threadId: Schema.optional(ThreadId),
