@@ -212,15 +212,15 @@ export const readDirectApnsConfigured = readCredentials.pipe(Effect.map(Option.i
 
 const make = Effect.gen(function* () {
   const transport = yield* DirectApnsTransport;
-  const services = yield* Effect.context<
-    FileSystem.FileSystem | ServerSecretStore.ServerSecretStore
-  >();
+  const fileSystem = yield* FileSystem.FileSystem;
+  const secrets = yield* ServerSecretStore.ServerSecretStore;
   const configProvider = yield* ConfigProvider.ConfigProvider;
   const providerTokens = makeApnsProviderTokenCache();
 
   // The send path runs outside the layer's context, so pin the services it was built with.
   const readPinnedCredentials = readCredentials.pipe(
-    Effect.provideContext(services),
+    Effect.provideService(FileSystem.FileSystem, fileSystem),
+    Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
     Effect.provideService(ConfigProvider.ConfigProvider, configProvider),
   );
 

@@ -7,6 +7,8 @@ import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import { Atom } from "effect/reactivity";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { AppState, Platform } from "react-native";
@@ -30,7 +32,7 @@ import { m } from "../../i18n/messages";
 import { runtime } from "../../lib/runtime";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentServerConfigsAtom } from "../../state/server";
-import { environmentSnapshotAtom } from "../../state/shell";
+import { environmentShell } from "../../state/shell";
 import { MobilePreferencesStore, type Preferences } from "../../persistence/mobile-preferences";
 import * as MobileStorage from "../../persistence/mobile-storage";
 import {
@@ -111,6 +113,7 @@ let registeredWithPushToken = false;
 let nativePushTokenRotations = 0;
 let pushTokenSubscription: { remove: () => void } | null = null;
 let appStateSubscription: { remove: () => void } | null = null;
+let liveEnvironmentsSubscription: (() => void) | null = null;
 
 export type AgentAwarenessRegistrationStatus = "unknown" | "pending" | "registered" | "failed";
 let registrationStatus: AgentAwarenessRegistrationStatus = "unknown";
@@ -239,6 +242,7 @@ export function setAgentAwarenessRelayTokenProvider(
   }
   ensurePushTokenListener();
   ensureAppStateListener();
+  ensureLiveEnvironmentsListener();
   runRegistrationInBackground(
     refreshActiveLiveActivityRemoteRegistration(),
     "active live activity registration after cloud sign-in failed",
@@ -264,6 +268,8 @@ export function releaseAgentAwarenessRelayTokenProvider(): void {
   pushTokenSubscription = null;
   appStateSubscription?.remove();
   appStateSubscription = null;
+  liveEnvironmentsSubscription?.();
+  liveEnvironmentsSubscription = null;
   if (activeLiveActivityRegistrationRetry) {
     clearTimeout(activeLiveActivityRegistrationRetry);
     activeLiveActivityRegistrationRetry = null;
@@ -489,12 +495,37 @@ const unregisterDeviceWithRelay = Effect.fn("remoteRegistration.unregisterDevice
   },
 );
 
-function environmentPublishesAgentActivity(environmentId: EnvironmentId): boolean {
+type AtomReader = <A>(atom: Atom.Atom<A>) => A;
+const readAtom: AtomReader = (atom) => appAtomRegistry.get(atom);
+
+function environmentPublishesAgentActivity(
+  environmentId: EnvironmentId,
+  get: AtomReader = readAtom,
+): boolean {
   return (
-    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+    get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
       .agentActivityPublishing !== false
   );
 }
+
+// A cached shell can still show work that finished while the app was away, so only live ones count.
+function livePublishingSnapshots(get: AtomReader) {
+  const environments = [];
+  for (const environmentId of get(environmentServerConfigsAtom).keys()) {
+    if (!environmentPublishesAgentActivity(environmentId, get)) continue;
+    const shell = get(environmentShell.stateValueAtom(environmentId));
+    const snapshot = shell.status === "live" ? Option.getOrNull(shell.snapshot) : null;
+    if (snapshot) environments.push({ environmentId, snapshot });
+  }
+  return environments;
+}
+
+// Foreground priming usually runs before servers resync, so it runs again as each turns live.
+const livePublishingEnvironmentsAtom = Atom.make((get) =>
+  livePublishingSnapshots(get)
+    .map(({ environmentId }) => environmentId)
+    .join(" "),
+);
 
 // The relay never sees work on servers that push to APNs themselves, so a card for
 // them can only be primed from the shells this phone syncs.
@@ -505,13 +536,10 @@ function primeableAgentActivityAggregate(
   if (snapshot?.aggregate && snapshot.aggregate.activeCount > 0) {
     return snapshot.aggregate;
   }
-  const environments = [];
-  for (const environmentId of appAtomRegistry.get(environmentServerConfigsAtom).keys()) {
-    if (!environmentPublishesAgentActivity(environmentId)) continue;
-    const environmentSnapshot = appAtomRegistry.get(environmentSnapshotAtom(environmentId));
-    if (environmentSnapshot) environments.push({ environmentId, snapshot: environmentSnapshot });
-  }
-  const local = localAgentActivityAggregate({ environments, nowMs });
+  const local = localAgentActivityAggregate({
+    environments: livePublishingSnapshots(readAtom),
+    nowMs,
+  });
   return local && local.activeCount > 0 ? local : null;
 }
 
@@ -828,6 +856,20 @@ function ensureAppStateListener(): void {
   });
 }
 
+function ensureLiveEnvironmentsListener(): void {
+  if (liveEnvironmentsSubscription || !canRegisterRemoteLiveActivities()) {
+    return;
+  }
+
+  liveEnvironmentsSubscription = appAtomRegistry.subscribe(livePublishingEnvironmentsAtom, () => {
+    if (!relayTokenProvider || AppState.currentState !== "active") return;
+    runRegistrationInBackground(
+      refreshActiveLiveActivityRemoteRegistration(),
+      "live activity priming after a server synced failed",
+    );
+  });
+}
+
 function publishWidget(source: AgentActivityWidgetSource): void {
   if (!canRegisterRemoteLiveActivities()) {
     return;
@@ -907,6 +949,8 @@ export function __resetAgentAwarenessRemoteRegistrationForTest(): void {
   pushTokenSubscription = null;
   appStateSubscription?.remove();
   appStateSubscription = null;
+  liveEnvironmentsSubscription?.();
+  liveEnvironmentsSubscription = null;
   if (activeLiveActivityRegistrationRetry) {
     clearTimeout(activeLiveActivityRegistrationRetry);
     activeLiveActivityRegistrationRetry = null;

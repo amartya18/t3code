@@ -12,6 +12,7 @@ import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import { Cookies, FetchHttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
 
@@ -128,20 +129,37 @@ vi.mock("./agentLiveActivity", () => ({
   startAgentLiveActivity: widgetMocks.start,
 }));
 
-const shellSnapshotsMock = vi.hoisted(() => new Map<string, OrchestrationV2ShellSnapshot>());
+const shellsMock = vi.hoisted(() => ({
+  states: new Map<
+    string,
+    { readonly status: string; readonly snapshot: Option.Option<OrchestrationV2ShellSnapshot> }
+  >(),
+  listeners: [] as Array<() => void>,
+}));
 
 // Avoid importing the native connection stack; these reads only need configs and shells.
 vi.mock("../../state/atom-registry", () => ({
   appAtomRegistry: {
     get: (atom: unknown) =>
       typeof atom === "object" && atom !== null && "shellOf" in atom
-        ? (shellSnapshotsMock.get(String(atom.shellOf)) ?? null)
+        ? (shellsMock.states.get(String(atom.shellOf)) ?? {
+            status: "empty",
+            snapshot: Option.none(),
+          })
         : environmentConfigsMock.configs,
+    subscribe: (_atom: unknown, listener: () => void) => {
+      shellsMock.listeners.push(listener);
+      return () => {
+        shellsMock.listeners.splice(shellsMock.listeners.indexOf(listener), 1);
+      };
+    },
   },
 }));
 
 vi.mock("../../state/shell", () => ({
-  environmentSnapshotAtom: (environmentId: string) => ({ shellOf: environmentId }),
+  environmentShell: {
+    stateValueAtom: (environmentId: string) => ({ shellOf: environmentId }),
+  },
 }));
 
 vi.mock("../../state/server", () => ({
@@ -200,6 +218,7 @@ vi.mock("react-native", () => ({
     },
   },
   AppState: {
+    currentState: "active",
     addEventListener: (_event: string, listener: (state: string) => void) => {
       appStateMock.listeners.push(listener);
       return {
@@ -361,7 +380,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     publishWidgetMock.mockClear();
     widgetMocks.dismissEnded.mockReset();
     environmentConfigsMock.configs.clear();
-    shellSnapshotsMock.clear();
+    shellsMock.states.clear();
   });
 
   it("disables push features in Personal Team relay registrations", () => {
@@ -1374,28 +1393,34 @@ describe("makeRelayDeviceRegistrationRequest", () => {
 
       const idle = { ...aggregate, activeCount: 0, activities: [] };
 
-      function connectServer(input: { readonly agentActivityPublishing: boolean }) {
+      function connectServer(input: {
+        readonly agentActivityPublishing: boolean;
+        readonly shellStatus?: string;
+      }) {
         environmentConfigsMock.configs.set("env-direct", {
           environment: {
             capabilities: { agentActivityPublishing: input.agentActivityPublishing },
           },
         });
         const project = makeProjectShell({ id: ProjectId.make("project-1"), title: "fork" });
-        shellSnapshotsMock.set("env-direct", {
-          schemaVersion: 1,
-          snapshotSequence: 1,
-          projects: [project],
-          archivedThreads: [],
-          threads: [
-            makeRawThreadShell({
-              id: ThreadId.make("thread-direct"),
-              projectId: project.id,
-              title: "Ship direct pushes",
-              status: "running",
-              // it.effect's TestClock starts at the epoch.
-              updatedAt: DateTime.makeUnsafe(0),
-            }),
-          ],
+        shellsMock.states.set("env-direct", {
+          status: input.shellStatus ?? "live",
+          snapshot: Option.some({
+            schemaVersion: 1,
+            snapshotSequence: 1,
+            projects: [project],
+            archivedThreads: [],
+            threads: [
+              makeRawThreadShell({
+                id: ThreadId.make("thread-direct"),
+                projectId: project.id,
+                title: "Ship direct pushes",
+                status: "running",
+                // it.effect's TestClock starts at the epoch.
+                updatedAt: DateTime.makeUnsafe(0),
+              }),
+            ],
+          }),
         });
       }
 
@@ -1429,6 +1454,35 @@ describe("makeRelayDeviceRegistrationRequest", () => {
           yield* refreshActiveLiveActivityRemoteRegistration();
 
           expect(widgetMocks.start).not.toHaveBeenCalled();
+        }).pipe(Effect.provide(relay));
+      });
+
+      it.effect("starts nothing from a cached shell that may show finished work", () => {
+        connectServer({ agentActivityPublishing: true, shellStatus: "cached" });
+        const relay = fakeRelay(() => Effect.succeed({ aggregate: idle }));
+        setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token"), "user-a");
+
+        return Effect.gen(function* () {
+          yield* refreshActiveLiveActivityRemoteRegistration();
+
+          expect(widgetMocks.start).not.toHaveBeenCalled();
+        }).pipe(Effect.provide(relay));
+      });
+
+      it.effect("starts the card once a resyncing server's shell turns live", () => {
+        connectServer({ agentActivityPublishing: true, shellStatus: "synchronizing" });
+        const relay = fakeRelay(() => Effect.succeed({ aggregate: idle }));
+        setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token"), "user-a");
+
+        return Effect.gen(function* () {
+          yield* runBackgroundOperations();
+          expect(widgetMocks.start).not.toHaveBeenCalled();
+
+          connectServer({ agentActivityPublishing: true });
+          for (const listener of shellsMock.listeners) listener();
+          yield* runBackgroundOperations();
+
+          expect(startedRows()).toEqual([[["Ship direct pushes", "fork"]]]);
         }).pipe(Effect.provide(relay));
       });
 

@@ -67,6 +67,9 @@ interface SentState {
 // sends again because the server may have dropped the device when it revoked the old one.
 const sentStates = new Map<EnvironmentId, SentState>();
 let lastRequest: RelayDeviceRegistrationRequest | null = null;
+// A card can start before any server holds the device (cold start, reconnect); the server
+// that takes the device next must still get the card's token, or nothing updates the card.
+let lastLiveActivity: PushLiveActivityRegistration | null = null;
 let watchingSessions = false;
 const registeredListeners = new Set<() => void>();
 const FORGET_TIMEOUT_MS = 3_000;
@@ -146,6 +149,12 @@ async function reconcileEnabledEnvironments(
           registered: state.kind === "registered",
         });
       });
+      if (
+        state.kind === "registered" &&
+        lastLiveActivity?.deviceId === state.registration.deviceId
+      ) {
+        await sendLiveActivity(environmentId, lastLiveActivity);
+      }
     }),
   );
 }
@@ -195,18 +204,26 @@ export async function forgetDirectApnsEnvironments(
   });
 }
 
+function sendLiveActivity(
+  environmentId: EnvironmentId,
+  registration: PushLiveActivityRegistration,
+) {
+  return runAtomCommand(
+    appAtomRegistry,
+    serverEnvironment.registerPushLiveActivity,
+    { environmentId, input: registration },
+    { reportFailure: false, reportDefect: false },
+  );
+}
+
 // Only servers that already hold this device can push to its Live Activity.
 export async function registerDirectLiveActivity(
   registration: PushLiveActivityRegistration,
 ): Promise<void> {
+  lastLiveActivity = registration;
   await Promise.all(
     registeredEnvironmentIds().map((environmentId) =>
-      runAtomCommand(
-        appAtomRegistry,
-        serverEnvironment.registerPushLiveActivity,
-        { environmentId, input: registration },
-        { reportFailure: false, reportDefect: false },
-      ),
+      sendLiveActivity(environmentId, registration),
     ),
   );
 }
@@ -215,5 +232,6 @@ export function __resetDirectApnsRegistrationForTest(): void {
   sentStates.clear();
   registeredListeners.clear();
   lastRequest = null;
+  lastLiveActivity = null;
   watchingSessions = false;
 }

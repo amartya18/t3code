@@ -192,6 +192,21 @@ describe("registerDirectLiveActivity", () => {
       [[{ label: "register-live-activity" }, { environmentId: ENV_A, input: registration }]],
     );
   });
+
+  it("sends a card started before any server took the device once one does", async () => {
+    mocks.environmentIds = [ENV_A];
+    mocks.runAtomCommand.mockResolvedValueOnce({ _tag: "Failure" });
+    await registerDirectApnsDevice(request());
+    const registration = { deviceId: "device-1", activityPushToken: "ef".repeat(40) };
+    await registerDirectLiveActivity(registration);
+    expect(sent().filter(([label]) => label === "register-live-activity")).toEqual([]);
+
+    await registerDirectApnsDevice(request());
+    expect(sent().slice(-2)).toEqual([
+      ["register", ENV_A, toPushDeviceRegistration(request())],
+      ["register-live-activity", ENV_A, registration],
+    ]);
+  });
 });
 
 describe("leaving a server's push list", () => {
