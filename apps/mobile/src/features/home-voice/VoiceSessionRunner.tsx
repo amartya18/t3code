@@ -5,6 +5,8 @@ import { useEffect } from "react";
 import { useThreadShell, useThreadShells } from "../../state/entities";
 import { useEnvironmentThread } from "../../state/threads";
 import { readHomeView } from "./homeView";
+import { useVoiceSpeech } from "./useVoiceSpeech";
+import { isVoiceEngineAvailable } from "./voiceEngine";
 import {
   ensureVoiceTag,
   pushHomeUpdates,
@@ -16,12 +18,21 @@ import {
 export function VoiceSessionRunner() {
   const session = useAtomValue(voiceSessionAtom);
   if (session === null) return null;
+  const key = `${session.thread.environmentId}:${session.thread.threadId}`;
   return (
-    <LiveVoiceSession
-      key={`${session.thread.environmentId}:${session.thread.threadId}`}
-      session={session}
-    />
+    <>
+      <LiveVoiceSession key={key} session={session} />
+      {isVoiceEngineAvailable() ? (
+        <SpokenVoiceSession key={`speech:${key}`} session={session} />
+      ) : null}
+    </>
   );
+}
+
+/** Listens and speaks; its own component so streamed replies re-render only this. */
+function SpokenVoiceSession(props: { readonly session: VoiceSession }) {
+  useVoiceSpeech(props.session);
+  return null;
 }
 
 /** Tags the voice thread and relays what changes at Home. */

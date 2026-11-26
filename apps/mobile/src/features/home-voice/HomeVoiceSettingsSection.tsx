@@ -2,16 +2,22 @@ import { useAtomValue } from "@effect/atom-react";
 import type { MenuAction } from "@react-native-menu/menu";
 import { userHomeThreadRef } from "@t3tools/client-runtime/state/home";
 import { useGT } from "gt-react-native";
-import type { ComponentProps } from "react";
+import { useEffect, useState, type ComponentProps } from "react";
 import { Pressable } from "react-native";
 
+import { voiceEngine } from "../../../modules/t3-voice-mode";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import * as Dialog from "../../components/ui/Dialog";
 import { ListRowLayout } from "../../components/ui/ListRowLayout";
 import { Menu } from "../../components/ui/Menu";
+import { formatBytes } from "../../lib/formatBytes";
 import { groupByProvider } from "../../lib/modelOptions";
 import { useProjects } from "../../state/entities";
 import { userHomeAtom } from "../../state/home";
 import { SettingsSection } from "../settings/components/SettingsSection";
+import { voiceEngineConfig } from "./voiceEngine";
 import { useVoiceModelOptions, withLowEffort } from "./voiceModels";
+import { voiceSessionAtom } from "./voiceSession";
 import { saveVoiceSettings, useVoiceModeSettings } from "./voiceSettings";
 
 function MenuRow(props: {
@@ -88,6 +94,79 @@ export function HomeVoiceSettingsSection() {
           if (picked) void saveVoiceSettings({ modelSelection: withLowEffort(picked) });
         }}
       />
+      {voiceEngine === null ? null : <VoiceDownloadRow voiceId={settings?.voiceId ?? "af_heart"} />}
     </SettingsSection>
+  );
+}
+
+/** The on-device speech models: their size on disk, and a way to free it. */
+function VoiceDownloadRow(props: { readonly voiceId: string }) {
+  const gt = useGT();
+  const sessionLive = useAtomValue(voiceSessionAtom) !== null;
+  const [bytes, setBytes] = useState<number | null>(null);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the models live on disk, measured by the native engine
+  useEffect(() => {
+    if (voiceEngine === null) return;
+    const engine = voiceEngine;
+    let current = true;
+    void engine
+      .configure(voiceEngineConfig(props.voiceId))
+      .then(() => engine.modelStatus())
+      .then((status) => {
+        if (current) setBytes(status.bytesOnDisk);
+      })
+      .catch(() => {});
+    return () => {
+      current = false;
+    };
+  }, [props.voiceId]);
+
+  const label = gt("Voice download");
+  const size = bytes === null ? "" : bytes === 0 ? gt("None") : formatBytes(bytes);
+  const remove = () => {
+    if (sessionLive) {
+      Dialog.alert(gt("End the voice session first"), gt("The voice is in use."));
+      return;
+    }
+    Dialog.confirm({
+      title: gt("Delete the voice download?"),
+      message: gt("Your next voice session downloads it again, about 320 MB."),
+      confirmText: gt("Delete"),
+      destructive: true,
+      onConfirm: () => {
+        void voiceEngine?.deleteModels().then(
+          () => setBytes(0),
+          () => Dialog.alert(gt("Couldn't delete the voice download")),
+        );
+      },
+    });
+  };
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${label}, ${size}`}
+      accessibilityHint={gt("Deletes the voice download")}
+      disabled={bytes === null || bytes === 0}
+      onPress={remove}
+      className="active:opacity-70"
+    >
+      <ListRowLayout
+        icon="arrow.down.circle"
+        label={label}
+        detail={size}
+        accessory={
+          bytes === null || bytes === 0 ? undefined : (
+            <SymbolView
+              name="trash"
+              size={16}
+              tintColorClassName="accent-icon-muted"
+              type="monochrome"
+            />
+          )
+        }
+      />
+    </Pressable>
   );
 }

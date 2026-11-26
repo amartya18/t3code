@@ -1,10 +1,18 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
 import * as Option from "effect/Option";
+import * as Haptics from "expo-haptics";
 import { useGT } from "gt-react-native";
-import { useEffect, useState } from "react";
-import { Pressable, View } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import { Linking, Pressable, View } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
+import Animated, {
+  cancelAnimation,
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -15,13 +23,20 @@ import { serverEnvironment } from "../../state/server";
 import { useEnvironmentThread } from "../../state/threads";
 import { useVoiceConnection } from "./useVoiceCall";
 import {
+  holdVoiceStage,
+  retryVoiceEngine,
+  tapVoiceStage,
+  voiceSpeechAtom,
+  type VoiceSpeechView,
+} from "./useVoiceSpeech";
+import {
   CircleButton,
   HangUpButton,
   MuteButton,
   SessionSettingsButton,
   VoiceClockTitle,
 } from "./VoiceCallControls";
-import { isVoiceEngineAvailable } from "./voiceEngine";
+import { VOICE_ENGINE_SUPPORT } from "./voiceEngine";
 import {
   sendVoiceMessage,
   VOICE_THREAD_TAG,
@@ -29,7 +44,7 @@ import {
   type VoiceSession,
 } from "./voiceSession";
 import { useVoiceModeSettings } from "./voiceSettings";
-import { voiceTranscript, type TranscriptLine } from "./voiceTranscript";
+import { TRANSCRIPT_LINES, voiceTranscript, type TranscriptLine } from "./voiceTranscript";
 
 /** The full-screen call: the session's time, its last few lines, mute and hang up. */
 export function VoiceCallScreen() {
@@ -70,9 +85,11 @@ function VoiceCall(props: { readonly session: VoiceSession }) {
           <SessionSettingsButton size={44} raised />
         </View>
         <HiddenThreadNotice environmentId={thread.environmentId} />
-        <View className="flex-1" />
+        {VOICE_ENGINE_SUPPORT === "available" ? <VoiceStage /> : <View className="flex-1" />}
         <VoiceTranscript session={props.session} />
-        {isVoiceEngineAvailable() ? null : <TypedMessageField session={props.session} />}
+        {VOICE_ENGINE_SUPPORT === "available" ? null : (
+          <TypedMessageField session={props.session} />
+        )}
         <View className="flex-row items-center justify-between px-7 pt-5">
           <MuteButton muted={props.session.muted} size={58} />
           <HangUpButton size={58} />
@@ -109,11 +126,38 @@ function HiddenThreadNotice(props: {
   );
 }
 
+/** The empty middle: a tap sends the pause now or stops the voice, a press and hold waits. */
+function VoiceStage() {
+  const gt = useGT();
+  const holding = useRef(false);
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={gt("Send now or interrupt")}
+      accessibilityHint={gt("Press and hold to keep waiting")}
+      className="flex-1"
+      delayLongPress={350}
+      onPress={tapVoiceStage}
+      onLongPress={() => {
+        holding.current = true;
+        void Haptics.selectionAsync();
+        holdVoiceStage(true);
+      }}
+      onPressOut={() => {
+        if (!holding.current) return;
+        holding.current = false;
+        holdVoiceStage(false);
+      }}
+    />
+  );
+}
+
 function VoiceTranscript(props: { readonly session: VoiceSession }) {
   const gt = useGT();
   const { thread } = props.session;
   const state = useEnvironmentThread(thread.environmentId, thread.threadId);
   const connection = useVoiceConnection(thread);
+  const speech = useAtomValue(voiceSpeechAtom);
   const sent = Option.match(state.data, {
     onNone: () => [],
     onSome: (data) =>
@@ -133,12 +177,42 @@ function VoiceTranscript(props: { readonly session: VoiceSession }) {
       text: message.text,
     })),
   );
+  const spoken = [speech?.sending, speech?.current].filter((text) => text != null);
+  const shown = lines.slice(Math.max(0, lines.length + spoken.length - TRANSCRIPT_LINES));
 
   return (
     <View className="gap-3 px-6" accessibilityLiveRegion="polite">
-      {lines.map((line, index) => (
-        <TranscriptRow key={line.id} line={line} newest={index === lines.length - 1} />
+      {shown.map((line, index) => (
+        <TranscriptRow
+          key={line.id}
+          line={line}
+          newest={spoken.length === 0 && index === shown.length - 1}
+        />
       ))}
+      {spoken.map((text, index) => {
+        const newest = index === spoken.length - 1;
+        return (
+          <View
+            key={newest ? "current" : "sending"}
+            className="items-end gap-1.5 self-end"
+            style={{ maxWidth: "80%" }}
+          >
+            <Text
+              className={cn(
+                newest ? "text-base" : "text-sm opacity-70",
+                "text-right text-foreground-muted",
+              )}
+            >
+              {text}
+            </Text>
+            {newest && speech?.pause != null ? <SendCountdown {...speech.pause} /> : null}
+          </View>
+        );
+      })}
+      {speech === null ? null : <EngineNote engine={speech.engine} />}
+      {VOICE_ENGINE_SUPPORT === "needsNewerIos" ? (
+        <Text className="text-xs text-foreground-muted">{gt("Voice needs iOS 26.6 or later")}</Text>
+      ) : null}
       {connection.offline ? (
         <Text className="text-xs text-foreground-muted">
           {gt("Reconnecting")}
@@ -157,6 +231,92 @@ function VoiceTranscript(props: { readonly session: VoiceSession }) {
       ) : null}
     </View>
   );
+}
+
+/** A hairline under the line about to be sent: drains over the pause, full and grey while held. */
+function SendCountdown(props: NonNullable<VoiceSpeechView["pause"]>) {
+  const { sinceMs, pauseMs, held } = props;
+  const remaining = useSharedValue(1);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the drain runs on the UI thread and restarts with each pause
+  useEffect(() => {
+    cancelAnimation(remaining);
+    if (held) {
+      remaining.value = 1;
+      return;
+    }
+    const left = Math.min(1, Math.max(0, 1 - (Date.now() - sinceMs) / pauseMs));
+    remaining.value = left;
+    remaining.value = withTiming(0, { duration: left * pauseMs, easing: Easing.linear });
+  }, [sinceMs, pauseMs, held, remaining]);
+  const fill = useAnimatedStyle(() => ({ width: `${remaining.value * 100}%` }));
+  return (
+    <View
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      className="h-0.5 w-[120px] max-w-full overflow-hidden rounded-full bg-border"
+    >
+      <Animated.View
+        style={fill}
+        className={cn(
+          "absolute bottom-0 right-0 top-0",
+          held ? "bg-foreground-muted" : "bg-primary",
+        )}
+      />
+    </View>
+  );
+}
+
+/** Where the on-device voice stands, when it isn't simply listening. */
+function EngineNote(props: { readonly engine: VoiceSpeechView["engine"] }) {
+  const gt = useGT();
+  const { engine } = props;
+  const note = (
+    text: string,
+    action?: { readonly label: string; readonly onPress: () => void },
+  ) => (
+    <Text className="text-xs text-foreground-muted">
+      {text}
+      {action === undefined ? null : (
+        <>
+          {" · "}
+          <Text
+            accessibilityRole="button"
+            className="text-xs text-primary-text"
+            onPress={action.onPress}
+          >
+            {action.label}
+          </Text>
+        </>
+      )}
+    </Text>
+  );
+  switch (engine.kind) {
+    case "downloading":
+      return (
+        <View className="gap-0.5">
+          {note(
+            gt("Downloading voice · {percent}%", { percent: Math.floor(engine.fraction * 100) }),
+          )}
+          {note(gt("About 320 MB, once. Use Wi-Fi if you can."))}
+        </View>
+      );
+    case "downloadFailed":
+      return note(gt("Voice download failed"), { label: gt("Retry"), onPress: retryVoiceEngine });
+    case "micDenied":
+      return note(gt("Microphone access is off"), {
+        label: gt("Open Settings"),
+        onPress: () => void Linking.openSettings(),
+      });
+    case "interrupted":
+      return note(gt("Paused while another app uses audio"));
+    case "failed":
+      return note(gt("Voice stopped working"), { label: gt("Retry"), onPress: retryVoiceEngine });
+    case "starting":
+      return note(gt("Starting voice…"));
+    case "checking":
+    case "listening":
+      return null;
+  }
 }
 
 function TranscriptRow(props: { readonly line: TranscriptLine; readonly newest: boolean }) {
