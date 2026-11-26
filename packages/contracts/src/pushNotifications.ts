@@ -16,7 +16,7 @@ export const PushDeviceRegistration = Schema.Struct({
   bundleId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
   platform: Schema.Literal("ios"),
   liveActivitiesEnabled: Schema.Boolean,
-  // False is a card-only device: it gets Live Activity updates and ends, never an alert.
+  /** False is a card-only device: it never gets an alert, only Live Activity pushes. */
   notificationsEnabled: Schema.Boolean,
   notifyOnApproval: Schema.Boolean,
   notifyOnInput: Schema.Boolean,

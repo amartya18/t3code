@@ -252,7 +252,6 @@ describe("card-only registration", () => {
       ["register", ENV_A, cardOnly],
       ["register", ENV_B, cardOnly],
     ]);
-    // Settings must not report notifications as working.
     expect(isDirectApnsRegistered()).toBe(false);
   });
 
@@ -278,7 +277,6 @@ describe("card-only registration", () => {
     await registerDirectApnsDevice(withPreferences({ notificationsEnabled: false }));
     mocks.runAtomCommand.mockClear();
     const bothOff = withPreferences({ notificationsEnabled: false, liveActivitiesEnabled: false });
-    // The server ends a card it holds once the device says Live Activities are off.
     await registerDirectApnsDevice(bothOff);
     expect(sent()).toEqual([["register", ENV_A, toPushDeviceRegistration(bothOff)]]);
 

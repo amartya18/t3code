@@ -892,7 +892,6 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         const listener = vi.mocked(Notifications.addPushTokenListener).mock.calls.at(-1)![0];
         listener({ type: os, data: "rotated" });
         yield* runBackgroundOperations();
-        // The token stays, so on iOS a T3 server can still update the card; alerts stay off.
         expect(registrations.at(-1)).toMatchObject({
           pushToken: "rotated",
           preferences: { notificationsEnabled: false, liveActivitiesEnabled: os === "ios" },

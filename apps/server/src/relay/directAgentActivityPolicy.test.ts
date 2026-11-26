@@ -161,7 +161,6 @@ describe("chooseDirectPushes", () => {
       const contentState = apsOf(pushes[0])?.["content-state"] as { props: string } | undefined;
       expect(JSON.parse(contentState?.props ?? "{}").activities[0].phase).toBe(phase);
 
-      // Without a card, or once Live Activities are off, there is still no plain alert.
       expect(choose({ device: device({ notificationsEnabled: false }), state: next })).toEqual([]);
       const off = choose({
         device: device({ ...cardOnly, liveActivitiesEnabled: false }),
