@@ -763,6 +763,7 @@ const makeTestPreviewWindow = (page: Electron.WebContents, opener = testAppFrame
   const addChildView = vi.fn();
   const contentEvents = makeTestEmitter();
   let contentBounds = { x: 0, y: 0, width: 1280, height: 800 };
+  let visible = false;
   const window = {
     contentView: { addChildView, on: contentEvents.on, getBounds: () => contentBounds },
     on: events.on,
@@ -772,7 +773,13 @@ const makeTestPreviewWindow = (page: Electron.WebContents, opener = testAppFrame
     setTitle: vi.fn(),
     isDestroyed: () => destroyed,
     isMinimized: () => false,
-    show: vi.fn(),
+    isVisible: () => visible && !destroyed,
+    show: vi.fn(() => {
+      visible = true;
+    }),
+    hide: vi.fn(() => {
+      visible = false;
+    }),
     focus: vi.fn(),
     restore: vi.fn(),
     close: vi.fn(() => {
@@ -3973,6 +3980,75 @@ describe("PreviewManager", () => {
           [{ waitForBeforeUnload: true }],
           [{ waitForBeforeUnload: true }],
         ]);
+      }),
+    ),
+  );
+
+  // Chromium can hold a close for half a second while the page unloads; the window must not wait on screen.
+  effectIt.effect("hides a closing window while its page unloads", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const restored = makeChangeSignal();
+        const history = { entries: [{ url: "https://example.com/a", title: "A" }], index: 0 };
+        const guest = makeTestNavigableWebContents(46, history, restored);
+        const page = makeTestNavigableWebContents(80, history, restored, "browserView", {
+          empty: true,
+        });
+        const contentsById = new Map([guest, page].map(({ wc }) => [wc.id, wc]));
+        fromId.mockImplementation((id) =>
+          id === undefined ? null : (contentsById.get(id) ?? null),
+        );
+        const preview = makeTestPreviewWindow(page.wc);
+        yield* manager.createTab("tab_window_hide");
+        yield* manager.registerWebview("tab_window_hide", 46);
+        yield* openTestWindow(manager, "tab_window_hide", preview.bar);
+        expect(preview.window.isVisible()).toBe(true);
+
+        yield* manager.closeWindow("tab_window_hide");
+
+        expect(page.close).toHaveBeenCalledWith({ waitForBeforeUnload: true });
+        expect(preview.window.isDestroyed()).toBe(false);
+        expect(preview.window.isVisible()).toBe(false);
+        page.unload();
+        expect(preview.window.isDestroyed()).toBe(true);
+      }),
+    ),
+  );
+
+  effectIt.effect("shows a closing window for its page's Leave/Stay box", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const restored = makeChangeSignal();
+        const history = { entries: [{ url: "https://example.com/a", title: "A" }], index: 0 };
+        const guest = makeTestNavigableWebContents(47, history, restored);
+        const page = makeTestNavigableWebContents(81, history, restored, "browserView", {
+          empty: true,
+        });
+        const contentsById = new Map([guest, page].map(({ wc }) => [wc.id, wc]));
+        fromId.mockImplementation((id) =>
+          id === undefined ? null : (contentsById.get(id) ?? null),
+        );
+        const preview = makeTestPreviewWindow(page.wc);
+        yield* manager.createTab("tab_window_ask");
+        yield* manager.registerWebview("tab_window_ask", 47);
+        yield* openTestWindow(manager, "tab_window_ask", preview.bar);
+        const visibleWhenAsked: boolean[] = [];
+        const ask = (answer: 0 | 1) => {
+          showMessageBoxSync.mockImplementationOnce(() => {
+            visibleWhenAsked.push(preview.window.isVisible());
+            return answer;
+          });
+          page.emit("will-prevent-unload", { preventDefault: vi.fn() });
+        };
+
+        yield* manager.closeWindow("tab_window_ask");
+        ask(1);
+        expect(preview.window.isVisible()).toBe(true);
+
+        yield* manager.closeWindow("tab_window_ask");
+        ask(0);
+        expect(preview.window.isVisible()).toBe(false);
+        expect(visibleWhenAsked).toEqual([true, true]);
       }),
     ),
   );
