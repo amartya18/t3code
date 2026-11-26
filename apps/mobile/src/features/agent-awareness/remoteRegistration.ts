@@ -298,10 +298,8 @@ const nativePushTokenRegistration = Effect.fn("remoteRegistration.nativePushToke
           cause,
         }),
     });
-    // Android FCM data delivery is independent of notification presentation permission.
-    if (!permissions.granted && Platform.OS !== "android") {
-      return { notificationsEnabled: false, pushToken: null, notificationPermissionGranted: false };
-    }
+    // Android FCM data delivery is independent of notification presentation permission, and
+    // iOS issues an APNs token without it, which keeps the device on a T3 server for its cards.
     const alertsEnabled =
       permissions.granted &&
       (Platform.OS === "android" && Number(Platform.Version) >= 26
@@ -393,6 +391,9 @@ function registrationSignature(body: RelayDeviceRegistrationRequest): string {
   ].join("|");
 }
 
+const canAlert = (body: RelayDeviceRegistrationRequest) =>
+  Boolean(body.pushToken) && body.preferences.notificationsEnabled;
+
 const registerDeviceWithRelay = Effect.fn("remoteRegistration.registerDeviceWithRelay")(function* (
   body: RelayDeviceRegistrationRequest,
   expectedGeneration: number,
@@ -443,7 +444,7 @@ const registerDeviceWithRelay = Effect.fn("remoteRegistration.registerDeviceWith
     persisted.signature === signature &&
     !needsAndroidReplay
   ) {
-    setRegistrationStatus("registered", Boolean(payload.pushToken));
+    setRegistrationStatus("registered", canAlert(payload));
     return;
   }
 
@@ -459,7 +460,7 @@ const registerDeviceWithRelay = Effect.fn("remoteRegistration.registerDeviceWith
     return;
   }
   if (body.platform === "android") androidDeviceReplayedAt = yield* Clock.currentTimeMillis;
-  setRegistrationStatus("registered", Boolean(payload.pushToken));
+  setRegistrationStatus("registered", canAlert(payload));
   yield* storage.saveAgentAwarenessRegistrationRecord({ identity, signature }).pipe(
     Effect.catch((error) =>
       Effect.sync(() => {

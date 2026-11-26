@@ -6,6 +6,7 @@ import {
   type EnvironmentId,
   type HomeSettings,
   type HomeWatchEvent,
+  isHomeLaunchedThreadId,
   isHomeThreadId,
   type OrchestrationV2ThreadShell,
   type ThreadId,
@@ -17,6 +18,7 @@ import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { listedThreadStatus } from "../mcp/OrchestratorMcpService.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -29,18 +31,10 @@ export interface WatchedThreadState {
   readonly attention: string | null;
   readonly completion: number | null;
   readonly ended: boolean;
-  /** Set once a launch watch added after start-up has been compared with an empty state. */
-  readonly launchSeen: boolean;
 }
 
 const UNSEEN = { attention: null, completion: null, ended: false };
 
-/**
- * Diffs the changed shells against the last pass with the desktop-notification
- * transitions. First sight is a baseline, except for a thread created or launch
- * watched after start-up.
- * A watched thread that no longer exists ends its watch.
- */
 export function diffWatchedThreads(input: {
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string;
@@ -77,29 +71,24 @@ export function diffWatchedThreads(input: {
     const seen = input.previous.get(threadId);
     if (shell === null || shell.deletedAt !== null) {
       next.delete(threadId);
-      // A new launch watch can arrive before its thread does.
-      const tracked = seen === undefined ? input.knownWatchKeys.has(threadId) : !seen.ended;
-      if (watch !== undefined && tracked) {
-        report(
-          seen ?? { threadId, title: shell?.title ?? "", ...UNSEEN, launchSeen: false },
-          "ended",
-        );
+      const stillWatched = seen === undefined ? input.knownWatchKeys.has(threadId) : !seen.ended;
+      if (watch !== undefined && stillWatched) {
+        report(seen ?? { threadId, title: shell?.title ?? "", ...UNSEEN }, "ended");
       }
       continue;
     }
     // Home never wakes for itself, an older Home, or subagent plumbing.
     if (isHomeThreadId(shell.id) || shell.lineage.relationshipToParent === "subagent") continue;
-    if (!input.home.watchAll && watch === undefined) {
+    if (!input.home.watchAll && watch === undefined && !isHomeLaunchedThreadId(threadId)) {
       next.delete(threadId);
       continue;
     }
-    const fresh =
-      (watch?.reason === "launched" && !input.knownWatchKeys.has(threadId)) ||
-      DateTime.toEpochMillis(shell.createdAt) > input.startedAtMs;
-    const prior = fresh && seen?.launchSeen !== true ? UNSEEN : seen;
+    const createdSinceStart = DateTime.toEpochMillis(shell.createdAt) > input.startedAtMs;
+    const prior = seen ?? (createdSinceStart ? UNSEEN : undefined);
     const attention = attentionOf(shell);
+    const finished = listedThreadStatus(shell) === "completed";
     const completion =
-      shell.status === "completed" && shell.latestRunCompletedAt != null
+      finished && shell.latestRunCompletedAt != null
         ? DateTime.toEpochMillis(shell.latestRunCompletedAt)
         : (prior?.completion ?? null);
     const state: WatchedThreadState = {
@@ -107,15 +96,13 @@ export function diffWatchedThreads(input: {
       title: shell.title,
       attention: attention?.key ?? null,
       completion,
-      ended: shell.archivedAt !== null || shell.settledOverride === "settled",
-      launchSeen: fresh,
+      ended: shell.archivedAt !== null,
     };
     next.set(threadId, state);
     if (prior === undefined) {
-      // A start-up watch whose thread was settled while the server was down.
-      if (state.ended && watch !== undefined && input.knownWatchKeys.has(threadId)) {
-        report(state, "ended");
-      }
+      const archivedWhileDown =
+        state.ended && watch !== undefined && input.knownWatchKeys.has(threadId);
+      if (archivedWhileDown) report(state, "ended");
       continue;
     }
     if (state.ended) {

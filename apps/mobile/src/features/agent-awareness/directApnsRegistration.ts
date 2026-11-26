@@ -46,11 +46,14 @@ type DirectApnsState =
   | { readonly kind: "registered"; readonly registration: PushDeviceRegistration }
   | { readonly kind: "unregistered"; readonly deviceId: string };
 
-// Android pushes go through the relay, so only iOS requests reach the server's device list.
-// A missing token with permission granted is a failed lookup (cold start), not a way out.
+// Only iOS reaches the server's list; Android pushes go through the relay. iOS issues a token
+// without notification permission, so a missing one is a failed lookup, not a way out. With
+// notifications off the device stays card-only (notificationsEnabled false). With Live
+// Activities off too, it stays only until the server has ended the card still showing.
 function desiredState(request: RelayDeviceRegistrationRequest): DirectApnsState | null {
   if (request.platform !== "ios") return null;
-  if (!request.preferences.notificationsEnabled) {
+  const { notificationsEnabled, liveActivitiesEnabled } = request.preferences;
+  if (!notificationsEnabled && !liveActivitiesEnabled && !cardShown()) {
     return { kind: "unregistered", deviceId: request.deviceId };
   }
   const registration = toPushDeviceRegistration(request);
@@ -60,7 +63,7 @@ function desiredState(request: RelayDeviceRegistrationRequest): DirectApnsState 
 interface SentState {
   readonly generation: number;
   readonly signature: string;
-  readonly registered: boolean;
+  readonly registration: PushDeviceRegistration | null;
 }
 
 // What each server last accepted, on which connection. Only successes are remembered, so an
@@ -86,13 +89,13 @@ const enabledSessionsAtom = Atom.make((get) =>
 
 function registeredEnvironmentIds(): EnvironmentId[] {
   return [...sentStates]
-    .filter(([, sent]) => sent.registered)
+    .filter(([, sent]) => sent.registration !== null)
     .map(([environmentId]) => environmentId);
 }
 
-// True once any T3 server holds this device's token.
+// True once any T3 server can alert this device. A card-only registration does not count.
 export function isDirectApnsRegistered(): boolean {
-  return registeredEnvironmentIds().length > 0;
+  return [...sentStates.values()].some((sent) => sent.registration?.notificationsEnabled === true);
 }
 
 export function subscribeDirectApnsRegistered(listener: () => void): () => void {
@@ -147,7 +150,7 @@ async function reconcileEnabledEnvironments(
         sentStates.set(environmentId, {
           generation,
           signature,
-          registered: state.kind === "registered",
+          registration: state.kind === "registered" ? state.registration : null,
         });
       });
       if (state.kind === "registered") {
@@ -196,7 +199,7 @@ export async function forgetDirectApnsEnvironments(
     const state: DirectApnsState = { kind: "unregistered", deviceId: request.deviceId };
     await Promise.all(
       environmentIds
-        .filter((environmentId) => sentStates.get(environmentId)?.registered === true)
+        .filter((environmentId) => sentStates.get(environmentId)?.registration)
         .map((environmentId) => settleWithin(sendState(environmentId, state), FORGET_TIMEOUT_MS)),
     );
   }
@@ -205,19 +208,23 @@ export async function forgetDirectApnsEnvironments(
   });
 }
 
-// An ended card's token must never come back: the server would put alerts inside updates to
-// a card that no longer shows, instead of sending them plainly.
-function shownLiveActivity(): PushLiveActivityRegistration | null {
+function cardShown(): boolean {
   try {
     dismissEndedAgentLiveActivities();
   } catch {
     // Binaries built before the native dismissEnded method throw; listing still works.
   }
   try {
-    if (getAgentLiveActivities().length === 0) lastLiveActivity = null;
+    return getAgentLiveActivities().length > 0;
   } catch {
-    lastLiveActivity = null;
+    return false;
   }
+}
+
+// An ended card's token must never come back: the server would put alerts inside updates to
+// a card that no longer shows, instead of sending them plainly.
+function shownLiveActivity(): PushLiveActivityRegistration | null {
+  if (!cardShown()) lastLiveActivity = null;
   return lastLiveActivity;
 }
 

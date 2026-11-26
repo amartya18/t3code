@@ -1579,12 +1579,16 @@ describe("DesktopWindow", () => {
           if (!willAttachWebview) {
             return yield* Effect.die("will-attach-webview listener was not registered");
           }
-          const webPreferences: Electron.WebPreferences = {};
+          const webPreferences: Electron.WebPreferences = { preload: "/repo/elsewhere/other.cjs" };
           const params = { partition: "persist:t3code-preview-test", src: "https://example.com/" };
           willAttachWebview({ preventDefault: () => {} }, webPreferences, params);
 
           assert.deepEqual(webPreferences.additionalArguments, expected);
           assert.isTrue(webPreferences.contextIsolation);
+          assert.equal(
+            webPreferences.preload,
+            "/repo/apps/desktop/dist-electron/preview-pick-preload.cjs",
+          );
         }).pipe(Effect.provide(layer));
       }),
   );

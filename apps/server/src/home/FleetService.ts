@@ -3,6 +3,7 @@
  * Does not delete data; acts with the user's client reach.
  */
 import {
+  activeCustomModeSkill,
   CommandId,
   type FleetActor,
   type FleetInput,
@@ -281,6 +282,7 @@ const make = Effect.gen(function* () {
           modelSelection,
           runtimeMode: input.runtimeMode ?? current.defaultRuntimeMode,
           interactionMode: input.interactionMode ?? "default",
+          ...(input.customMode === undefined ? {} : { customMode: input.customMode }),
           workspaceStrategy:
             input.workspaceStrategy ??
             (yield* launches
@@ -307,6 +309,7 @@ const make = Effect.gen(function* () {
         link: formatThreadLink({ environmentId, threadId: thread.id, title: thread.title }),
         projectId: thread.projectId,
         modelSelection: thread.modelSelection,
+        customMode: activeCustomModeSkill(thread.customMode),
         runId: run?.id ?? null,
         status: run?.status ?? null,
       };

@@ -626,6 +626,8 @@ export const make = Effect.gen(function* () {
         event.preventDefault();
         return;
       }
+      // The guest always runs the app's own preload, whatever the element asked for.
+      webPreferences.preload = environment.previewPickPreloadPath;
       hardenPreviewGuestPreferences(webPreferences, {
         passkeyBridge: previewPasskeys.bridgeEnabled,
         primaryPaste: primaryPaste.enabled,

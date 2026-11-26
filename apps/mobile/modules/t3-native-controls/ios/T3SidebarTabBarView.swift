@@ -111,12 +111,12 @@ final class T3SidebarTabBarView: ExpoView, UITabBarDelegate {
     let pullRequestIcon = UIImage(named: "pull-request", in: iconBundle, compatibleWith: nil)?.withRenderingMode(.alwaysTemplate)
     let labels = [
       "threads": "Chats", "pullRequests": "PRs", "issues": "Issues", "workflows": "Workflows",
-      "usage": "Usage", "settings": "Settings",
+      "usage": "Usage", "settings": "Settings", "scheduledTasks": "Scheduled",
     ]
     let issueIcon = UIImage(named: "issue", in: iconBundle, compatibleWith: nil)?.withRenderingMode(.alwaysTemplate)
     let symbols = [
       "threads": "text.bubble", "workflows": "point.3.connected.trianglepath.dotted",
-      "usage": "chart.bar.xaxis", "settings": "gearshape",
+      "usage": "chart.bar.xaxis", "settings": "gearshape", "scheduledTasks": "calendar.badge.clock",
     ]
     for (tab, label) in labels {
       let icon = tab == "pullRequests" ? pullRequestIcon : tab == "issues" ? issueIcon : UIImage(systemName: symbols[tab] ?? "circle")
