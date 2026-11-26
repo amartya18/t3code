@@ -73,6 +73,8 @@ export interface VoiceSpeechState {
   readonly progress: ReadonlyMap<string, ReplyProgress>;
   readonly turns: number;
   readonly timing: TurnTiming | null;
+  /** When the speech queue last moved, or null until the next tick stamps it. */
+  readonly speechMovedAtMs: number | null;
 }
 
 export interface VoiceSpeechConfig {
@@ -157,7 +159,11 @@ const INITIAL: VoiceSpeechState = {
   progress: new Map(),
   turns: 0,
   timing: null,
+  speechMovedAtMs: null,
 };
+
+/** Longer than any one chunk takes to synthesize and play, so only a lost playback event trips it. */
+const SPEECH_STALL_MS = 30_000;
 
 /** Share of the whole download each model takes, downloaded in this order. */
 const DOWNLOAD_SHARE: Record<ModelPart, readonly [number, number]> = {
@@ -188,6 +194,30 @@ export function stepVoiceSpeech(
   state: VoiceSpeechState,
   event: VoiceSpeechEvent,
   config: VoiceSpeechConfig = DEFAULT_VOICE_SPEECH_CONFIG,
+): VoiceSpeechStep {
+  if (event.type === "tick" && isSpeaking(state.queue)) {
+    if (state.speechMovedAtMs === null) {
+      return stepSpeech({ ...state, speechMovedAtMs: event.atMs }, event, config);
+    }
+    if (event.atMs - state.speechMovedAtMs > SPEECH_STALL_MS) {
+      return then(interrupt(state, 0, false), (next) => ({
+        state: next,
+        effects: [
+          { type: "log", line: "[voice] speech stalled with no playback event; dropped it" },
+        ],
+      }));
+    }
+  }
+  const step = stepSpeech(state, event, config);
+  if (step.state.queue.sent === state.queue.sent) return step;
+  const movedAt = "atMs" in event ? event.atMs : null;
+  return { ...step, state: { ...step.state, speechMovedAtMs: movedAt } };
+}
+
+function stepSpeech(
+  state: VoiceSpeechState,
+  event: VoiceSpeechEvent,
+  config: VoiceSpeechConfig,
 ): VoiceSpeechStep {
   switch (event.type) {
     case "modelStatus":
@@ -248,9 +278,9 @@ export function stepVoiceSpeech(
   }
 }
 
-/** Whether the session needs clock ticks: only while a pause counts down or a barge-in waits. */
+/** Whether the session needs clock ticks: a pause counting down, a barge-in waiting, or speech to watch. */
 export function needsTicks(state: VoiceSpeechState): boolean {
-  return state.turn.kind === "paused" || state.bargeIn.kind === "ducked";
+  return state.turn.kind === "paused" || state.bargeIn.kind === "ducked" || isSpeaking(state.queue);
 }
 
 /** Amar's words on screen: what is being sent, then what he is saying now. */

@@ -148,6 +148,9 @@ export function createVoiceSpeechDriver(options: {
     engine.addListener("interruption", (event) =>
       dispatch({ type: "interruption", phase: event.phase }),
     ),
+    engine.addListener("stage", (event) => {
+      if (inputs.engineConfig.logStages) options.log(`[voice] stage ${event.name}`);
+    }),
     engine.addListener("error", (event) =>
       dispatch({ type: "error", code: event.code, message: event.message }),
     ),

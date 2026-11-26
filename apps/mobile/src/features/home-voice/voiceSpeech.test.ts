@@ -291,6 +291,20 @@ describe("voice speech", () => {
     expect(voice.sent).toEqual([]);
   });
 
+  it("drops speech whose playback never reports back, and listens again", () => {
+    const voice = call({ config: { ...TIMER_ONLY, voiceBargeIn: false } });
+    voice.reply("r1", "This sentence never plays.");
+    voice.wait(29_000);
+    expect(voice.engine.stops).toEqual([]);
+
+    voice.wait(2_000);
+    expect(voice.engine.stops).toHaveLength(1);
+    voice.say("are you there");
+    voice.stopTalking();
+    voice.wait(3_500);
+    expect(voice.sent).toEqual(["are you there"]);
+  });
+
   it("stops the voice on a tap and drops what the mic overheard", () => {
     const voice = call();
     voice.reply("r1", "One. Two. Three.");
