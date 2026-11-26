@@ -210,8 +210,10 @@ function VoiceTranscript(props: { readonly session: VoiceSession }) {
         );
       })}
       {speech === null ? null : <EngineNote engine={speech.engine} />}
-      {VOICE_ENGINE_SUPPORT === "needsNewerIos" ? (
-        <Text className="text-xs text-foreground-muted">{gt("Voice needs iOS 26.6 or later")}</Text>
+      {VOICE_ENGINE_SUPPORT === "unsafeIos" ? (
+        <Text className="text-xs text-foreground-muted">
+          {gt("Voice is off on iOS 26.4 and later, where it crashes for now")}
+        </Text>
       ) : null}
       {connection.offline ? (
         <Text className="text-xs text-foreground-muted">

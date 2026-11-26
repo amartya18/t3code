@@ -2462,7 +2462,7 @@
   "8e9e6d97832c7fa4": "Voice thread not hidden",
   "aa09b825e3fcba95": "Enviar ahora o interrumpir",
   "1b64a3b828247f09": "Mantén pulsado para seguir esperando",
-  "6aa528a248db8a8b": "La voz requiere iOS 26.6 o posterior",
+  "d6e5158e2a3ebf3b": "La voz está desactivada en iOS 26.4 y posteriores, donde por ahora se bloquea",
   "7be7339e44d20c46": "{count} en espera de envío",
   "13e9ac5427508dca": "Descargando voz · {percent} %",
   "b33abfba8fe61a18": "Unos 320 MB, una sola vez. Usa wifi si puedes.",

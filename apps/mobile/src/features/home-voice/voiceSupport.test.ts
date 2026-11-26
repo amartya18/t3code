@@ -5,11 +5,11 @@ import { voiceSupport } from "./voiceSupport";
 it.each([
   ["26.2.1", "available"],
   ["26.3", "available"],
-  ["26.4", "needsNewerIos"],
-  ["26.4.1", "needsNewerIos"],
-  ["26.5.2", "needsNewerIos"],
-  ["26.6", "available"],
-  ["27.0", "available"],
+  ["26.4", "unsafeIos"],
+  ["26.5.2", "unsafeIos"],
+  ["26.6", "unsafeIos"],
+  ["27.0", "unsafeIos"],
+  ["18.6", "available"],
 ] as const)("iOS %s is %s", (version, support) => {
   expect(voiceSupport(true, "ios", version)).toBe(support);
 });

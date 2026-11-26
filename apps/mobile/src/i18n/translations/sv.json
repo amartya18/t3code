@@ -2462,7 +2462,7 @@
   "8e9e6d97832c7fa4": "Voice thread not hidden",
   "aa09b825e3fcba95": "Skicka nu eller avbryt",
   "1b64a3b828247f09": "Håll ned för att fortsätta vänta",
-  "6aa528a248db8a8b": "Röst kräver iOS 26.6 eller senare",
+  "d6e5158e2a3ebf3b": "Röst är av på iOS 26.4 och senare, där den kraschar för tillfället",
   "7be7339e44d20c46": "{count} väntar på att skickas",
   "13e9ac5427508dca": "Laddar ner röst · {percent} %",
   "b33abfba8fe61a18": "Cirka 320 MB, en gång. Använd wifi om du kan.",

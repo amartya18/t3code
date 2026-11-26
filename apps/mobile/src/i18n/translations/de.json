@@ -2462,7 +2462,7 @@
   "8e9e6d97832c7fa4": "Voice thread not hidden",
   "aa09b825e3fcba95": "Jetzt senden oder unterbrechen",
   "1b64a3b828247f09": "Gedrückt halten, um weiter zu warten",
-  "6aa528a248db8a8b": "Der Sprachmodus benötigt iOS 26.6 oder neuer",
+  "d6e5158e2a3ebf3b": "Sprache ist ab iOS 26.4 vorerst aus, weil sie dort abstürzt",
   "7be7339e44d20c46": "{count} warten auf Versand",
   "13e9ac5427508dca": "Stimme wird heruntergeladen · {percent} %",
   "b33abfba8fe61a18": "Etwa 320 MB, einmalig. Nutze nach Möglichkeit WLAN.",

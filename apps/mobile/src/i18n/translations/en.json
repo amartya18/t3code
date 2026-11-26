@@ -2462,7 +2462,7 @@
   "8e9e6d97832c7fa4": "Voice thread not hidden",
   "aa09b825e3fcba95": "Send now or interrupt",
   "1b64a3b828247f09": "Press and hold to keep waiting",
-  "6aa528a248db8a8b": "Voice needs iOS 26.6 or later",
+  "d6e5158e2a3ebf3b": "Voice is off on iOS 26.4 and later, where it crashes for now",
   "7be7339e44d20c46": "{count} waiting to send",
   "13e9ac5427508dca": "Downloading voice · {percent}%",
   "b33abfba8fe61a18": "About 320 MB, once. Use Wi-Fi if you can.",
