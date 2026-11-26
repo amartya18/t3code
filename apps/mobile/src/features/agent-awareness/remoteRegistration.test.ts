@@ -6,6 +6,7 @@ import { beforeEach, vi } from "vite-plus/test";
 import { describe, expect, it } from "@effect/vitest";
 import Constants from "expo-constants";
 import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
@@ -14,7 +15,12 @@ import * as Layer from "effect/Layer";
 import { Cookies, FetchHttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
 
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  ProjectId,
+  type EnvironmentId,
+  type OrchestrationV2ShellSnapshot,
+  ThreadId,
+} from "@t3tools/contracts";
 import type { RelayAgentActivityAggregateState } from "@t3tools/contracts/relay";
 import { verifyDpopProof } from "@t3tools/shared/dpop";
 import * as Dpop from "../cloud/dpop";
@@ -33,6 +39,7 @@ import {
   type Preferences,
 } from "../../persistence/mobile-preferences";
 import { MobileSecureStorageError } from "../../persistence/mobile-secure-storage";
+import { makeProjectShell, makeRawThreadShell } from "../../test-fixtures";
 import * as MobileStorage from "../../persistence/mobile-storage";
 import { makeRelayDeviceRegistrationRequest } from "./registrationPayload";
 import {
@@ -121,11 +128,20 @@ vi.mock("./agentLiveActivity", () => ({
   startAgentLiveActivity: widgetMocks.start,
 }));
 
-// Avoid importing the native connection stack; this gate only needs configs.
+const shellSnapshotsMock = vi.hoisted(() => new Map<string, OrchestrationV2ShellSnapshot>());
+
+// Avoid importing the native connection stack; these reads only need configs and shells.
 vi.mock("../../state/atom-registry", () => ({
   appAtomRegistry: {
-    get: () => environmentConfigsMock.configs,
+    get: (atom: unknown) =>
+      typeof atom === "object" && atom !== null && "shellOf" in atom
+        ? (shellSnapshotsMock.get(String(atom.shellOf)) ?? null)
+        : environmentConfigsMock.configs,
   },
+}));
+
+vi.mock("../../state/shell", () => ({
+  environmentSnapshotAtom: (environmentId: string) => ({ shellOf: environmentId }),
 }));
 
 vi.mock("../../state/server", () => ({
@@ -345,6 +361,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     publishWidgetMock.mockClear();
     widgetMocks.dismissEnded.mockReset();
     environmentConfigsMock.configs.clear();
+    shellSnapshotsMock.clear();
   });
 
   it("disables push features in Personal Team relay registrations", () => {
@@ -1342,6 +1359,91 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         expect(publishWidgetMock).not.toHaveBeenCalled();
       }),
     );
+
+    describe("priming from connected servers", () => {
+      beforeEach(() => {
+        vi.mocked(loadPreferences).mockResolvedValue({
+          liveActivitiesEnabled: true,
+        } as Preferences);
+        widgetMocks.start.mockReturnValue({
+          getId: () => "primed-activity",
+          getPushToken: () => Promise.resolve(null),
+          addPushTokenListener: vi.fn(() => ({ remove: vi.fn() })),
+        });
+      });
+
+      const idle = { ...aggregate, activeCount: 0, activities: [] };
+
+      function connectServer(input: { readonly agentActivityPublishing: boolean }) {
+        environmentConfigsMock.configs.set("env-direct", {
+          environment: {
+            capabilities: { agentActivityPublishing: input.agentActivityPublishing },
+          },
+        });
+        const project = makeProjectShell({ id: ProjectId.make("project-1"), title: "fork" });
+        shellSnapshotsMock.set("env-direct", {
+          schemaVersion: 1,
+          snapshotSequence: 1,
+          projects: [project],
+          archivedThreads: [],
+          threads: [
+            makeRawThreadShell({
+              id: ThreadId.make("thread-direct"),
+              projectId: project.id,
+              title: "Ship direct pushes",
+              status: "running",
+              // it.effect's TestClock starts at the epoch.
+              updatedAt: DateTime.makeUnsafe(0),
+            }),
+          ],
+        });
+      }
+
+      const startedRows = () =>
+        widgetMocks.start.mock.calls.map((call) =>
+          (
+            call as unknown as [
+              { readonly activities: RelayAgentActivityAggregateState["activities"] },
+            ]
+          )[0].activities.map((row) => [row.threadTitle, row.projectTitle]),
+        );
+
+      it.effect("starts a card for a server whose work the relay never sees", () => {
+        connectServer({ agentActivityPublishing: true });
+        const relay = fakeRelay(() => Effect.succeed({ aggregate: idle }));
+        setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token"), "user-a");
+
+        return Effect.gen(function* () {
+          yield* refreshActiveLiveActivityRemoteRegistration();
+
+          expect(startedRows()).toEqual([[["Ship direct pushes", "fork"]]]);
+        }).pipe(Effect.provide(relay));
+      });
+
+      it.effect("starts nothing for a server that does not publish agent activity", () => {
+        connectServer({ agentActivityPublishing: false });
+        const relay = fakeRelay(() => Effect.succeed({ aggregate: idle }));
+        setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token"), "user-a");
+
+        return Effect.gen(function* () {
+          yield* refreshActiveLiveActivityRemoteRegistration();
+
+          expect(widgetMocks.start).not.toHaveBeenCalled();
+        }).pipe(Effect.provide(relay));
+      });
+
+      it.effect("prefers the relay's rows when it reports active work", () => {
+        connectServer({ agentActivityPublishing: true });
+        const relay = fakeRelay(() => Effect.succeed({ aggregate }));
+        setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token"), "user-a");
+
+        return Effect.gen(function* () {
+          yield* refreshActiveLiveActivityRemoteRegistration();
+
+          expect(startedRows()).toEqual([[["Fix the widget", "t3code"]]]);
+        }).pipe(Effect.provide(relay));
+      });
+    });
 
     it.effect("does not prime a Live Activity after sign-out during the preference read", () =>
       Effect.gen(function* () {

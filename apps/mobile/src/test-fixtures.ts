@@ -7,6 +7,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  type OrchestrationProjectShell,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -49,6 +50,21 @@ export function makeRawThreadShell(
     settledOverride: null,
     settledAt: null,
     deletedAt: null,
+    ...input,
+  };
+}
+
+export function makeProjectShell(
+  input: Partial<OrchestrationProjectShell> = {},
+): OrchestrationProjectShell {
+  return {
+    id: ProjectId.make("project-test"),
+    title: "Project",
+    workspaceRoot: "/repo",
+    defaultModelSelection: null,
+    scripts: [],
+    createdAt: DEFAULT_TIMESTAMP,
+    updatedAt: DEFAULT_TIMESTAMP,
     ...input,
   };
 }

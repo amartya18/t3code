@@ -13,6 +13,7 @@ import { AppState, Platform } from "react-native";
 import { msg } from "gt-react-native";
 import type { EnvironmentId } from "@t3tools/contracts";
 import {
+  type RelayAgentActivityAggregateState,
   type RelayDeviceRegistrationRequest,
   type RelayAgentActivitySnapshotResponse,
   type RelayLiveActivityRegistrationRequest,
@@ -29,6 +30,7 @@ import { m } from "../../i18n/messages";
 import { runtime } from "../../lib/runtime";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentServerConfigsAtom } from "../../state/server";
+import { environmentSnapshotAtom } from "../../state/shell";
 import { MobilePreferencesStore, type Preferences } from "../../persistence/mobile-preferences";
 import * as MobileStorage from "../../persistence/mobile-storage";
 import {
@@ -49,6 +51,7 @@ import {
 import { resolveCloudPublicConfig } from "../cloud/publicConfig";
 import { supportsAgentAwarenessPush } from "./capabilities";
 import { registerDirectApnsDevice, registerDirectLiveActivity } from "./directApnsRegistration";
+import { localAgentActivityAggregate } from "./localAgentActivity";
 import { makeRelayDeviceRegistrationRequest, resolveApsEnvironment } from "./registrationPayload";
 
 const REMOTE_ACTIVITY_REGISTRATION_RETRY_MS = 15_000;
@@ -491,6 +494,25 @@ function environmentPublishesAgentActivity(environmentId: EnvironmentId): boolea
     appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
       .agentActivityPublishing !== false
   );
+}
+
+// The relay never sees work on servers that push to APNs themselves, so a card for
+// them can only be primed from the shells this phone syncs.
+function primeableAgentActivityAggregate(
+  snapshot: RelayAgentActivitySnapshotResponse | null,
+  nowMs: number,
+): RelayAgentActivityAggregateState | null {
+  if (snapshot?.aggregate && snapshot.aggregate.activeCount > 0) {
+    return snapshot.aggregate;
+  }
+  const environments = [];
+  for (const environmentId of appAtomRegistry.get(environmentServerConfigsAtom).keys()) {
+    if (!environmentPublishesAgentActivity(environmentId)) continue;
+    const environmentSnapshot = appAtomRegistry.get(environmentSnapshotAtom(environmentId));
+    if (environmentSnapshot) environments.push({ environmentId, snapshot: environmentSnapshot });
+  }
+  const local = localAgentActivityAggregate({ environments, nowMs });
+  return local && local.activeCount > 0 ? local : null;
 }
 
 export function armAgentAwarenessLiveActivityForLocalWork(input: {
@@ -1124,10 +1146,10 @@ export const refreshActiveLiveActivityRemoteRegistration = Effect.fn(
         try: () => getAgentLiveActivities(),
         catch: () => [] as ReadonlyArray<LiveActivity<AgentActivityProps>>,
       }).pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<LiveActivity<AgentActivityProps>>));
+      const aggregate = primeableAgentActivityAggregate(snapshot, yield* Clock.currentTimeMillis);
       if (armedMeanwhile.length > 0) {
         activities = [...armedMeanwhile];
-      } else if (snapshot?.aggregate && snapshot.aggregate.activeCount > 0) {
-        const aggregate = snapshot.aggregate;
+      } else if (aggregate) {
         const primed = yield* Effect.try({
           try: () =>
             startAgentLiveActivity(
