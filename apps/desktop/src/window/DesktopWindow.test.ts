@@ -1589,6 +1589,32 @@ describe("DesktopWindow", () => {
       }),
   );
 
+  // Transparent, a fresh guest shows its host until its first frame, and the host showed white.
+  it.effect("makes preview guests paint their own default canvas", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const layer = layerTest({
+        window: fakeWindow.window,
+        createCount: yield* Ref.make(0),
+        mainWindow: yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none()),
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        const willAttachWebview = fakeWindow.webContentsListeners.get("will-attach-webview");
+        if (!willAttachWebview) {
+          return yield* Effect.die("will-attach-webview listener was not registered");
+        }
+        const webPreferences: Electron.WebPreferences = {};
+        const params = { partition: "persist:t3code-preview-test", src: "https://example.com/" };
+        willAttachWebview({ preventDefault: () => {} }, webPreferences, params);
+
+        assert.isFalse(webPreferences.transparent);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
   // The renderer registers a guest once it is ready, which an empty guest never is.
   it.effect("registers the guest a preview tab returns to from its window as it attaches", () =>
     Effect.gen(function* () {

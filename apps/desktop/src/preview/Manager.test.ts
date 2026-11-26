@@ -152,6 +152,7 @@ const {
   fromId,
   getFocusedWebContents,
   mkdir,
+  nativeTheme,
   previewSession,
   showItemInFolder,
   showMessageBoxSync,
@@ -170,6 +171,7 @@ const {
   fromId: vi.fn<(_id?: number) => Electron.WebContents | null>((_id?: number) => null),
   getFocusedWebContents: vi.fn(() => null),
   mkdir: vi.fn((_path: string) => undefined),
+  nativeTheme: { shouldUseDarkColors: false },
   previewSession: { on: vi.fn() },
   showItemInFolder: vi.fn(),
   showMessageBoxSync: vi.fn(),
@@ -196,6 +198,7 @@ vi.mock("electron", () => ({
   nativeImage: {
     createFromPath,
   },
+  nativeTheme,
   shell: {
     showItemInFolder,
   },
@@ -758,6 +761,7 @@ const makeTestPreviewWindow = (page: Electron.WebContents, opener = testAppFrame
       return page;
     },
     setBounds: vi.fn(),
+    setBackgroundColor: vi.fn(),
   };
   const barView = { webContents: bar, setBounds: vi.fn(), setBackgroundColor: vi.fn() };
   const addChildView = vi.fn();
@@ -861,6 +865,7 @@ describe("PreviewManager", () => {
     getFocusedWebContents.mockReset();
     getFocusedWebContents.mockReturnValue(null);
     mkdir.mockClear();
+    nativeTheme.shouldUseDarkColors = false;
     previewSession.on.mockClear();
     writeFile.mockClear();
     showItemInFolder.mockClear();
@@ -4028,6 +4033,36 @@ describe("PreviewManager", () => {
   );
 
   // Chromium can hold a close for half a second while the page unloads; the window must not wait on screen.
+  effectIt.effect("shows the dark app background, not white, until a new window's page loads", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        nativeTheme.shouldUseDarkColors = true;
+        const restored = makeChangeSignal();
+        const history = { entries: [{ url: "https://example.com/a", title: "A" }], index: 0 };
+        const guest = makeTestNavigableWebContents(47, history, restored);
+        const page = makeTestNavigableWebContents(81, history, restored, "browserView", {
+          empty: true,
+        });
+        const contentsById = new Map([guest, page].map(({ wc }) => [wc.id, wc]));
+        fromId.mockImplementation((id) =>
+          id === undefined ? null : (contentsById.get(id) ?? null),
+        );
+        const preview = makeTestPreviewWindow(page.wc);
+        yield* manager.createTab("tab_window_background");
+        yield* manager.registerWebview("tab_window_background", 47);
+        yield* openTestWindow(manager, "tab_window_background", preview.bar);
+
+        expect(browserWindowConstructor).toHaveBeenCalledWith(
+          expect.objectContaining({ backgroundColor: "#000000" }),
+        );
+        expect(preview.pageView.setBackgroundColor).toHaveBeenLastCalledWith("#000000");
+        // A page without a background of its own then gets a browser's white canvas.
+        page.emit("dom-ready");
+        expect(preview.pageView.setBackgroundColor).toHaveBeenLastCalledWith("#ffffff");
+      }),
+    ),
+  );
+
   effectIt.effect("hides a closing window while its page unloads", () =>
     withManager((manager) =>
       Effect.gen(function* () {
