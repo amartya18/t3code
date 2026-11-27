@@ -14,13 +14,21 @@ import { ListToggleRow } from "../../components/ui/ListToggleRow";
 import { SheetHeader } from "../../components/ui/SheetHeader";
 import { SliderRow } from "../../components/ui/SliderRow";
 import { groupByProvider } from "../../lib/modelOptions";
+import {
+  INTERRUPT_MODES,
+  RECOVERY_MODES,
+  type InterruptMode,
+  type RecoveryMode,
+} from "./speechQueue";
 import { splitOlderModels, useVoiceModelOptions, withLowEffort } from "./voiceModels";
-import { VoiceReasoningRow } from "./VoiceMenuRow";
+import { VoiceMenuRow, VoiceReasoningRow } from "./VoiceMenuRow";
 import {
   KOKORO_VOICES,
   PAUSE_MAX_MS,
   PAUSE_MIN_MS,
   saveVoiceSettings,
+  SMART_CUTOFF_MAX_MS,
+  SMART_CUTOFF_MIN_MS,
   useVoiceModeSettings,
   type KokoroVoiceId,
 } from "./voiceSettings";
@@ -38,6 +46,7 @@ export function VoiceSessionSheet() {
   const insets = useSafeAreaInsets();
   const settings = useVoiceModeSettings();
   const [draggedPause, setDraggedPause] = useState<number | null>(null);
+  const [draggedCutoff, setDraggedCutoff] = useState<number | null>(null);
   const [showOlder, setShowOlder] = useState(false);
   const { options, selected } = useVoiceModelOptions(settings, settings?.environmentId ?? null);
   const close = () => navigation.goBack();
@@ -49,6 +58,16 @@ export function VoiceSessionSheet() {
     selected?.key,
   );
   const models = showOlder ? [...current, ...older] : current;
+  const interruptNames: Record<InterruptMode, string> = {
+    anySound: gt("Any sound"),
+    words: gt("Words"),
+    hybrid: gt("Duck, then words"),
+  };
+  const recoveryNames: Record<RecoveryMode, string> = {
+    resume: gt("Resume"),
+    restart: gt("Restart chunk"),
+    smart: gt("Smart"),
+  };
 
   const content =
     settings === null ? null : (
@@ -120,6 +139,60 @@ export function VoiceSessionSheet() {
             />
           </View>
         </ListSection>
+        {__DEV__ ? (
+          <ListSection footer={gt("Developer options. They apply to the live call at once.")}>
+            <VoiceMenuRow
+              icon="flask"
+              label={gt("Interrupt (dev)")}
+              value={interruptNames[settings.interruptMode]}
+              actions={INTERRUPT_MODES.map((mode) => ({
+                id: mode,
+                title: interruptNames[mode],
+                state: mode === settings.interruptMode ? "on" : "off",
+              }))}
+              onSelect={(id) => {
+                const interruptMode = INTERRUPT_MODES.find((mode) => mode === id);
+                if (interruptMode !== undefined) void saveVoiceSettings({ interruptMode });
+              }}
+            />
+            <View className="border-t border-border-subtle">
+              <VoiceMenuRow
+                icon="arrow.clockwise"
+                label={gt("False alarm (dev)")}
+                value={recoveryNames[settings.recovery]}
+                actions={RECOVERY_MODES.map((recovery) => ({
+                  id: recovery,
+                  title: recoveryNames[recovery],
+                  state: recovery === settings.recovery ? "on" : "off",
+                }))}
+                onSelect={(id) => {
+                  const recovery = RECOVERY_MODES.find((mode) => mode === id);
+                  if (recovery !== undefined) void saveVoiceSettings({ recovery });
+                }}
+              />
+            </View>
+            {settings.recovery === "smart" ? (
+              <View className="border-t border-border-subtle">
+                <SliderRow
+                  icon="timer"
+                  label={gt("Restart after a pause of (dev)")}
+                  valueLabel={gt("{seconds} s", {
+                    seconds: (draggedCutoff ?? settings.smartCutoffMs / 1000).toFixed(2),
+                  })}
+                  min={SMART_CUTOFF_MIN_MS / 1000}
+                  max={SMART_CUTOFF_MAX_MS / 1000}
+                  step={0.25}
+                  value={settings.smartCutoffMs / 1000}
+                  onDrag={setDraggedCutoff}
+                  onChange={(seconds) => {
+                    setDraggedCutoff(null);
+                    void saveVoiceSettings({ smartCutoffMs: Math.round(seconds * 1000) });
+                  }}
+                />
+              </View>
+            ) : null}
+          </ListSection>
+        ) : null}
       </ScrollView>
     );
 

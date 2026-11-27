@@ -14,12 +14,21 @@ import { writeFileAtomically } from "../../lib/atomic-file";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { useProjects } from "../../state/entities";
 import { userHomeAtom } from "../../state/home";
+import {
+  DEFAULT_BARGE_IN_CONFIG,
+  INTERRUPT_MODES,
+  RECOVERY_MODES,
+  type InterruptMode,
+  type RecoveryMode,
+} from "./speechQueue";
 
 export const KOKORO_VOICES = ["af_heart", "am_michael", "bf_emma"] as const;
 export type KokoroVoiceId = (typeof KOKORO_VOICES)[number];
 
 export const PAUSE_MIN_MS = 500;
 export const PAUSE_MAX_MS = 5_000;
+export const SMART_CUTOFF_MIN_MS = 250;
+export const SMART_CUTOFF_MAX_MS = 3_000;
 
 export interface VoiceModeSettings {
   readonly environmentId: EnvironmentId;
@@ -30,6 +39,10 @@ export interface VoiceModeSettings {
   readonly pauseMs: number;
   /** Send before the pause ends when the speech sounds finished. */
   readonly earlySend: boolean;
+  /** Dev only: what stops the voice when Amar talks over it, and what a false alarm does. */
+  readonly interruptMode: InterruptMode;
+  readonly recovery: RecoveryMode;
+  readonly smartCutoffMs: number;
 }
 
 const DEFAULT_VOICE_MODEL: ModelSelectionType = {
@@ -47,6 +60,9 @@ const StoredVoiceSettings = Schema.Struct({
   voiceId: Schema.optional(Schema.Literals(KOKORO_VOICES)),
   pauseMs: Schema.optional(Schema.Number),
   earlySend: Schema.optional(Schema.Boolean),
+  interruptMode: Schema.optional(Schema.Literals(INTERRUPT_MODES)),
+  recovery: Schema.optional(Schema.Literals(RECOVERY_MODES)),
+  smartCutoffMs: Schema.optional(Schema.Number),
 });
 type StoredVoiceSettings = typeof StoredVoiceSettings.Type;
 const StoredVoiceSettingsJson = Schema.fromJsonString(StoredVoiceSettings);
@@ -107,5 +123,14 @@ export function useVoiceModeSettings(): VoiceModeSettings | null {
         voiceId: stored.voiceId ?? "af_heart",
         pauseMs: Math.min(PAUSE_MAX_MS, Math.max(PAUSE_MIN_MS, stored.pauseMs ?? 3_000)),
         earlySend: stored.earlySend ?? true,
+        interruptMode: stored.interruptMode ?? DEFAULT_BARGE_IN_CONFIG.mode,
+        recovery: stored.recovery ?? DEFAULT_BARGE_IN_CONFIG.recovery,
+        smartCutoffMs: Math.min(
+          SMART_CUTOFF_MAX_MS,
+          Math.max(
+            SMART_CUTOFF_MIN_MS,
+            stored.smartCutoffMs ?? DEFAULT_BARGE_IN_CONFIG.smartCutoffMs,
+          ),
+        ),
       };
 }

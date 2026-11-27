@@ -90,7 +90,12 @@ export function useVoiceSpeech(session: VoiceSession) {
         pauseMs: settings?.pauseMs ?? DEFAULT_END_OF_TURN_CONFIG.pauseMs,
         earlySend: settings?.earlySend ?? DEFAULT_END_OF_TURN_CONFIG.earlySend,
       },
-      bargeIn: DEFAULT_BARGE_IN_CONFIG,
+      bargeIn: {
+        ...DEFAULT_BARGE_IN_CONFIG,
+        mode: settings?.interruptMode ?? DEFAULT_BARGE_IN_CONFIG.mode,
+        recovery: settings?.recovery ?? DEFAULT_BARGE_IN_CONFIG.recovery,
+        smartCutoffMs: settings?.smartCutoffMs ?? DEFAULT_BARGE_IN_CONFIG.smartCutoffMs,
+      },
       voiceBargeIn: ECHO_CANCELLATION,
     },
     send: (text, messageId) =>
