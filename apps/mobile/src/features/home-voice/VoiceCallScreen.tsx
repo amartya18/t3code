@@ -27,6 +27,7 @@ import {
   holdVoiceStage,
   retryVoiceEngine,
   tapVoiceStage,
+  voiceOwnLineAtom,
   voiceSpeechAtom,
   type VoiceSpeechView,
 } from "./useVoiceSpeech";
@@ -166,6 +167,7 @@ function VoiceTranscript(props: { readonly session: VoiceSession }) {
   const { thread } = props.session;
   const state = useEnvironmentThread(thread.environmentId, thread.threadId);
   const connection = useVoiceConnection(thread);
+  const own = useAtomValue(voiceOwnLineAtom);
   const sent = Option.match(state.data, {
     onNone: () => [],
     onSome: (data) =>
@@ -184,8 +186,8 @@ function VoiceTranscript(props: { readonly session: VoiceSession }) {
       role: "user" as const,
       text: message.text,
     })),
+    own,
   );
-  const lastLine = lines.at(-1);
 
   return (
     <View className="gap-3 px-6" accessibilityLiveRegion="polite">
@@ -198,7 +200,7 @@ function VoiceTranscript(props: { readonly session: VoiceSession }) {
           </Animated.View>
         ),
       )}
-      <LiveWords landed={lastLine?.kind === "user" ? lastLine.text : null} />
+      <LiveWords />
       <SpeechNotes />
       {connection.offline ? (
         <Text className="text-xs text-foreground-muted">
@@ -220,15 +222,14 @@ function VoiceTranscript(props: { readonly session: VoiceSession }) {
   );
 }
 
-/** Amar's words while he talks and while they send; the only part that changes on every partial. */
-function LiveWords(props: { readonly landed: string | null }) {
+/** Amar's words while he talks; the only part that changes on every partial. */
+function LiveWords() {
   const speech = useAtomValue(voiceSpeechAtom);
-  const text = speech?.current ?? (speech?.sending === props.landed ? null : speech?.sending);
-  if (text == null) return null;
+  if (speech?.current == null) return null;
   return (
     <View className="items-end gap-1.5 self-end" style={{ maxWidth: "80%" }}>
-      <Text className="text-base text-right text-foreground-muted">{text}</Text>
-      {speech?.current != null && speech.pause != null ? <SendCountdown {...speech.pause} /> : null}
+      <Text className="text-base text-right text-foreground-muted">{speech.current}</Text>
+      {speech.pause != null ? <SendCountdown {...speech.pause} /> : null}
     </View>
   );
 }

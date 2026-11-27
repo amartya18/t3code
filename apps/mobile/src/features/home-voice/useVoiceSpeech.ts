@@ -4,6 +4,7 @@ import { Atom } from "effect/reactivity";
 import { useEffect, useRef } from "react";
 
 import { voiceEngine } from "../../../modules/t3-voice-mode";
+import { uuidv4 } from "../../lib/uuid";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { useEnvironmentThread } from "../../state/threads";
 import { DEFAULT_END_OF_TURN_CONFIG, sendCountdown } from "./endOfTurn";
@@ -13,9 +14,10 @@ import { sendVoiceMessage, type VoiceSession } from "./voiceSession";
 import { useVoiceModeSettings } from "./voiceSettings";
 import {
   liveWords,
-  type AgentReply,
+  type OwnLine,
   type VoiceEngineStatus,
   type VoiceSpeechConfig,
+  type VoiceSpeechEvent,
   type VoiceSpeechState,
 } from "./voiceSpeech";
 import {
@@ -27,7 +29,7 @@ import {
 /** What the call screen draws of the speech session. */
 export interface VoiceSpeechView {
   readonly engine: VoiceEngineStatus;
-  readonly sending: string | null;
+  readonly own: OwnLine | null;
   readonly current: string | null;
   /** The pause before the current line sends; `held` while a touch or "hang on" holds it. */
   readonly pause: {
@@ -40,6 +42,11 @@ export interface VoiceSpeechView {
 export const voiceSpeechAtom = Atom.make<VoiceSpeechView | null>(null).pipe(
   Atom.keepAlive,
   Atom.withLabel("home-voice:speech"),
+);
+
+/** Amar's own line; changes once a line, not on every word. */
+export const voiceOwnLineAtom = Atom.make((get) => get(voiceSpeechAtom)?.own ?? null).pipe(
+  Atom.withLabel("home-voice:own-line"),
 );
 
 let live: VoiceSpeechDriver | null = null;
@@ -64,9 +71,7 @@ export function useVoiceSpeech(session: VoiceSession) {
   const { thread, muted } = session;
   const settings = useVoiceModeSettings();
   const threadState = useEnvironmentThread(thread.environmentId, thread.threadId);
-  const replies = agentReplies(
-    Option.getOrNull(Option.map(threadState.data, (data) => data.messages)),
-  );
+  const messages = Option.getOrNull(Option.map(threadState.data, (data) => data.messages));
   const inputs: VoiceSpeechInputs = {
     engineConfig: voiceEngineConfig(settings?.voiceId ?? "af_heart"),
     config: {
@@ -78,10 +83,10 @@ export function useVoiceSpeech(session: VoiceSession) {
       bargeIn: DEFAULT_BARGE_IN_CONFIG,
       voiceBargeIn: ECHO_CANCELLATION,
     },
-    send: (text) =>
+    send: (text, messageId) =>
       settings === null
         ? Promise.reject(new Error("No voice project"))
-        : sendVoiceMessage(thread, settings, text),
+        : sendVoiceMessage(thread, settings, text, messageId),
   };
   const latest = useRef(inputs);
   const key = `${thread.environmentId}:${thread.threadId}`;
@@ -100,6 +105,7 @@ export function useVoiceSpeech(session: VoiceSession) {
       inputs: latest.current,
       previous: remembered?.key === key ? remembered.state : null,
       now: Date.now,
+      newMessageId: uuidv4,
       log: (line) => console.log(line),
       onChange: (state, config) => {
         remembered = { key, state };
@@ -121,25 +127,32 @@ export function useVoiceSpeech(session: VoiceSession) {
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- streamed replies go out through the native voice
   useEffect(() => {
-    live?.dispatch({ type: "replies", replies, atMs: Date.now() });
-  }, [replies]);
+    live?.dispatch(threadEvent(messages ?? [], Date.now()));
+  }, [messages]);
 }
 
-function agentReplies(
-  messages: ReadonlyArray<OrchestrationV2ConversationMessage> | null,
-): ReadonlyArray<AgentReply> {
-  return (messages ?? [])
-    .filter((message) => message.role === "assistant" && message.notification === undefined)
-    .map((message) => ({ id: message.id, text: message.text, streaming: message.streaming }));
+function threadEvent(
+  messages: ReadonlyArray<OrchestrationV2ConversationMessage>,
+  atMs: number,
+): VoiceSpeechEvent {
+  return {
+    type: "thread",
+    replies: messages
+      .filter((message) => message.role === "assistant" && message.notification === undefined)
+      .map((message) => ({ id: message.id, text: message.text, streaming: message.streaming })),
+    userMessageIds: new Set(
+      messages.filter((message) => message.role === "user").map((message) => message.id),
+    ),
+    atMs,
+  };
 }
 
 function publish(state: VoiceSpeechState, config: VoiceSpeechConfig) {
-  const words = liveWords(state);
   const turn = state.turn;
   const next: VoiceSpeechView = {
     engine: state.engine,
-    sending: words.sending,
-    current: words.current,
+    own: state.own,
+    current: liveWords(state),
     pause:
       turn.kind === "paused"
         ? {
@@ -157,7 +170,7 @@ function publish(state: VoiceSpeechState, config: VoiceSpeechConfig) {
 function sameView(left: VoiceSpeechView, right: VoiceSpeechView): boolean {
   return (
     left.engine === right.engine &&
-    left.sending === right.sending &&
+    left.own === right.own &&
     left.current === right.current &&
     left.pause?.sinceMs === right.pause?.sinceMs &&
     left.pause?.pauseMs === right.pause?.pauseMs &&

@@ -39,6 +39,13 @@ export interface AgentReply {
   readonly streaming: boolean;
 }
 
+/** Amar's line from the moment his turn ends until the thread has it. */
+export interface OwnLine {
+  readonly text: string;
+  /** Set once his words are final; the outbox, then the thread, hold the line under this id. */
+  readonly messageId: string | null;
+}
+
 interface ReplyProgress {
   readonly spoken: number;
   /** The queue revision when its first chunk was queued; a barge-in makes the rest stale. */
@@ -69,8 +76,7 @@ export interface VoiceSpeechState {
   readonly route: "speaker" | "headphones";
   /** The mic's transcript while the agent speaks: echo until Amar interrupts. */
   readonly overheard: string;
-  /** Amar's finished words between finalize and the outbox taking them. */
-  readonly sending: string | null;
+  readonly own: OwnLine | null;
   readonly replies: ReadonlyArray<AgentReply>;
   readonly progress: ReadonlyMap<string, ReplyProgress>;
   readonly turns: number;
@@ -122,11 +128,22 @@ export type VoiceSpeechEvent =
   | { readonly type: "holdStart"; readonly atMs: number }
   | { readonly type: "holdEnd"; readonly atMs: number }
   | { readonly type: "muted"; readonly muted: boolean; readonly atMs: number }
-  | { readonly type: "finalized"; readonly text: string; readonly atMs: number }
-  | { readonly type: "sent"; readonly ok: boolean; readonly atMs: number }
   | {
-      readonly type: "replies";
+      readonly type: "finalized";
+      readonly text: string;
+      readonly messageId: string;
+      readonly atMs: number;
+    }
+  | {
+      readonly type: "sent";
+      readonly ok: boolean;
+      readonly messageId: string;
+      readonly atMs: number;
+    }
+  | {
+      readonly type: "thread";
       readonly replies: ReadonlyArray<AgentReply>;
+      readonly userMessageIds: ReadonlySet<string>;
       readonly atMs: number;
     };
 
@@ -138,7 +155,7 @@ export type VoiceSpeechEffect =
   | { readonly type: "finalize" }
   /** Ends the engine's utterance without sending it: echo, or words Amar muted. */
   | { readonly type: "discardTranscript" }
-  | { readonly type: "send"; readonly text: string }
+  | { readonly type: "send"; readonly text: string; readonly messageId: string }
   | { readonly type: "speak"; readonly id: string; readonly text: string }
   | { readonly type: "stopSpeech"; readonly fadeMs: number }
   | { readonly type: "duck"; readonly level: number }
@@ -157,13 +174,16 @@ const INITIAL: VoiceSpeechState = {
   volume: 1,
   route: "speaker",
   overheard: "",
-  sending: null,
+  own: null,
   replies: [],
   progress: new Map(),
   turns: 0,
   timing: null,
   speechMovedAtMs: null,
 };
+
+/** Older than any queue revision, so the queue drops every chunk of a reply marked with it. */
+const STALE_REVISION = -1;
 
 /** Longer than any one chunk takes to synthesize and play, so only a lost playback event trips it. */
 const SPEECH_STALL_MS = 30_000;
@@ -274,8 +294,20 @@ function stepSpeech(
       return onFinalized(state, event);
     case "sent":
       return onSent(state, event);
-    case "replies":
-      return speakReplies(noteFirstText({ ...state, replies: event.replies }, event.atMs));
+    case "thread":
+      return speakReplies(
+        noteFirstText(
+          {
+            ...state,
+            replies: event.replies,
+            own:
+              state.own?.messageId != null && event.userMessageIds.has(state.own.messageId)
+                ? null
+                : state.own,
+          },
+          event.atMs,
+        ),
+      );
   }
 }
 
@@ -284,17 +316,12 @@ export function needsTicks(state: VoiceSpeechState): boolean {
   return state.turn.kind === "paused" || isSpeaking(state.queue);
 }
 
-/** Amar's words on screen: what is being sent, then what he is saying now. */
-export function liveWords(state: VoiceSpeechState): {
-  readonly sending: string | null;
-  readonly current: string | null;
-} {
-  const current =
-    (state.turn.kind === "speaking" || state.turn.kind === "paused") &&
+/** What Amar is saying now, before his turn ends. */
+export function liveWords(state: VoiceSpeechState): string | null {
+  return (state.turn.kind === "speaking" || state.turn.kind === "paused") &&
     state.turn.transcript.trim() !== ""
-      ? state.turn.transcript.trim()
-      : null;
-  return { sending: state.sending, current };
+    ? state.turn.transcript.trim()
+    : null;
 }
 
 function onModels(
@@ -352,7 +379,7 @@ function onMuted(
   event: Extract<VoiceSpeechEvent, { type: "muted" }>,
   config: VoiceSpeechConfig,
 ): VoiceSpeechStep {
-  const hadWords = liveWords(state).current !== null;
+  const hadWords = liveWords(state) !== null;
   return then(stepTurn(state, event, config), (next) => ({
     state: next,
     effects: [
@@ -442,7 +469,7 @@ function handOver(
 /** Stops speech and drops the utterance in progress, for an interruption or a failed engine. */
 function silence(state: VoiceSpeechState, fadeMs: number): VoiceSpeechStep {
   const speaking = isSpeaking(state.queue);
-  const hadWords = liveWords(state).current !== null || state.overheard !== "";
+  const hadWords = liveWords(state) !== null || state.overheard !== "";
   return {
     state: {
       ...state,
@@ -473,7 +500,7 @@ function stepTurn(
     result = then(result, (next) => ({
       state: {
         ...next,
-        sending: words.trim(),
+        own: { text: words.trim(), messageId: null },
         turns: next.turns + 1,
         timing: {
           turn: next.turns + 1,
@@ -499,19 +526,23 @@ function onFinalized(
   state: VoiceSpeechState,
   event: Extract<VoiceSpeechEvent, { type: "finalized" }>,
 ): VoiceSpeechStep {
-  const text = event.text.trim() !== "" ? event.text.trim() : (state.sending ?? "");
+  const text = event.text.trim() !== "" ? event.text.trim() : (state.own?.text ?? "");
   const timing = state.timing === null ? null : { ...state.timing, finalizedMs: event.atMs };
-  if (text === "") return stay({ ...state, sending: null, timing });
-  return { state: { ...state, sending: text, timing }, effects: [{ type: "send", text }] };
+  if (text === "") return stay({ ...state, own: null, timing });
+  return {
+    state: { ...state, own: { text, messageId: event.messageId }, timing },
+    effects: [{ type: "send", text, messageId: event.messageId }],
+  };
 }
 
 function onSent(
   state: VoiceSpeechState,
   event: Extract<VoiceSpeechEvent, { type: "sent" }>,
 ): VoiceSpeechStep {
+  const failed = !event.ok && state.own?.messageId === event.messageId;
   const next = {
     ...state,
-    sending: null,
+    own: failed ? null : state.own,
     timing:
       state.timing === null
         ? null
@@ -523,10 +554,7 @@ function onSent(
   };
   return event.ok
     ? stay(next)
-    : {
-        state: next,
-        effects: [{ type: "log", line: `[voice] could not queue: ${state.sending}` }],
-      };
+    : { state: next, effects: [{ type: "log", line: "[voice] could not queue a line" }] };
 }
 
 function noteFirstText(state: VoiceSpeechState, atMs: number): VoiceSpeechState {
@@ -585,9 +613,13 @@ function afterSpeech(
   };
 }
 
-/** Queues each reply's newly safe chunks; only once the engine listens, so nothing is lost. */
+/**
+ * Queues each reply's newly safe chunks; only once the engine listens, so nothing is lost. A reply
+ * Amar has talked past, by speaking a line the thread doesn't have yet, never plays.
+ */
 function speakReplies(state: VoiceSpeechState): VoiceSpeechStep {
   if (state.engine.kind !== "listening") return stay(state);
+  const ahead = liveWords(state) !== null || state.own !== null;
   let queue = state.queue;
   let progress = state.progress;
   const effects: VoiceSpeechEffect[] = [];
@@ -599,7 +631,7 @@ function speakReplies(state: VoiceSpeechState): VoiceSpeechStep {
       ? nextSpeechChunks(reply.text, spoken)
       : speechChunks(reply.text).slice(spoken);
     if (chunks.length === 0 && reply.streaming) continue;
-    const revision = known?.revision ?? queue.revision;
+    const revision = ahead ? STALE_REVISION : (known?.revision ?? queue.revision);
     chunks.forEach((text, index) => {
       const step = enqueue(queue, {
         id: `${reply.id}:${spoken + index}`,

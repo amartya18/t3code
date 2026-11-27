@@ -96,11 +96,12 @@ export function sendVoiceMessage(
   thread: ScopedThreadRef,
   settings: VoiceModeSettings,
   text: string,
+  messageId?: string,
 ) {
   const metadata = makeQueuedMessageMetadata();
   return enqueueThreadOutboxMessage({
     ...thread,
-    messageId: MessageId.make(metadata.messageId),
+    messageId: MessageId.make(messageId ?? metadata.messageId),
     commandId: CommandId.make(metadata.commandId),
     text,
     attachments: [],

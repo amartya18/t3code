@@ -44,6 +44,9 @@ function call(
   let now = 0;
   let state: VoiceSpeechState;
   let replies: AgentReply[] = [];
+  let ids = 0;
+  /** The thread has a line once the outbox delivers it; `delivering` false holds lines back. */
+  const thread = { delivering: true, landed: new Set<string>(), held: [] as string[] };
   const answers: Array<() => void> = [];
   const engine = {
     transcript: "",
@@ -81,7 +84,8 @@ function call(
       case "finalize": {
         const text = engine.transcript;
         engine.transcript = "";
-        answers.push(() => send({ type: "finalized", text }));
+        const messageId = `m${++ids}`;
+        answers.push(() => send({ type: "finalized", text, messageId }));
         return;
       }
       case "discardTranscript":
@@ -90,7 +94,9 @@ function call(
         return;
       case "send":
         sent.push(effect.text);
-        answers.push(() => send({ type: "sent", ok: true }));
+        if (thread.delivering) thread.landed.add(effect.messageId);
+        else thread.held.push(effect.messageId);
+        answers.push(() => send({ type: "sent", ok: true, messageId: effect.messageId }));
         return;
       case "speak":
         engine.synthesizing.push({ id: effect.id, text: effect.text });
@@ -132,6 +138,9 @@ function call(
     while (answers.length > 0) answers.shift()!();
   };
 
+  const threadChanged = () =>
+    send({ type: "thread", replies, userMessageIds: new Set(thread.landed) });
+
   apply(openVoiceSpeech(options.previous ?? null));
   settle();
 
@@ -165,7 +174,16 @@ function call(
     },
     reply(id: string, text: string, streaming = false) {
       replies = [...replies.filter((reply) => reply.id !== id), { id, text, streaming }];
-      send({ type: "replies", replies });
+      threadChanged();
+      settle();
+    },
+    holdDelivery() {
+      thread.delivering = false;
+    },
+    deliver() {
+      for (const messageId of thread.held.splice(0)) thread.landed.add(messageId);
+      thread.delivering = true;
+      threadChanged();
       settle();
     },
     /** Plays the oldest sentence the engine was handed, start to finish. */
@@ -192,12 +210,12 @@ describe("voice speech", () => {
     voice.stopTalking();
     voice.wait(2_900);
     expect(voice.sent).toEqual([]);
-    expect(liveWords(voice.state())).toEqual({ sending: null, current: "what is home doing" });
+    expect(liveWords(voice.state())).toBe("what is home doing");
 
     voice.engine.transcript = "What is Home doing?";
     voice.wait(100);
     expect(voice.sent).toEqual(["What is Home doing?"]);
-    expect(liveWords(voice.state())).toEqual({ sending: null, current: null });
+    expect(liveWords(voice.state())).toBeNull();
     expect(needsTicks(voice.state())).toBe(false);
 
     voice.reply("r1", "Home is idle.", true);
@@ -207,6 +225,52 @@ describe("voice speech", () => {
     expect(voice.logs).toEqual([
       "[voice] turn 1 (pause) from speech end: finalized +3000ms, sent +3000ms, first text +3000ms, first audio +3000ms",
     ]);
+  });
+
+  it("keeps his line on screen from the end of his turn until the thread has it", () => {
+    const voice = call();
+    voice.holdDelivery();
+    voice.say("merge it");
+    voice.stopTalking();
+    voice.wait(2_900);
+    expect(voice.state().own).toBeNull();
+
+    voice.wait(100);
+    expect(voice.state().own).toEqual({ text: "merge it", messageId: "m1" });
+    voice.reply("r0", "An older reply.");
+    expect(voice.state().own).toEqual({ text: "merge it", messageId: "m1" });
+
+    voice.deliver();
+    expect(voice.state().own).toBeNull();
+  });
+
+  it("drops his line when it could not be queued", () => {
+    const voice = call();
+    voice.say("merge it");
+    voice.stopTalking();
+    voice.wait(3_000);
+    voice.send({ type: "sent", ok: false, messageId: "m1" });
+    expect(voice.state().own).toBeNull();
+  });
+
+  it("never plays a reply Amar talked past before it started", () => {
+    const voice = call();
+    voice.say("what is Home doing");
+    voice.stopTalking();
+    voice.wait(3_000);
+
+    voice.say("actually, never mind");
+    voice.reply("r1", "Home is checking three threads.", true);
+    voice.stopTalking();
+    voice.holdDelivery();
+    voice.wait(3_000);
+    voice.reply("r1", "Home is checking three threads. One is waiting on you.");
+    expect(voice.engine.synthesizing).toEqual([]);
+
+    voice.deliver();
+    voice.reply("r2", "Okay, never mind.");
+    voice.playAll();
+    expect(voice.played).toEqual(["Okay, never mind."]);
   });
 
   it("sends at once on a tap in the pause", () => {
@@ -242,7 +306,7 @@ describe("voice speech", () => {
     voice.engine.transcript = "wait";
     voice.send({ type: "partial", text: "wait" });
     expect(voice.engine.stops).toEqual([DEFAULT_VOICE_SPEECH_CONFIG.bargeIn.fadeMs]);
-    expect(liveWords(voice.state()).current).toBe("wait");
+    expect(liveWords(voice.state())).toBe("wait");
 
     voice.reply("r1", `${ONE} ${TWO} ${THREE} Second sentence here. Third sentence here.`);
     expect(voice.engine.synthesizing).toEqual([]);
@@ -337,7 +401,7 @@ describe("voice speech", () => {
     voice.send({ type: "muted", muted: true });
     expect(voice.engine.muted).toBe(true);
     expect(voice.engine.discarded).toBe(1);
-    expect(liveWords(voice.state()).current).toBeNull();
+    expect(liveWords(voice.state())).toBeNull();
 
     voice.send({ type: "partial", text: "secret" });
     voice.wait(5_000);

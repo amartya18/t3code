@@ -53,6 +53,7 @@ function open(engine: VoiceEngine, now: () => number = () => 0) {
     },
     previous: null,
     now,
+    newMessageId: () => "m1",
     log: () => {},
     onChange: () => {},
   });
@@ -96,8 +97,9 @@ it("ducks the voice in steps rather than one jump, and restores it the same way"
   const driver = open(engine);
   await settle();
   driver.dispatch({
-    type: "replies",
+    type: "thread",
     replies: [{ id: "r1", text: "A long answer that keeps going.", streaming: false }],
+    userMessageIds: new Set(),
     atMs: 0,
   });
 

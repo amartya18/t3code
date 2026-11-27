@@ -20,8 +20,8 @@ let stopping: Promise<unknown> = Promise.resolve();
 export interface VoiceSpeechInputs {
   readonly engineConfig: VoiceEngineConfig;
   readonly config: VoiceSpeechConfig;
-  /** Queues Amar's words in the voice thread. */
-  readonly send: (text: string) => Promise<unknown>;
+  /** Queues Amar's words in the voice thread under `messageId`. */
+  readonly send: (text: string, messageId: string) => Promise<unknown>;
 }
 
 export interface VoiceSpeechDriver {
@@ -36,6 +36,7 @@ export function createVoiceSpeechDriver(options: {
   readonly inputs: VoiceSpeechInputs;
   readonly previous: VoiceSpeechState | null;
   readonly now: () => number;
+  readonly newMessageId: () => string;
   readonly log: (line: string) => void;
   readonly onChange: (state: VoiceSpeechState, config: VoiceSpeechConfig) => void;
 }): VoiceSpeechDriver {
@@ -117,21 +118,25 @@ export function createVoiceSpeechDriver(options: {
       case "setMuted":
         engine.setMuted(effect.muted);
         return;
-      case "finalize":
+      case "finalize": {
+        const messageId = options.newMessageId();
         engine.finalize().then(
-          (result) => dispatch({ type: "finalized", text: result.text, atMs: now() }),
-          () => dispatch({ type: "finalized", text: "", atMs: now() }),
+          (result) => dispatch({ type: "finalized", text: result.text, messageId, atMs: now() }),
+          () => dispatch({ type: "finalized", text: "", messageId, atMs: now() }),
         );
         return;
+      }
       case "discardTranscript":
         engine.finalize().catch(() => {});
         return;
-      case "send":
-        inputs.send(effect.text).then(
-          () => dispatch({ type: "sent", ok: true, atMs: now() }),
-          () => dispatch({ type: "sent", ok: false, atMs: now() }),
+      case "send": {
+        const { messageId } = effect;
+        inputs.send(effect.text, messageId).then(
+          () => dispatch({ type: "sent", ok: true, messageId, atMs: now() }),
+          () => dispatch({ type: "sent", ok: false, messageId, atMs: now() }),
         );
         return;
+      }
       case "speak":
         // `speak` rejects without a playback event when the engine never took the item.
         engine
