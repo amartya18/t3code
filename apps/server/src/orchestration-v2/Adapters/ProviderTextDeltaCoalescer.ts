@@ -16,6 +16,8 @@ export interface ProviderTextDeltaCoalescer {
     readonly turnId: string;
     readonly itemId: string;
     readonly delta: string;
+    /** Emits an item's first delta at once instead of after the flush interval. */
+    readonly leading?: boolean;
   }) => Effect.Effect<void>;
   readonly complete: (input: {
     readonly turnId: string;
@@ -97,25 +99,22 @@ export const makeProviderTextDeltaCoalescer = Effect.fn("makeProviderTextDeltaCo
     });
 
     return {
-      append: ({ turnId, itemId, delta }) =>
+      append: ({ turnId, itemId, delta, leading = false }) =>
         delta.length === 0
           ? Effect.void
           : Effect.uninterruptible(
               Effect.gen(function* () {
                 const shouldSchedule = yield* flushLock.withPermit(
                   Effect.gen(function* () {
-                    yield* Ref.update(buffered, (current) => {
-                      const key = providerTextBufferKey(turnId, itemId);
-                      const existing = current.get(key);
-                      const next = new Map(current);
-                      next.set(key, {
-                        turnId,
-                        itemId,
-                        text: `${existing?.text ?? ""}${delta}`,
-                        dirty: true,
-                      });
-                      return next;
-                    });
+                    const key = providerTextBufferKey(turnId, itemId);
+                    const existing = (yield* Ref.get(buffered)).get(key);
+                    const text = `${existing?.text ?? ""}${delta}`;
+                    const emitNow = leading && existing === undefined;
+                    if (emitNow) yield* input.emit({ turnId, itemId, text, completed: false });
+                    yield* Ref.update(buffered, (current) =>
+                      new Map(current).set(key, { turnId, itemId, text, dirty: !emitNow }),
+                    );
+                    if (emitNow) return false;
                     return yield* Ref.modify(flushScheduled, (scheduled) => [!scheduled, true]);
                   }),
                 );

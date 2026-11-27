@@ -14,6 +14,7 @@ import {
   makeLiveStreamBudget,
   type RetainedLiveItem,
 } from "./LiveStreamBudget.ts";
+import { VoiceThreads } from "./VoiceThreads.ts";
 
 const COALESCE_WINDOW = Duration.millis(50);
 const MAX_PENDING_UPDATES = 512;
@@ -84,6 +85,7 @@ export const makeThreadLiveEventCoalescer = Effect.fn(
 }) {
   const coalescerScope = yield* Effect.scope;
   const budget = yield* makeLiveStreamBudget(options);
+  const voiceThreads = yield* VoiceThreads;
   const cleanupComplete = yield* Deferred.make<void>();
   const output = yield* Queue.unbounded<
     RetainedLiveItem<ThreadLiveInput>,
@@ -144,7 +146,10 @@ export const makeThreadLiveEventCoalescer = Effect.fn(
           Effect.gen(function* () {
             yield* budget.check;
             const startsWindow = pendingUpdates.size === 0;
-            const key = input.kind === "event" ? coalescibleUpdateKey(input) : null;
+            const key =
+              input.kind === "event" && !voiceThreads.has(input.event.threadId)
+                ? coalescibleUpdateKey(input)
+                : null;
             if (input.kind === "event" && key !== null) {
               const pendingKey = pendingKeys.get(input.event.type);
               if (pendingKey !== undefined && pendingKey !== key) latestUpdates.clear();
