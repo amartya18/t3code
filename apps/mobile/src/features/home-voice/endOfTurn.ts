@@ -150,20 +150,6 @@ export function stepEndOfTurn(
   }
 }
 
-/** What the send hairline shows: the share of the pause left, or a full bar while held. */
-export function sendCountdown(
-  state: EndOfTurnState,
-  atMs: number,
-  config: EndOfTurnConfig = DEFAULT_END_OF_TURN_CONFIG,
-): { readonly remaining: number; readonly held: boolean } | null {
-  if (state.kind !== "paused") return null;
-  if (isHeld(state)) return { remaining: 1, held: true };
-  return {
-    remaining: Math.min(1, Math.max(0, 1 - (atMs - state.since) / config.pauseMs)),
-    held: false,
-  };
-}
-
 function heard(utterance: Utterance, event: { type: "partial" | "eou"; text: string }): Utterance {
   const transcript = event.text.trim() === "" ? utterance.transcript : event.text;
   return {

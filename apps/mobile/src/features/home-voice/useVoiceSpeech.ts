@@ -7,7 +7,7 @@ import { useEffect, useRef } from "react";
 import { voiceEngine } from "../../../modules/t3-voice-mode";
 import { uuidv4 } from "../../lib/uuid";
 import { appAtomRegistry } from "../../state/atom-registry";
-import { DEFAULT_END_OF_TURN_CONFIG, sendCountdown } from "./endOfTurn";
+import { DEFAULT_END_OF_TURN_CONFIG } from "./endOfTurn";
 import { HOME_UPDATE } from "./homeUpdates";
 import { DEFAULT_BARGE_IN_CONFIG } from "./speechQueue";
 import { useVoiceThread } from "./useVoiceCall";
@@ -20,7 +20,6 @@ import {
   type OwnLine,
   type ReplyShown,
   type VoiceEngineStatus,
-  type VoiceSpeechConfig,
   type VoiceSpeechEvent,
   type VoiceSpeechState,
 } from "./voiceSpeech";
@@ -38,12 +37,6 @@ export interface VoiceSpeechView {
   readonly shown: ReadonlyMap<string, ReplyShown>;
   readonly current: string | null;
   readonly hearing: boolean;
-  /** The pause before the current line sends; `held` while a touch or "hang on" holds it. */
-  readonly pause: {
-    readonly sinceMs: number;
-    readonly pauseMs: number;
-    readonly held: boolean;
-  } | null;
 }
 
 export const voiceSpeechAtom = Atom.make<VoiceSpeechView | null>(null).pipe(
@@ -126,9 +119,9 @@ export function useVoiceSpeech(session: VoiceSession) {
       log: (line) => console.log(line),
       onReady: () => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light),
       onHangUp: endVoiceSession,
-      onChange: (state, config) => {
+      onChange: (state) => {
         remembered = { key, state };
-        publish(state, config);
+        publish(state);
       },
     });
     live = driver;
@@ -173,22 +166,13 @@ export function threadEvent(
   };
 }
 
-function publish(state: VoiceSpeechState, config: VoiceSpeechConfig) {
-  const turn = state.turn;
+function publish(state: VoiceSpeechState) {
   const next: VoiceSpeechView = {
     engine: state.engine,
     own: state.own,
     shown: state.shown,
     current: liveWords(state),
     hearing: isHearing(state),
-    pause:
-      turn.kind === "paused"
-        ? {
-            sinceMs: turn.since,
-            pauseMs: config.endOfTurn.pauseMs,
-            held: sendCountdown(turn, turn.since, config.endOfTurn)?.held ?? false,
-          }
-        : null,
   };
   const shown = appAtomRegistry.get(voiceSpeechAtom);
   if (shown !== null && sameView(shown, next)) return;
@@ -201,9 +185,6 @@ function sameView(left: VoiceSpeechView, right: VoiceSpeechView): boolean {
     left.own === right.own &&
     left.shown === right.shown &&
     left.current === right.current &&
-    left.hearing === right.hearing &&
-    left.pause?.sinceMs === right.pause?.sinceMs &&
-    left.pause?.pauseMs === right.pause?.pauseMs &&
-    left.pause?.held === right.pause?.held
+    left.hearing === right.hearing
   );
 }

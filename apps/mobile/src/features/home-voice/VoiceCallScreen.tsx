@@ -6,16 +6,7 @@ import { useGT } from "gt-react-native";
 import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 import { Linking, Pressable, ScrollView, View } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
-import Animated, {
-  cancelAnimation,
-  Easing,
-  FadeIn,
-  LayoutAnimationConfig,
-  LinearTransition,
-  useAnimatedStyle,
-  useSharedValue,
-  withTiming,
-} from "react-native-reanimated";
+import Animated, { FadeIn, LayoutAnimationConfig, LinearTransition } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -262,7 +253,7 @@ const LINE_WAVE = [4, 7, 10, 7, 4];
 
 /**
  * Amar's words while he talks; the only part that changes on every partial. The wave beside it
- * and the send countdown below it hang outside its box, so neither ever pushes a line.
+ * hangs outside its box, so it never pushes a line.
  */
 function LiveWords() {
   const speech = useAtomValue(voiceSpeechAtom);
@@ -280,11 +271,6 @@ function LiveWords() {
       <Text className="text-base text-right text-foreground-muted">
         {speech.current ?? "\u00a0"}
       </Text>
-      {speech.pause != null ? (
-        <View className="absolute -bottom-2 right-0">
-          <SendCountdown {...speech.pause} />
-        </View>
-      ) : null}
     </Animated.View>
   );
 }
@@ -301,39 +287,6 @@ function SpeechNotes() {
         </Text>
       ) : null}
     </>
-  );
-}
-
-/** A hairline under the line about to be sent: drains over the pause, full and grey while held. */
-function SendCountdown(props: NonNullable<VoiceSpeechView["pause"]>) {
-  const { sinceMs, pauseMs, held } = props;
-  const remaining = useSharedValue(1);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the drain runs on the UI thread and restarts with each pause
-  useEffect(() => {
-    cancelAnimation(remaining);
-    if (held) {
-      remaining.value = 1;
-      return;
-    }
-    const left = Math.min(1, Math.max(0, 1 - (Date.now() - sinceMs) / pauseMs));
-    remaining.value = left;
-    remaining.value = withTiming(0, { duration: left * pauseMs, easing: Easing.linear });
-  }, [sinceMs, pauseMs, held, remaining]);
-  const fill = useAnimatedStyle(() => ({ width: `${remaining.value * 100}%` }));
-  return (
-    <View
-      accessibilityElementsHidden
-      importantForAccessibility="no-hide-descendants"
-      className="h-0.5 w-[120px] max-w-full overflow-hidden rounded-full bg-border"
-    >
-      <Animated.View
-        style={fill}
-        className={cn(
-          "absolute bottom-0 right-0 top-0",
-          held ? "bg-foreground-muted" : "bg-primary",
-        )}
-      />
-    </View>
   );
 }
 

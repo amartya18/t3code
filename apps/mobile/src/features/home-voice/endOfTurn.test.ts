@@ -3,7 +3,6 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   DEFAULT_END_OF_TURN_CONFIG,
   INITIAL_END_OF_TURN_STATE,
-  sendCountdown,
   stepEndOfTurn,
   type EndOfTurnConfig,
   type EndOfTurnEffect,
@@ -31,7 +30,6 @@ function session(config: EndOfTurnConfig = TIMER_ONLY) {
   return {
     finalized,
     state: () => state,
-    countdown: () => sendCountdown(state, now, config),
     send,
     say(text: string) {
       send({ type: "vad", speaking: true });
@@ -150,7 +148,6 @@ describe("stepEndOfTurn", () => {
     const voice = session();
     voice.say("tell Home to merge it once checks pass, and… hang on…");
     voice.stopTalking();
-    expect(voice.countdown()).toEqual({ remaining: 1, held: true });
     voice.wait(6_000);
     expect(voice.finalized).toEqual([]);
 
@@ -294,19 +291,5 @@ describe("early send", () => {
     voice.send({ type: "eou", text: "what is Home working on?" });
     voice.wait(2_900);
     expect(voice.finalized).toEqual([]);
-  });
-});
-
-describe("sendCountdown", () => {
-  it("drains over the pause and disappears once sent", () => {
-    const voice = session();
-    voice.say("merge it");
-    expect(voice.countdown()).toBeNull();
-    voice.stopTalking();
-    expect(voice.countdown()).toEqual({ remaining: 1, held: false });
-    voice.wait(750);
-    expect(voice.countdown()).toEqual({ remaining: 0.75, held: false });
-    voice.wait(2_250);
-    expect(voice.countdown()).toBeNull();
   });
 });
