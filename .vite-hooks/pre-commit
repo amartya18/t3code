@@ -1,1 +1,2 @@
 vp staged
+node scripts/fork-no-new-comments.ts
