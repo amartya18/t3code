@@ -42,7 +42,6 @@ export function createVoiceSpeechDriver(options: {
   readonly now: () => number;
   readonly newMessageId: () => string;
   readonly log: (line: string) => void;
-  /** Plays a call chime while the engine holds no audio session. */
   readonly chime: (sound: "start" | "end") => Promise<void>;
   readonly onReady: () => void;
   readonly onHangUp: () => void;

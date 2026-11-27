@@ -36,7 +36,6 @@ export const VOICE_TUNING_RANGE: Record<keyof VoiceTuning, { min: number; max: n
   turnWaitMs: { min: 1_500, max: 4_000 },
 };
 
-/** Stored tuning held inside the sliders' range, so an old out-of-range value can't keep the detector deaf. */
 export function voiceTuning(stored: Partial<VoiceTuning>): VoiceTuning {
   const clamped = (key: keyof VoiceTuning) => {
     const { min, max } = VOICE_TUNING_RANGE[key];
