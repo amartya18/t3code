@@ -24,7 +24,7 @@ import {
   type HomeUpdateCursor,
 } from "./homeUpdates";
 import type { HomeView } from "./homeView";
-import { voiceTurnSelection } from "./voiceInstances";
+import { voiceInstanceEnabled, voiceTurnSelection } from "./voiceInstances";
 import type { VoiceModeSettings } from "./voiceSettings";
 
 export const VOICE_THREAD_TAG = "voice";
@@ -91,7 +91,10 @@ export async function sendVoiceMessage(
   const metadata = makeQueuedMessageMetadata();
   const modelSelection = voiceTurnSelection(
     settings.modelSelection,
-    appAtomRegistry.get(serverEnvironment.configValueAtom(thread.environmentId))?.providers ?? [],
+    voiceInstanceEnabled(
+      appAtomRegistry.get(serverEnvironment.configValueAtom(thread.environmentId)),
+      settings.projectId,
+    ),
     settings.thinking,
   );
   if (__DEV__) console.log(`[voice] turn on ${modelSelection.instanceId}/${modelSelection.model}`);

@@ -1,7 +1,7 @@
-import { ProviderInstanceId, type ModelSelection } from "@t3tools/contracts";
+import { ProjectId, ProviderInstanceId, type ModelSelection } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { isVoiceInstance, voiceTurnSelection } from "./voiceInstances";
+import { isVoiceInstance, voiceInstanceEnabled, voiceTurnSelection } from "./voiceInstances";
 
 const instance = (id: string, enabled = true) => ({
   instanceId: ProviderInstanceId.make(id),
@@ -12,11 +12,15 @@ const opus: ModelSelection = {
   model: "claude-opus-5-5",
   options: [{ id: "effort", value: "low" }],
 };
-const voiceServer = [
+const listed =
+  (...providers: ReadonlyArray<ReturnType<typeof instance>>) =>
+  (id: ProviderInstanceId) =>
+    providers.some((provider) => provider.instanceId === id && provider.enabled);
+const voiceServer = listed(
   instance("claudeAgent"),
   instance("claudeVoice"),
   instance("claudeVoiceThinking"),
-];
+);
 
 describe("voiceTurnSelection", () => {
   it("runs a Claude pick without thinking on the server's voice instance", () => {
@@ -34,13 +38,13 @@ describe("voiceTurnSelection", () => {
   });
 
   it("sends unchanged to a server without the voice instances", () => {
-    expect(voiceTurnSelection(opus, [instance("claudeAgent")], false)).toBe(opus);
-    expect(voiceTurnSelection(opus, [instance("claudeAgent")], true)).toBe(opus);
-    expect(voiceTurnSelection(opus, [], false)).toBe(opus);
+    expect(voiceTurnSelection(opus, listed(instance("claudeAgent")), false)).toBe(opus);
+    expect(voiceTurnSelection(opus, listed(instance("claudeAgent")), true)).toBe(opus);
+    expect(voiceTurnSelection(opus, listed(), false)).toBe(opus);
   });
 
   it("sends unchanged when the needed voice instance is turned off", () => {
-    const off = [instance("claudeAgent"), instance("claudeVoice", false)];
+    const off = listed(instance("claudeAgent"), instance("claudeVoice", false));
     expect(voiceTurnSelection(opus, off, false)).toBe(opus);
   });
 
@@ -51,6 +55,38 @@ describe("voiceTurnSelection", () => {
     };
     expect(voiceTurnSelection(codex, voiceServer, false)).toBe(codex);
     expect(voiceTurnSelection(codex, voiceServer, true)).toBe(codex);
+  });
+});
+
+describe("voiceInstanceEnabled", () => {
+  const voiceProject = ProjectId.make("voice-project");
+  const config = {
+    providers: [instance("claudeAgent"), instance("claudeVoice", false)],
+    settings: {
+      providerInstances: {
+        [ProviderInstanceId.make("claudeVoice")]: { driver: "claudeAgent", enabled: false },
+      },
+      projectSettingsOverrides: {
+        [voiceProject]: {
+          providerInstances: { [ProviderInstanceId.make("claudeVoice")]: { enabled: true } },
+        },
+      },
+    },
+  } as unknown as Parameters<typeof voiceInstanceEnabled>[0];
+
+  it("uses an instance that is off everywhere except the voice project", () => {
+    const enabled = voiceInstanceEnabled(config, voiceProject);
+    expect(enabled(ProviderInstanceId.make("claudeVoice"))).toBe(true);
+    expect(voiceTurnSelection(opus, enabled, false).instanceId).toBe("claudeVoice");
+  });
+
+  it("doesn't use it from another project or when the server doesn't list it", () => {
+    expect(
+      voiceInstanceEnabled(config, ProjectId.make("other"))(ProviderInstanceId.make("claudeVoice")),
+    ).toBe(false);
+    expect(
+      voiceInstanceEnabled(config, voiceProject)(ProviderInstanceId.make("claudeVoiceThinking")),
+    ).toBe(false);
   });
 });
 
