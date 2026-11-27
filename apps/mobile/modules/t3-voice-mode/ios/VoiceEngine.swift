@@ -6,6 +6,7 @@ actor VoiceEngine {
   nonisolated let events: EventSink
   nonisolated let controls: Controls
   nonisolated let ring: AudioRing
+  nonisolated let levels: MicLevelEvents
   let listener: Listener
   let transcriber = Transcriber()
   let turn = TurnDetector()
@@ -26,6 +27,7 @@ actor VoiceEngine {
     self.events = events
     self.controls = controls
     self.ring = ring
+    levels = MicLevelEvents(events)
     listener = Listener(events: events, ring: ring)
     speaker = Speaker(events: events, controls: controls)
   }
@@ -137,6 +139,7 @@ actor VoiceEngine {
 
   nonisolated func setMuted(_ muted: Bool) {
     controls.muted = muted
+    if muted { levels.silence() }
     Task { await self.applyMute() }
   }
 
@@ -193,12 +196,15 @@ actor VoiceEngine {
     }
     let controls = self.controls
     let ring = self.ring
+    let levels = self.levels
     let sink = listener.input
     let sampleRate = format.sampleRate
     input.installTap(onBus: 0, bufferSize: 4096, format: format) { buffer, when in
-      guard let samples = mic.convert(buffer, silence: controls.muted) else { return }
+      let muted = controls.muted
+      guard let samples = mic.convert(buffer, silence: muted) else { return }
       let capturedMs =
         when.isHostTimeValid ? hostMs(when.hostTime) : nowMs() - Double(buffer.frameLength) / sampleRate * 1000
+      if muted { levels.silence() } else { levels.hear(samples, atMs: capturedMs) }
       sink.yield(.audio(samples, start: ring.append(samples, atMs: capturedMs)))
     }
     if aec { input.isVoiceProcessingInputMuted = controls.muted }
@@ -214,6 +220,7 @@ actor VoiceEngine {
     audio = nil
     engine.inputNode.removeTap(onBus: 0)
     engine.stop()
+    levels.silence()
     await speaker.attach(nil)
   }
 
@@ -274,7 +281,7 @@ actor VoiceEngine {
 
   private func interrupted(began: Bool) async {
     events.send("interruption", ["phase": began ? "began" : "ended"])
-    if began { return }
+    if began { return levels.silence() }
     guard let engine = audio else { return await recover() }
     await engineConfigurationChanged(engine)
   }
@@ -316,6 +323,37 @@ final class MicConverter: @unchecked Sendable {
     guard status != .error, output.frameLength > 0, let channel = output.floatChannelData?[0] else { return nil }
     let count = Int(output.frameLength)
     return silence ? [Float](repeating: 0, count: count) : Array(UnsafeBufferPointer(start: channel, count: count))
+  }
+}
+
+/// Sends `micLevel` for each window the mic hears, and a single 0 when it goes quiet (muted,
+/// stopped or interrupted) so the wave never keeps a stale level. Sending under the lock keeps
+/// that 0 after every level sent before it.
+final class MicLevelEvents: @unchecked Sendable {
+  private let lock = NSLock()
+  private let events: EventSink
+  private var quiet = true
+
+  init(_ events: EventSink) {
+    self.events = events
+  }
+
+  func hear(_ samples: [Float], atMs: Double) {
+    let windows = MicLevel.windows(samples, atMs: atMs)
+    lock.withLock {
+      quiet = false
+      for window in windows {
+        events.send("micLevel", ["level": Double(window.level), "atMs": window.atMs])
+      }
+    }
+  }
+
+  func silence() {
+    lock.withLock {
+      guard !quiet else { return }
+      quiet = true
+      events.send("micLevel", ["level": 0.0, "atMs": nowMs()])
+    }
   }
 }
 

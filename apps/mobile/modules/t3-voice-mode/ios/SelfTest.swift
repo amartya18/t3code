@@ -46,6 +46,7 @@ extension VoiceEngine {
       var gate = SpeechGate(settings: config.vad)
       var frames: [Double] = []
       var changes: [[String: Any]] = []
+      var voiced: (from: Int, decidedAt: Int)?
       let frame = SileroVad.frameSamples
       for start in stride(from: 0, through: heard.count - frame, by: frame) {
         let window = heard[start..<start + frame]
@@ -54,12 +55,27 @@ extension VoiceEngine {
         let energy = window.reduce(0) { $0 + Double($1 * $1) }
         if let change = gate.push(start: start, count: frame, probability: probability, energy: energy) {
           changes.append(["speaking": change.speaking, "ms": change.sample / 16, "level": Double(change.level)])
+          if change.speaking, voiced == nil { voiced = (from: change.sample, decidedAt: start + frame) }
         }
       }
       report["vadMs"] = lap()
       report["vadFrames"] = frames
       report["vadChanges"] = changes
       report["vadSpeechFromMs"] = lead.count / 16
+      if let voiced {
+        // The wave's default floor plus active level in callWave.ts.
+        let activeRms = 0.008
+        let chunk = 1_600
+        let lit = stride(from: 0, to: heard.count, by: chunk).first { start in
+          MicLevel.windows(Array(heard[start..<min(start + chunk, heard.count)]), atMs: 0)
+            .contains { Double($0.level) > activeRms }
+        }
+        let vadDelivered = (voiced.decidedAt + chunk - 1) / chunk * chunk
+        report["meterActiveRms"] = activeRms
+        report["tapChunkMs"] = chunk / 16
+        report["vadReactMs"] = (vadDelivered - voiced.from) / 16
+        if let lit { report["meterReactMs"] = (lit + chunk - voiced.from) / 16 }
+      }
     } catch {
       errors["vad"] = String(describing: error)
     }
@@ -106,7 +122,7 @@ extension VoiceEngine {
     report["errors"] = errors
     let transcript = report["transcript"] as? String ?? ""
     let started = (report["vadChanges"] as? [[String: Any]])?.contains { $0["speaking"] as? Bool == true } ?? false
-    report["ok"] = errors.isEmpty && !transcript.isEmpty && started
+    report["ok"] = errors.isEmpty && !transcript.isEmpty && started && report["meterReactMs"] != nil
     return try selfTestJSON(report)
   }
 }

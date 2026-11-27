@@ -62,7 +62,7 @@ jobs:
       - name: Voice logic checks
         working-directory: apps/mobile/modules/t3-voice-mode
         run: |
-          xcrun swiftc ios/AudioRing.swift ios/SpeechGate.swift ios-tests/main.swift -o "$RUNNER_TEMP/voice-logic"
+          xcrun swiftc ios/AudioRing.swift ios/SpeechGate.swift ios/MicLevel.swift ios-tests/main.swift -o "$RUNNER_TEMP/voice-logic"
           "$RUNNER_TEMP/voice-logic"
 
       - name: Setup dependencies

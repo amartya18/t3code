@@ -5,7 +5,7 @@ public final class T3VoiceModeModule: Module {
 
   public func definition() -> ModuleDefinition {
     Name("T3VoiceMode")
-    Events("vad", "playback", "models", "route", "interruption", "stage", "error")
+    Events("vad", "micLevel", "playback", "models", "route", "interruption", "stage", "error")
 
     OnCreate {
       self.engine.events.attach(self)

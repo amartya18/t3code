@@ -1,6 +1,6 @@
 import Foundation
 
-// Built with swiftc next to AudioRing.swift and SpeechGate.swift by fork-ios-compile.yml.
+// Built with swiftc next to AudioRing.swift, SpeechGate.swift and MicLevel.swift by fork-ios-compile.yml.
 
 var failures = 0
 
@@ -77,6 +77,19 @@ do {
   var instant = SpeechGate(settings: .init(threshold: 0.5, minSpeechMs: 0, minSilenceMs: 0))
   check(instant.push(start: 0, count: frame, probability: 0.5, energy: 0)?.speaking == true, "zero hold starts at once")
   check(instant.push(start: frame, count: frame, probability: 0.4, energy: 0)?.speaking == false, "zero hold ends at once")
+}
+
+do {
+  let buffer = [Float](repeating: 0.5, count: 800) + [Float](repeating: -0.25, count: 800)
+  let windows = MicLevel.windows(buffer, atMs: 1000)
+  check(windows.count == 3, "a 100 ms buffer gives three windows: \(windows.count)")
+  check(windows.map { $0.atMs } == [1000, 1000 + 533.0 / 16, 1000 + 1066.0 / 16], "each window is timed from its first sample")
+  check(abs(windows[0].level - 0.5) < 0.0001, "a window's level is its raw RMS, sign ignored")
+  check(abs(windows[2].level - 0.25) < 0.0001, "the last window holds the rest of the buffer")
+  check(windows[1].level > 0.25 && windows[1].level < 0.5, "a window across a change mixes both sides")
+  check(MicLevel.windows([Float](repeating: 0.1, count: 100), atMs: 0).count == 1, "a short buffer is one window")
+  check(MicLevel.windows([], atMs: 0).isEmpty, "no audio, no windows")
+  check(MicLevel.windows([Float](repeating: 0, count: 512), atMs: 0).first?.level == 0, "silence reads 0")
 }
 
 if failures > 0 {

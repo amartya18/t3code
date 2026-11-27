@@ -40,6 +40,11 @@ export interface VoiceEngineEvents {
     readonly level: number;
     readonly atMs: number;
   };
+  /**
+   * The mic's raw RMS for each ~32 ms window from `atMs`, unsmoothed and unfiltered, sent in bursts
+   * as tap buffers arrive. A single 0 means the mic muted, stopped or was interrupted.
+   */
+  readonly micLevel: { readonly level: number; readonly atMs: number };
   readonly playback: { readonly id: string; readonly state: "started" | "finished" | "stopped" };
   /** FluidAudio reports download progress per model as a fraction, never in bytes. */
   readonly models: {
