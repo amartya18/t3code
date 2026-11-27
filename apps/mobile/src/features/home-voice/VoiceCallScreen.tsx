@@ -35,6 +35,7 @@ import {
 import {
   CircleButton,
   HangUpButton,
+  MicWaveform,
   MuteButton,
   SessionSettingsButton,
   VoiceClockTitle,
@@ -257,13 +258,15 @@ function VoiceTranscript(props: { readonly session: VoiceSession }) {
   );
 }
 
+const LINE_WAVE = [4, 7, 10, 7, 4];
+
 /**
- * Amar's words while he talks; the only part that changes on every partial. The send countdown
- * hangs below it in the list's bottom padding, so it never pushes a line.
+ * Amar's words while he talks; the only part that changes on every partial. The wave beside it
+ * and the send countdown below it hang outside its box, so neither ever pushes a line.
  */
 function LiveWords() {
   const speech = useAtomValue(voiceSpeechAtom);
-  if (speech?.current == null) return null;
+  if (speech === null || (speech.current === null && !speech.hearing)) return null;
   return (
     <Animated.View
       entering={ROW_ENTERING}
@@ -271,7 +274,12 @@ function LiveWords() {
       className="self-end"
       style={{ maxWidth: "80%" }}
     >
-      <Text className="text-base text-right text-foreground-muted">{speech.current}</Text>
+      <View className="absolute -left-8 top-0 h-6 justify-center">
+        <MicWaveform heights={LINE_WAVE} />
+      </View>
+      <Text className="text-base text-right text-foreground-muted">
+        {speech.current ?? "\u00a0"}
+      </Text>
       {speech.pause != null ? (
         <View className="absolute -bottom-2 right-0">
           <SendCountdown {...speech.pause} />

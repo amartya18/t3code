@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   DEFAULT_VOICE_SPEECH_CONFIG,
+  isHearing,
   liveWords,
   needsTicks,
   openVoiceSpeech,
@@ -462,6 +463,29 @@ describe("voice speech", () => {
     expect(voice.state().engine.kind).toBe("listening");
     voice.playAll();
     expect(voice.played).toEqual(["Hi. Home is idle."]);
+  });
+
+  it("hears Amar while his voice is on, settles in his pause, and ignores sound over the agent", () => {
+    const voice = call();
+    expect(isHearing(voice.state())).toBe(false);
+
+    voice.say("merge it");
+    expect(isHearing(voice.state())).toBe(true);
+    voice.stopTalking();
+    expect(isHearing(voice.state())).toBe(false);
+    voice.send({ type: "vad", speaking: true });
+    expect(isHearing(voice.state())).toBe(true);
+    voice.stopTalking();
+    voice.wait(3_000);
+
+    voice.reply("r1", "A long answer that keeps going.");
+    voice.send({ type: "vad", speaking: true });
+    expect(isHearing(voice.state())).toBe(false);
+    voice.send({ type: "vad", speaking: false });
+
+    voice.send({ type: "muted", muted: true });
+    voice.send({ type: "vad", speaking: true });
+    expect(isHearing(voice.state())).toBe(false);
   });
 
   it("cues once when it starts listening, and not again after an interruption", () => {

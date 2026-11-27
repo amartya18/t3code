@@ -1,12 +1,25 @@
+import { useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
 import * as Haptics from "expo-haptics";
 import { useGT } from "gt-react-native";
+import { useEffect } from "react";
 import { Pressable, View } from "react-native";
+import Animated, {
+  cancelAnimation,
+  Easing,
+  useAnimatedStyle,
+  useReducedMotion,
+  useSharedValue,
+  withRepeat,
+  withTiming,
+  type SharedValue,
+} from "react-native-reanimated";
 
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { AppText } from "../../components/ui/AppText";
 import { cn } from "../../lib/cn";
 import { useVoiceClock } from "./useVoiceCall";
+import { voiceHearingAtom } from "./useVoiceSpeech";
 import { VoiceCallSymbol } from "./VoiceCallSymbol";
 import { endVoiceSession, toggleVoiceMuted } from "./voiceSession";
 
@@ -128,19 +141,71 @@ export function HangUpButton(props: { readonly size: number }) {
   );
 }
 
-/** A fixed dotted waveform: it marks the call, it does not meter sound. */
-export function StaticWaveform() {
-  const heights = [3, 5, 8, 5, 10, 6, 3, 7, 4, 3];
+const WAVE_PERIOD_MS = 900;
+
+/**
+ * A dotted wave that moves while the mic hears Amar and settles when he stops. The engine reports
+ * only when his voice starts and stops, so it follows his voice, not how loud it is.
+ */
+export function MicWaveform(props: { readonly heights: ReadonlyArray<number> }) {
+  const hearing = useAtomValue(voiceHearingAtom);
+  const reducedMotion = useReducedMotion();
+  const phase = useSharedValue(0);
+  const energy = useSharedValue(0);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the wave runs on the UI thread, only while he talks
+  useEffect(() => {
+    if (!hearing || reducedMotion) {
+      cancelAnimation(phase);
+      energy.value = withTiming(0, { duration: 250 });
+      return;
+    }
+    energy.value = withTiming(1, { duration: 150 });
+    phase.value = withRepeat(
+      withTiming(phase.value + 1, { duration: WAVE_PERIOD_MS, easing: Easing.linear }),
+      -1,
+    );
+  }, [hearing, reducedMotion, phase, energy]);
   return (
-    <View className="flex-row items-center gap-[3px]" accessibilityElementsHidden>
-      {heights.map((height, index) => (
-        <View
+    <View
+      className="flex-row items-center gap-[3px]"
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+    >
+      {props.heights.map((height, index) => (
+        <WaveBar
           // oxlint-disable-next-line react/no-array-index-key -- a fixed decoration
           key={index}
-          style={{ height, width: 3 }}
-          className="rounded-full bg-foreground-muted"
+          height={height}
+          offset={index * 0.17}
+          phase={phase}
+          energy={energy}
+          lit={hearing}
         />
       ))}
     </View>
+  );
+}
+
+function WaveBar(props: {
+  readonly height: number;
+  readonly offset: number;
+  readonly phase: SharedValue<number>;
+  readonly energy: SharedValue<number>;
+  readonly lit: boolean;
+}) {
+  const { offset, phase, energy } = props;
+  const swing = useAnimatedStyle(() => ({
+    transform: [
+      {
+        scaleY:
+          1 + energy.value * 0.8 * (0.5 + 0.5 * Math.sin(2 * Math.PI * (phase.value + offset))),
+      },
+    ],
+  }));
+  return (
+    <Animated.View
+      style={[{ height: props.height, width: 3 }, swing]}
+      className={cn("rounded-full", props.lit ? "bg-primary" : "bg-foreground-muted")}
+    />
   );
 }

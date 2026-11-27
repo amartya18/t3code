@@ -10,13 +10,15 @@ import { useVoiceConnection } from "./useVoiceCall";
 import {
   HangUpButton,
   MuteButton,
+  MicWaveform,
   SessionSettingsButton,
-  StaticWaveform,
   VoiceClockTitle,
 } from "./VoiceCallControls";
 import { useVoiceModelOptions } from "./voiceModels";
 import { voiceSessionAtom, type VoiceSession } from "./voiceSession";
 import { useVoiceModeSettings } from "./voiceSettings";
+
+const PILL_WAVE = [3, 5, 8, 5, 10, 6, 3, 7, 4, 3];
 
 /** Fork hook on Home's thread: the minimized call, below the header. Tap returns to the call. */
 export function HomeVoicePill(props: {
@@ -69,7 +71,7 @@ function MinimizedCall(props: { readonly session: VoiceSession; readonly top: nu
             className="font-t3-bold text-base"
           />
           {status === null ? (
-            <StaticWaveform />
+            <MicWaveform heights={PILL_WAVE} />
           ) : (
             <Text numberOfLines={1} className="text-xs text-foreground-muted">
               {status}

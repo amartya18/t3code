@@ -15,6 +15,7 @@ import { ECHO_CANCELLATION, voiceEngineConfig } from "./voiceEngine";
 import { endVoiceSession, sendVoiceMessage, type VoiceSession } from "./voiceSession";
 import { useVoiceModeSettings } from "./voiceSettings";
 import {
+  isHearing,
   liveWords,
   type OwnLine,
   type ReplyShown,
@@ -36,6 +37,7 @@ export interface VoiceSpeechView {
   readonly own: OwnLine | null;
   readonly shown: ReadonlyMap<string, ReplyShown>;
   readonly current: string | null;
+  readonly hearing: boolean;
   /** The pause before the current line sends; `held` while a touch or "hang on" holds it. */
   readonly pause: {
     readonly sinceMs: number;
@@ -47,6 +49,11 @@ export interface VoiceSpeechView {
 export const voiceSpeechAtom = Atom.make<VoiceSpeechView | null>(null).pipe(
   Atom.keepAlive,
   Atom.withLabel("home-voice:speech"),
+);
+
+/** Flips only when Amar starts or stops talking, so the minimized call redraws that rarely. */
+export const voiceHearingAtom = Atom.make((get) => get(voiceSpeechAtom)?.hearing === true).pipe(
+  Atom.withLabel("home-voice:hearing"),
 );
 
 /** What the transcript draws of the session; changes once a line or a chunk, not every word. */
@@ -173,6 +180,7 @@ function publish(state: VoiceSpeechState, config: VoiceSpeechConfig) {
     own: state.own,
     shown: state.shown,
     current: liveWords(state),
+    hearing: isHearing(state),
     pause:
       turn.kind === "paused"
         ? {
@@ -193,6 +201,7 @@ function sameView(left: VoiceSpeechView, right: VoiceSpeechView): boolean {
     left.own === right.own &&
     left.shown === right.shown &&
     left.current === right.current &&
+    left.hearing === right.hearing &&
     left.pause?.sinceMs === right.pause?.sinceMs &&
     left.pause?.pauseMs === right.pause?.pauseMs &&
     left.pause?.held === right.pause?.held
