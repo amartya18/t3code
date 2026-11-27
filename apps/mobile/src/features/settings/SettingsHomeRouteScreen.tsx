@@ -173,22 +173,26 @@ function HomeOn({ host }: { host: HomeHost }) {
   };
 
   const turnOff = () =>
-    Alert.alert(m(msg("Turn off Home?")), m(msg("Home stops. Its threads stay.")), [
-      { text: m(msg("Cancel")), style: "cancel" },
-      {
-        text: m(msg("Turn off")),
-        style: "destructive",
-        onPress: () => {
-          setPending(true);
-          void disable({ environmentId: host.environmentId, input: {} }).then((result) => {
-            setPending(false);
-            if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-              reportFailure(m(msg("Could not turn off Home")), squashAtomCommandFailure(result));
-            }
-          });
+    Alert.alert(
+      m(msg("Turn off Home?")),
+      m(msg("Home stops and its thread is archived. Turning Home on again brings it back.")),
+      [
+        { text: m(msg("Cancel")), style: "cancel" },
+        {
+          text: m(msg("Turn off")),
+          style: "destructive",
+          onPress: () => {
+            setPending(true);
+            void disable({ environmentId: host.environmentId, input: {} }).then((result) => {
+              setPending(false);
+              if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+                reportFailure(m(msg("Could not turn off Home")), squashAtomCommandFailure(result));
+              }
+            });
+          },
         },
-      },
-    ]);
+      ],
+    );
 
   return (
     <>
@@ -246,7 +250,9 @@ function HomeConflict({ hosts }: { hosts: ReadonlyArray<HomeHost> }) {
   return (
     <SettingsSection
       title={gt("Keep one Home")}
-      footer={gt("Home is on in more than one place. The others turn off and their threads stay.")}
+      footer={gt(
+        "Home is on in more than one place. The others turn off and their threads are archived.",
+      )}
     >
       {hosts.map((host) => (
         <SettingsRow

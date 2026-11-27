@@ -19,6 +19,10 @@ guide: [Home](../user/home.md).
   once, then holds its queue (`queue.hold`, under the orchestrator's thread
   lock) and interrupts its active run. Fleet operations check the grant again
   right before they act. No credential carries it.
+- Each server keeps at most one unarchived `home:` thread and archives the
+  rest. While Home is off it archives only `parkedThreadId`, never every
+  `home:` thread: a settings file that fails to decode reads as the defaults,
+  which look like Home off while its thread is still live.
 - Start fresh keeps the thread and its grant. It interrupts the active run and
   queues a `freshContext` message, which starts a new provider session. It
   never holds the queue, since that would hold the fresh message too.

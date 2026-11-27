@@ -64,13 +64,20 @@ export type HomeWatch = typeof HomeWatch.Type;
 export const HomeSettings = Schema.Struct({
   /** The current Home thread. Null when Home is off. */
   threadId: Schema.NullOr(ThreadId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  /** This environment's Home thread while Home is off, archived until Home is turned on again. */
+  parkedThreadId: Schema.NullOr(ThreadId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   /** Wake Home for every thread in the fleet, not only watched ones. */
   watchAll: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   watches: Schema.Array(HomeWatch).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
 });
 export type HomeSettings = typeof HomeSettings.Type;
 
-export const DEFAULT_HOME_SETTINGS: HomeSettings = { threadId: null, watchAll: false, watches: [] };
+export const DEFAULT_HOME_SETTINGS: HomeSettings = {
+  threadId: null,
+  parkedThreadId: null,
+  watchAll: false,
+  watches: [],
+};
 
 /**
  * Every Home thread's id starts with this, the current one and any that

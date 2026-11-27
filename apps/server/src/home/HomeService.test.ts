@@ -1,5 +1,6 @@
 import { expect, it } from "@effect/vitest";
 import {
+  DEFAULT_HOME_SETTINGS,
   EnvironmentId,
   type HomeWatchEvent,
   ProjectId,
@@ -35,6 +36,10 @@ const makeHome = () => {
   const dispatched: Array<OrchestrationV2ServerCommand> = [];
   // Threads with a running turn, to model a Home that is busy when it is replaced.
   const running = new Set<string>();
+  const homeThreads = new Map<string, "active" | "archived" | "deleted">();
+  const homeFolder = { refreshes: 0 };
+  // Threads the orchestrator refuses to archive, as it does while delegated tasks run.
+  const unarchivable = new Set<string>();
   // Active threads here, newest first, as listProjectThreads returns them.
   const listed: Array<Pick<OrchestrationV2ThreadShell, "id" | "settledOverride" | "settledAt">> =
     [];
@@ -53,8 +58,8 @@ const makeHome = () => {
       id: threadId,
       projectId: homeProjectId,
       modelSelection,
-      deletedAt: null,
-      archivedAt: null,
+      deletedAt: homeThreads.get(threadId) === "deleted" ? DateTime.makeUnsafe(0) : null,
+      archivedAt: homeThreads.get(threadId) === "archived" ? DateTime.makeUnsafe(0) : null,
       activeRunId: running.has(threadId) ? "run" : null,
       latestRunId: `run:${threadId}`,
       status: "idle",
@@ -82,17 +87,27 @@ const makeHome = () => {
         }),
         Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
           namedProjectsRoot: "/projects",
-          ensureHomeProject: Effect.succeed({ projectId: homeProjectId, workspaceRoot: "/home" }),
+          ensureHomeProject: Effect.sync(() => {
+            homeFolder.refreshes += 1;
+            return { projectId: homeProjectId, workspaceRoot: "/home" };
+          }),
         }),
         Layer.mock(ThreadLaunch.ThreadLaunchService)({
           launch: (input) => {
             launched.push(input);
+            if (input.threadId !== undefined) homeThreads.set(input.threadId, "active");
             return Effect.succeed({ threadId: input.threadId } as ThreadLaunch.ThreadLaunchResult);
           },
         }),
         Layer.mock(ThreadManagement.ThreadManagementService)({
           getThreadShell: (threadId) => Effect.succeed(shell(threadId)),
-          listProjectThreads: () => Effect.succeed(listed as never),
+          listProjectThreads: () =>
+            Effect.succeed([
+              ...[...homeThreads]
+                .filter(([, state]) => state === "active")
+                .map(([id]) => ({ id, settledOverride: null, settledAt: null })),
+              ...listed,
+            ] as never),
           getShellSnapshot: (options) => {
             snapshotRequests.push(options?.threadIds);
             return Effect.succeed({
@@ -159,8 +174,9 @@ const makeHome = () => {
             return Effect.succeed({} as ThreadManagement.ThreadManagementSendResult);
           },
           dispatch: (command) => {
-            if (dispatchFailures.remaining > 0) {
-              dispatchFailures.remaining -= 1;
+            const refused = command.type === "thread.archive" && unarchivable.has(command.threadId);
+            if (refused || dispatchFailures.remaining > 0) {
+              if (!refused) dispatchFailures.remaining -= 1;
               return Effect.fail(
                 new Orchestrator.OrchestratorDispatchError({
                   commandId: command.commandId,
@@ -169,6 +185,8 @@ const makeHome = () => {
               );
             }
             dispatched.push(command);
+            if (command.type === "thread.archive") homeThreads.set(command.threadId, "archived");
+            if (command.type === "thread.unarchive") homeThreads.set(command.threadId, "active");
             return Effect.succeed({} as never);
           },
         }),
@@ -182,6 +200,9 @@ const makeHome = () => {
     dispatched,
     dispatchFailures,
     running,
+    homeThreads,
+    homeFolder,
+    unarchivable,
     listed,
     snapshotRequests,
     messages,
@@ -215,21 +236,88 @@ it.effect("enables one full-access Home thread and grants only that thread", () 
   }).pipe(Effect.provide(layer));
 });
 
-it.effect("turning Home off revokes its reach at once", () => {
-  const { layer } = makeHome();
+it.effect(
+  "turning Home off archives its thread, and turning it on resumes it with its watches and current instructions",
+  () => {
+    const { layer, launched, dispatched, homeThreads, homeFolder } = makeHome();
+    return Effect.gen(function* () {
+      const home = yield* HomeService.HomeService;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const { threadId } = yield* home.enable({ modelSelection });
+      const watch = { environmentId, threadId: ThreadId.make("a") };
+      yield* home.updateWatches(threadId, (current) => HomeService.addWatch(current, watch));
+      yield* home.disable;
+      expect(yield* home.isHome(threadId)).toBe(false);
+      expect(homeThreads.get(threadId)).toBe("archived");
+      expect((yield* settings.getSettings).home).toEqual({
+        threadId: null,
+        parkedThreadId: threadId,
+        watchAll: false,
+        watches: [watch],
+      });
+
+      dispatched.length = 0;
+      homeFolder.refreshes = 0;
+      const picked = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-haiku" };
+      expect(yield* home.enable({ modelSelection: picked })).toEqual({ threadId });
+      expect(launched).toHaveLength(1);
+      expect(homeFolder.refreshes).toBe(1);
+      expect(homeThreads.get(threadId)).toBe("active");
+      expect(dispatched).toMatchObject([
+        { type: "thread.unarchive", threadId },
+        { type: "thread.model-selection.set", threadId, modelSelection: picked },
+        { type: "queue.resume", threadId },
+      ]);
+      expect((yield* settings.getSettings).home).toEqual({
+        threadId,
+        parkedThreadId: null,
+        watchAll: false,
+        watches: [watch],
+      });
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+it.effect("settings that decode as the defaults never archive the live Home", () => {
+  const { layer, homeThreads } = makeHome();
   return Effect.gen(function* () {
     const home = yield* HomeService.HomeService;
     const { threadId } = yield* home.enable({ modelSelection });
-    yield* home.updateWatches(threadId, (current) =>
-      HomeService.addWatch(current, {
-        environmentId,
-        threadId: ThreadId.make("a"),
-      }),
-    );
+    yield* (yield* ServerSettings.ServerSettingsService).updateSettings({
+      home: DEFAULT_HOME_SETTINGS,
+    });
+    yield* home.archiveFormerHomes;
+    expect(homeThreads.get(threadId)).toBe("active");
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("with Home off, only its parked thread is archived again", () => {
+  const { layer, homeThreads, unarchivable } = makeHome();
+  const older = ThreadId.make("home:older");
+  return Effect.gen(function* () {
+    const home = yield* HomeService.HomeService;
+    const { threadId } = yield* home.enable({ modelSelection });
+    unarchivable.add(threadId);
     yield* home.disable;
-    expect(yield* home.isHome(threadId)).toBe(false);
-    const settings = yield* (yield* ServerSettings.ServerSettingsService).getSettings;
-    expect(settings.home).toEqual({ threadId: null, watchAll: false, watches: [] });
+    expect(homeThreads.get(threadId)).toBe("active");
+    unarchivable.delete(threadId);
+    homeThreads.set(older, "active");
+    yield* home.archiveFormerHomes;
+    expect(Object.fromEntries(homeThreads)).toEqual({ [threadId]: "archived", [older]: "active" });
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("only the live Home thread stays unarchived, however another one appears", () => {
+  const { layer, homeThreads } = makeHome();
+  const stray = ThreadId.make("home:stray");
+  return Effect.gen(function* () {
+    const home = yield* HomeService.HomeService;
+    homeThreads.set(stray, "active");
+    const { threadId } = yield* home.enable({ modelSelection });
+    expect(homeThreads.get(stray)).toBe("archived");
+    homeThreads.set(stray, "active");
+    yield* home.archiveFormerHomes;
+    expect(Object.fromEntries(homeThreads)).toEqual({ [stray]: "archived", [threadId]: "active" });
   }).pipe(Effect.provide(layer));
 });
 
@@ -295,13 +383,20 @@ it.effect("keeps a watch that ends in a batch until the batch is delivered", () 
   }).pipe(Effect.provide(layer));
 });
 
-it.effect("a Home thread that was turned off cannot change the next Home's watches", () => {
-  const { layer } = makeHome();
+it.effect("a deleted Home is replaced by a new one that the old one cannot change", () => {
+  const { layer, launched, homeThreads } = makeHome();
   return Effect.gen(function* () {
     const home = yield* HomeService.HomeService;
     const { threadId: old } = yield* home.enable({ modelSelection });
+    yield* home.updateWatches(old, (current) =>
+      HomeService.addWatch(current, { environmentId, threadId: ThreadId.make("a") }),
+    );
     yield* home.disable;
-    yield* home.enable({ modelSelection });
+    homeThreads.set(old, "deleted");
+    const { threadId: next } = yield* home.enable({ modelSelection });
+    expect(next).not.toBe(old);
+    expect(launched).toHaveLength(2);
+    expect((yield* home.updateWatches(next, (current) => current)).watches).toEqual([]);
     const error = yield* home
       .updateWatches(old, (current) => ({ ...current, watchAll: true }))
       .pipe(Effect.flip);
@@ -315,15 +410,19 @@ it.effect("turning Home off holds the old Home's queue, then stops its run", () 
     const home = yield* HomeService.HomeService;
     const { threadId: idle } = yield* home.enable({ modelSelection });
     yield* home.disable;
-    expect(dispatched).toMatchObject([{ type: "queue.hold", threadId: idle }]);
+    expect(dispatched).toMatchObject([
+      { type: "queue.hold", threadId: idle },
+      { type: "thread.archive", threadId: idle },
+    ]);
 
-    dispatched.length = 0;
     const { threadId: busy } = yield* home.enable({ modelSelection });
     running.add(busy);
+    dispatched.length = 0;
     yield* home.disable;
     expect(dispatched).toMatchObject([
       { type: "queue.hold", threadId: busy },
       { type: "run.interrupt", threadId: busy },
+      { type: "thread.archive", threadId: busy },
     ]);
     // Each command needs its own id; a reused id would replay the hold's receipt.
     expect(dispatched[0]?.commandId).not.toBe(dispatched[1]?.commandId);
@@ -382,9 +481,8 @@ it.effect("Home's live thread follows Home being turned off and on", () => {
     const { threadId: first } = yield* home.enable({ modelSelection });
     expect(yield* home.liveThreadId).toBe(first);
     yield* home.disable;
-    const { threadId: second } = yield* home.enable({ modelSelection });
-    expect(second).not.toBe(first);
-    expect(yield* home.liveThreadId).toBe(second);
+    yield* home.enable({ modelSelection });
+    expect(yield* home.liveThreadId).toBe(first);
   }).pipe(Effect.provide(layer));
 });
 
@@ -451,7 +549,7 @@ it.effect("read returns Home's newest messages whole and the threads it launched
 
 it("keeps one watch when a thread is watched again", () => {
   const watched = HomeService.addWatch(
-    { threadId: null, watchAll: false, watches: [] },
+    { threadId: null, parkedThreadId: null, watchAll: false, watches: [] },
     { environmentId, threadId: ThreadId.make("t") },
   );
   expect(HomeService.addWatch(watched, { environmentId, threadId: ThreadId.make("t") })).toBe(

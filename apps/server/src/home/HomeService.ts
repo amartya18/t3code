@@ -15,14 +15,18 @@ import {
   type HomeThreadResult,
   HomeUnavailableError,
   isHomeLaunchedThreadId,
+  isHomeThreadId,
   type HomeWatch,
   type HomeWatchEvent,
   type HomeWatchReport,
   MessageId,
   type ModelSelection,
   type OrchestrationV2Notification,
+  type OrchestrationV2ServerCommand,
+  type OrchestrationV2ThreadShell,
   ThreadId,
 } from "@t3tools/contracts";
+import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -50,11 +54,13 @@ export class HomeService extends Context.Service<
     readonly enable: (
       input: HomeEnableInput,
     ) => Effect.Effect<HomeThreadResult, HomeUnavailableError>;
-    /** Turns Home off. Its thread stays in history; its watches are dropped. */
+    /** Turns Home off. Its thread is archived, and it and its watches return when Home does. */
     readonly disable: Effect.Effect<void, HomeUnavailableError>;
     /** Stops Home's run and starts a new provider session in the same thread. */
     readonly startFresh: Effect.Effect<HomeThreadResult, HomeUnavailableError>;
     readonly isHome: (threadId: ThreadId) => Effect.Effect<boolean>;
+    /** Archives every Home thread here but the live one, or only the parked one while Home is off. */
+    readonly archiveFormerHomes: Effect.Effect<void, HomeUnavailableError>;
     /** Home's live thread here. Fails while Home is off. */
     readonly liveThreadId: Effect.Effect<ThreadId, HomeUnavailableError>;
     /**
@@ -204,26 +210,80 @@ const make = Effect.gen(function* () {
 
   const withLock = <A, E>(effect: Effect.Effect<A, E>) => lock.withPermits(1)(effect);
 
+  const commandId = (kind: string) =>
+    crypto.uuidV4().pipe(
+      Effect.orDie,
+      Effect.map((id) => CommandId.make(`${kind}:${id}`)),
+    );
+
   /** Best-effort stop of a former Home after its grant moved. */
   const stopFormerHome = Effect.fn("HomeService.stopFormerHome")(function* (threadId: ThreadId) {
     if ((yield* liveShell(threadId)) === null) return;
-    const commandId = crypto.uuidV4().pipe(
-      Effect.orDie,
-      Effect.map((id) => CommandId.make(`home-stop:${id}`)),
-    );
     yield* threads
-      .dispatch({ type: "queue.hold", commandId: yield* commandId, threadId })
+      .dispatch({ type: "queue.hold", commandId: yield* commandId("home-stop"), threadId })
       .pipe(Effect.ignore);
     const shell = yield* liveShell(threadId);
     if (shell === null || shell.activeRunId === null) return;
     yield* threads.dispatch({
       type: "run.interrupt",
-      commandId: yield* commandId,
+      commandId: yield* commandId("home-stop"),
       threadId,
       runId: shell.activeRunId,
       reason: "Home was turned off.",
     });
   });
+
+  const resumeHome = Effect.fn("HomeService.resumeHome")(function* (
+    shell: OrchestrationV2ThreadShell,
+    modelSelection: ModelSelection,
+  ) {
+    const threadId = shell.id;
+    yield* folders.ensureHomeProject.pipe(Effect.mapError((error) => fail(error.message)));
+    const restore = (command: OrchestrationV2ServerCommand) =>
+      threads
+        .dispatch(command)
+        .pipe(Effect.mapError(() => fail("Home's earlier thread could not be restored.")));
+    if (shell.archivedAt !== null) {
+      yield* restore({
+        type: "thread.unarchive",
+        commandId: yield* commandId("home-on"),
+        threadId,
+      });
+    }
+    if (!modelSelectionsEqual(shell.modelSelection, modelSelection)) {
+      yield* restore({
+        type: "thread.model-selection.set",
+        commandId: yield* commandId("home-on"),
+        threadId,
+        modelSelection,
+      });
+    }
+    yield* threads
+      .dispatch({ type: "queue.resume", commandId: yield* commandId("home-on"), threadId })
+      .pipe(Effect.ignore);
+    return threadId;
+  });
+
+  const archiveHomes = Effect.fn("HomeService.archiveHomes")(
+    function* (shouldArchive: (threadId: ThreadId) => boolean) {
+      const listed = yield* threads.listProjectThreads({ includeSubagents: true });
+      const archive = (threadId: ThreadId) =>
+        commandId("home-off").pipe(
+          Effect.flatMap((id) =>
+            threads.dispatch({ type: "thread.archive", commandId: id, threadId }),
+          ),
+          Effect.catchCause((cause) =>
+            Effect.logWarning("A former Home thread could not be archived", cause),
+          ),
+        );
+      yield* Effect.forEach(
+        listed.filter((thread) => isHomeThreadId(thread.id) && shouldArchive(thread.id)),
+        (thread) => archive(thread.id),
+        { discard: true },
+      );
+    },
+    Effect.catchCause((cause) => Effect.logWarning("Home's threads could not be listed", cause)),
+  );
 
   // Home's instructions follow the app version, so an update reaches the
   // current Home in its next provider session, not only after a fresh start.
@@ -289,8 +349,24 @@ const make = Effect.gen(function* () {
           if (home.threadId !== null && (yield* liveShell(home.threadId)) !== null) {
             return { threadId: home.threadId };
           }
-          const threadId = yield* launchHome(input.modelSelection);
-          yield* writeHome({ ...home, threadId });
+          const remembered = home.threadId ?? home.parkedThreadId;
+          const earlier =
+            remembered === null
+              ? null
+              : yield* threads.getThreadShell(remembered).pipe(
+                  Effect.map((shell) => (shell?.deletedAt === null ? shell : null)),
+                  Effect.mapError(() => fail("Home's earlier thread could not be read.")),
+                );
+          const threadId =
+            earlier === null
+              ? yield* launchHome(input.modelSelection)
+              : yield* resumeHome(earlier, input.modelSelection);
+          yield* writeHome(
+            earlier === null
+              ? { ...DEFAULT_HOME_SETTINGS, threadId }
+              : { ...home, threadId, parkedThreadId: null },
+          );
+          yield* archiveHomes((id) => id !== threadId);
           return { threadId };
         }),
       ),
@@ -298,9 +374,11 @@ const make = Effect.gen(function* () {
 
     disable: withLock(
       Effect.gen(function* () {
-        const { threadId } = yield* readHome;
-        yield* writeHome(DEFAULT_HOME_SETTINGS);
-        if (threadId !== null) yield* stopFormerHome(threadId).pipe(Effect.ignore);
+        const home = yield* readHome;
+        const parkedThreadId = home.threadId ?? home.parkedThreadId;
+        yield* writeHome({ ...home, threadId: null, parkedThreadId });
+        if (parkedThreadId !== null) yield* stopFormerHome(parkedThreadId).pipe(Effect.ignore);
+        yield* archiveHomes(() => true);
       }),
     ),
 
@@ -345,6 +423,14 @@ const make = Effect.gen(function* () {
       readHome.pipe(
         Effect.map((home) => home.threadId === threadId),
         Effect.orElseSucceed(() => false),
+      ),
+    ),
+
+    archiveFormerHomes: withLock(
+      readHome.pipe(
+        Effect.flatMap(({ threadId, parkedThreadId }) =>
+          archiveHomes((id) => (threadId === null ? id === parkedThreadId : id !== threadId)),
+        ),
       ),
     ),
 

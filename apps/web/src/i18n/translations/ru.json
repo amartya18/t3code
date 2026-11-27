@@ -8788,7 +8788,7 @@
   "0a208b20306798b7": "The environment that hosts Home. Keep it running so Home stays reachable.",
   "7f15dd3afd2bd8fc": "Модель",
   "9e78153b5debccdd": "Home always runs in full access. Choose a model you trust with that.",
-  "1e653d4fa94e2285": "{environment}. Moving starts a new Home there and copies its notes and instructions.",
+  "91c0a76f79ca5bbd": "{environment}. Moving copies its notes and instructions, and Home resumes its own thread on an environment it ran on before.",
   "a90a441fd0e08de7": "This environment",
   "5f731e793dfb428b": "{environment} is offline. Home can move once it is back.",
   "b91bcb760059bbef": "Its environment",
@@ -8799,8 +8799,8 @@
   "e850dea4990d6d3c": "AGENTS.md in the Home folder on {environment}: {path}",
   "3edae943316cafac": "its environment",
   "b949b82e792e349d": "Turn off",
-  "25730883f37694f2": "Home stops. Its threads stay.",
-  "bbb51b48db0dc90f": "Home is on in more than one place. Keep one; the others turn off and their threads stay.",
+  "efc465cfd999b5ef": "Home stops and its thread is archived. Turning Home on again brings it back.",
+  "9f8209f62e968bb6": "Home is on in more than one place. Keep one; the others turn off and their threads are archived.",
   "799c7a33ce52f015": "Turn on Home",
   "3a317b8be2aa8adb": "Open Home",
   "599ad83173ef7607": "Move",
@@ -8815,27 +8815,20 @@
     },
     "?"
   ],
-  "8c0277c63405ca31": [
+  "109454a8178282b0": [
     "Home on ",
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
     },
-    " stops, and a new Home thread starts on",
-    " ",
+    " stops and its thread is archived until Home returns there. On ",
     {
       "i": 2,
       "k": "_gt_value_2",
       "v": "v"
     },
-    ". Its notes and instructions are copied over. The old thread stays in ",
-    {
-      "i": 3,
-      "k": "_gt_value_3",
-      "v": "v"
-    },
-    "'s history."
+    ", Home resumes its earlier thread if it ran there before, or starts a new one. Its notes and instructions are copied over."
   ],
   "8677761d1ec18ce5": [
     "Model on ",
