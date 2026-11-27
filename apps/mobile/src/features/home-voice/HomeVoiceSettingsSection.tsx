@@ -2,48 +2,23 @@ import { useAtomValue } from "@effect/atom-react";
 import type { MenuAction } from "@react-native-menu/menu";
 import { userHomeThreadRef } from "@t3tools/client-runtime/state/home";
 import { useGT } from "gt-react-native";
-import { useEffect, useState, type ComponentProps } from "react";
+import { useEffect, useState } from "react";
 import { Pressable } from "react-native";
 
 import { voiceEngine } from "../../../modules/t3-voice-mode";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import * as Dialog from "../../components/ui/Dialog";
 import { ListRowLayout } from "../../components/ui/ListRowLayout";
-import { Menu } from "../../components/ui/Menu";
 import { formatBytes } from "../../lib/formatBytes";
-import { groupByProvider } from "../../lib/modelOptions";
+import { groupByProvider, type ModelOption } from "../../lib/modelOptions";
 import { useProjects } from "../../state/entities";
 import { userHomeAtom } from "../../state/home";
 import { SettingsSection } from "../settings/components/SettingsSection";
 import { voiceEngineConfig } from "./voiceEngine";
-import { useVoiceModelOptions, withLowEffort } from "./voiceModels";
+import { splitOlderModels, useVoiceModelOptions, withLowEffort } from "./voiceModels";
+import { VoiceMenuRow, VoiceReasoningRow } from "./VoiceMenuRow";
 import { voiceSessionAtom } from "./voiceSession";
 import { saveVoiceSettings, useVoiceModeSettings } from "./voiceSettings";
-
-function MenuRow(props: {
-  readonly icon: ComponentProps<typeof ListRowLayout>["icon"];
-  readonly label: string;
-  readonly value: string;
-  readonly actions: MenuAction[];
-  readonly onSelect: (id: string) => void;
-}) {
-  const row = <ListRowLayout icon={props.icon} label={props.label} detail={props.value} />;
-  if (props.actions.length === 0) return row;
-  return (
-    <Menu
-      actions={props.actions}
-      onPressAction={({ nativeEvent }) => props.onSelect(nativeEvent.event)}
-    >
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`${props.label}, ${props.value}`}
-        className="active:opacity-70"
-      >
-        {row}
-      </Pressable>
-    </Menu>
-  );
-}
 
 /** Fork: the project and model a voice session starts with, on this device. */
 export function HomeVoiceSettingsSection() {
@@ -60,7 +35,7 @@ export function HomeVoiceSettingsSection() {
       title={gt("Voice mode")}
       footer={gt("Starts from the voice button in Home's chat. Saved on this device.")}
     >
-      <MenuRow
+      <VoiceMenuRow
         icon="folder"
         label={gt("Project")}
         value={project?.title ?? gt("None found")}
@@ -76,24 +51,42 @@ export function HomeVoiceSettingsSection() {
           }
         }}
       />
-      <MenuRow
+      <VoiceMenuRow
         icon="cube"
         label={gt("Model")}
         value={model?.label ?? settings?.modelSelection.model ?? gt("Default")}
-        actions={groupByProvider(modelOptions).map((group) => ({
-          id: group.providerKey,
-          title: group.providerLabel,
-          subactions: group.models.map((option) => ({
+        actions={groupByProvider(modelOptions).map((group) => {
+          const { current, older } = splitOlderModels(group.models, model?.key);
+          const modelAction = (option: ModelOption): MenuAction => ({
             id: option.key,
             title: option.label,
             state: option.key === model?.key ? "on" : "off",
-          })),
-        }))}
+          });
+          return {
+            id: group.providerKey,
+            title: group.providerLabel,
+            subactions: [
+              ...current.map(modelAction),
+              ...(older.length === 0
+                ? []
+                : [
+                    {
+                      id: `${group.providerKey}:older`,
+                      title: gt("Older models"),
+                      subactions: older.map(modelAction),
+                    },
+                  ]),
+            ],
+          };
+        })}
         onSelect={(key) => {
           const picked = modelOptions.find((option) => option.key === key);
           if (picked) void saveVoiceSettings({ modelSelection: withLowEffort(picked) });
         }}
       />
+      {settings === null ? null : (
+        <VoiceReasoningRow model={model} selection={settings.modelSelection} />
+      )}
       {voiceEngine === null ? null : <VoiceDownloadRow voiceId={settings?.voiceId ?? "af_heart"} />}
     </SettingsSection>
   );

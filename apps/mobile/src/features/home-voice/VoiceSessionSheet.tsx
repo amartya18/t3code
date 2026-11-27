@@ -7,13 +7,15 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppBar } from "../../components/ui/AppBar";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Chip } from "../../components/ui/Chip";
+import { ListActionRow } from "../../components/ui/ListActionRow";
 import { ListChoiceRow } from "../../components/ui/ListChoiceRow";
 import { ListSection } from "../../components/ui/ListSection";
 import { ListToggleRow } from "../../components/ui/ListToggleRow";
 import { SheetHeader } from "../../components/ui/SheetHeader";
 import { SliderRow } from "../../components/ui/SliderRow";
 import { groupByProvider } from "../../lib/modelOptions";
-import { useVoiceModelOptions, withLowEffort } from "./voiceModels";
+import { splitOlderModels, useVoiceModelOptions, withLowEffort } from "./voiceModels";
+import { VoiceReasoningRow } from "./VoiceMenuRow";
 import {
   KOKORO_VOICES,
   PAUSE_MAX_MS,
@@ -36,14 +38,17 @@ export function VoiceSessionSheet() {
   const insets = useSafeAreaInsets();
   const settings = useVoiceModeSettings();
   const [draggedPause, setDraggedPause] = useState<number | null>(null);
+  const [showOlder, setShowOlder] = useState(false);
   const { options, selected } = useVoiceModelOptions(settings, settings?.environmentId ?? null);
   const close = () => navigation.goBack();
   const title = gt("Session settings");
-  const models =
+  const { current, older } = splitOlderModels(
     groupByProvider(options).find((group) =>
       group.models.some((option) => option.key === selected?.key),
-    )?.models ?? options;
-  const effort = settings?.modelSelection.options?.find((option) => option.id === "effort")?.value;
+    )?.models ?? options,
+    selected?.key,
+  );
+  const models = showOlder ? [...current, ...older] : current;
 
   const content =
     settings === null ? null : (
@@ -91,16 +96,21 @@ export function VoiceSessionSheet() {
           {models.map((option, index) => (
             <ListChoiceRow
               key={option.key}
-              label={
-                option.key === selected?.key && typeof effort === "string"
-                  ? `${option.label} · ${effort}`
-                  : option.label
-              }
+              label={option.label}
               selected={option.key === selected?.key}
               separated={index > 0}
               onPress={() => void saveVoiceSettings({ modelSelection: withLowEffort(option) })}
             />
           ))}
+          {older.length === 0 ? null : (
+            <View className="border-t border-border-subtle">
+              <ListActionRow
+                label={showOlder ? gt("Hide older models") : gt("Show older models")}
+                onPress={() => setShowOlder(!showOlder)}
+              />
+            </View>
+          )}
+          <VoiceReasoningRow model={selected} selection={settings.modelSelection} separated />
           <View className="border-t border-border-subtle">
             <ListToggleRow
               icon={{ ios: "bolt", android: "bolt" }}
