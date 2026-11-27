@@ -103,7 +103,6 @@ export interface VoiceSpeechState {
   readonly queue: SpeechQueue;
   readonly held: HeldSpeech | null;
   readonly volume: number;
-  /** The mic's transcript while the agent speaks: echo until Amar interrupts. */
   readonly overheard: string;
   readonly own: OwnLine | null;
   readonly replies: ReadonlyArray<AgentReply>;
@@ -119,7 +118,6 @@ export interface VoiceSpeechState {
 export interface VoiceSpeechConfig {
   readonly endOfTurn: EndOfTurnConfig;
   readonly bargeIn: BargeInConfig;
-  /** Without echo cancellation the mic hears the voice itself, so only a tap interrupts. */
   readonly voiceBargeIn: boolean;
 }
 
@@ -155,7 +153,6 @@ export type VoiceSpeechEvent =
       readonly atMs: number;
     }
   | { readonly type: "tick"; readonly atMs: number }
-  | { readonly type: "tap"; readonly atMs: number }
   | { readonly type: "holdStart"; readonly atMs: number }
   | { readonly type: "holdEnd"; readonly atMs: number }
   | { readonly type: "muted"; readonly muted: boolean; readonly atMs: number }
@@ -375,13 +372,6 @@ function stepSpeech(
       return onError(state, event);
     case "muted":
       return onMuted(state, event, config);
-    case "tap":
-      return isSpeaking(state.queue)
-        ? then(interrupt(state, config.bargeIn.fadeMs, false), (next) => ({
-            state: next,
-            effects: [{ type: "log", line: "[voice] tap stopped the voice" }],
-          }))
-        : stepTurn(state, event, config);
     case "holdStart":
     case "holdEnd":
       return stepTurn(state, event, config);

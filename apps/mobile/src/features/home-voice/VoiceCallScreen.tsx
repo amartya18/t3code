@@ -25,7 +25,6 @@ import { useVoiceConnection, useVoiceThread } from "./useVoiceCall";
 import {
   holdVoiceStage,
   retryVoiceEngine,
-  tapVoiceStage,
   voiceSpeechAtom,
   voiceTranscriptSpeechAtom,
   type VoiceSpeechView,
@@ -176,18 +175,15 @@ function HiddenThreadNotice(props: {
   );
 }
 
-/** Everything above the controls: a tap sends the pause now or stops the voice, a press and hold waits. */
 function VoiceStage(props: { readonly children: ReactNode }) {
   const gt = useGT();
   const holding = useRef(false);
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={gt("Send now or interrupt")}
-      accessibilityHint={gt("Press and hold to keep waiting")}
+      accessibilityLabel={gt("Press and hold to keep waiting")}
       className="flex-1"
       delayLongPress={350}
-      onPress={tapVoiceStage}
       onLongPress={() => {
         holding.current = true;
         void Haptics.selectionAsync();

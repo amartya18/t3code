@@ -169,11 +169,11 @@ it("in development, logs a blocked JS thread with the voice step just before it"
       logs.push(line);
     },
   );
-  driver.dispatch({ type: "tap", atMs: clock });
+  driver.dispatch({ type: "holdStart", atMs: clock });
 
   clock = 1_600;
   vi.advanceTimersByTime(100);
-  expect(logs).toContain("+1.600s [voice] js blocked 1500ms, 100ms after tap");
+  expect(logs).toContain("+1.600s [voice] js blocked 1500ms, 100ms after holdStart");
 
   driver.dispose();
   vi.useRealTimers();

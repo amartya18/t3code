@@ -69,11 +69,6 @@ let live: VoiceSpeechDriver | null = null;
 /** Outlives a remount of the runner, so a restarted engine never repeats a reply. */
 let remembered: { readonly key: string; readonly state: VoiceSpeechState } | null = null;
 
-/** The empty middle of the call: sends the pause now, or stops the voice. */
-export function tapVoiceStage() {
-  live?.dispatch({ type: "tap", atMs: Date.now() });
-}
-
 export function holdVoiceStage(holding: boolean) {
   live?.dispatch({ type: holding ? "holdStart" : "holdEnd", atMs: Date.now() });
 }

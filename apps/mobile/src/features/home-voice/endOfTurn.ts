@@ -16,7 +16,7 @@ export const DEFAULT_END_OF_TURN_CONFIG: EndOfTurnConfig = {
   vadEndLagMs: 0,
 };
 
-export type FinalizeReason = "pause" | "ceiling" | "tap" | "early";
+export type FinalizeReason = "pause" | "ceiling" | "early";
 
 interface Utterance {
   readonly transcript: string;
@@ -41,7 +41,6 @@ export type EndOfTurnEvent =
   | { readonly type: "partial"; readonly text: string; readonly atMs: number }
   | { readonly type: "eou"; readonly text: string; readonly atMs: number }
   | { readonly type: "tick"; readonly atMs: number }
-  | { readonly type: "tap"; readonly atMs: number }
   | { readonly type: "holdStart"; readonly atMs: number }
   | { readonly type: "holdEnd"; readonly atMs: number }
   | { readonly type: "muted"; readonly muted: boolean; readonly atMs: number };
@@ -111,8 +110,6 @@ export function stepEndOfTurn(
         case "partial":
         case "eou":
           return stay({ ...state, ...heard(state, event) });
-        case "tap":
-          return finalize(state, "tap");
         case "holdStart":
         case "holdEnd":
           return stay({ ...state, touching: event.type === "holdStart" });
@@ -151,8 +148,6 @@ export function stepEndOfTurn(
             config,
           );
         }
-        case "tap":
-          return finalize(state, "tap");
         case "holdStart":
           return stay({ ...state, touching: true });
         case "holdEnd":

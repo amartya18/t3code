@@ -329,15 +329,6 @@ describe("voice speech", () => {
     expect(voice.played).toEqual(["Okay, never mind."]);
   });
 
-  it("sends at once on a tap in the pause", () => {
-    const voice = call();
-    voice.say("merge it");
-    voice.stopTalking();
-    voice.wait(500);
-    voice.send({ type: "tap" });
-    expect(voice.sent).toEqual(["merge it"]);
-  });
-
   it("speaks a streaming reply chunk by chunk, as each chunk completes", () => {
     const voice = call();
     voice.reply("r1", ONE, true);
@@ -399,22 +390,6 @@ describe("voice speech", () => {
     expect(voice.sent).toEqual([]);
   });
 
-  it("without echo cancellation, only a tap stops the voice", () => {
-    const voice = call({ config: { ...TIMER_ONLY, voiceBargeIn: false } });
-    voice.reply("r1", "One. Two. Three.");
-    voice.send({ type: "vad", speaking: true });
-    voice.engine.transcript = "one two";
-    voice.send({ type: "partial", text: "one two" });
-    voice.wait(2_000);
-    expect(voice.engine.volume).toBe(1);
-    expect(voice.engine.stops).toEqual([]);
-
-    voice.send({ type: "tap" });
-    expect(voice.engine.stops).toHaveLength(1);
-    voice.playAll();
-    expect(voice.sent).toEqual([]);
-  });
-
   it("drops speech whose playback never reports back, and listens again", () => {
     const voice = call({ config: { ...TIMER_ONLY, voiceBargeIn: false } });
     voice.reply("r1", "This sentence never plays.");
@@ -427,17 +402,6 @@ describe("voice speech", () => {
     voice.stopTalking();
     voice.wait(3_500);
     expect(voice.sent).toEqual(["are you there"]);
-  });
-
-  it("without echo cancellation, a tap stops the voice and drops what the mic overheard", () => {
-    const voice = call({ config: { ...TIMER_ONLY, voiceBargeIn: false } });
-    voice.reply("r1", "One. Two. Three.");
-    voice.send({ type: "partial", text: "one" });
-    voice.send({ type: "tap" });
-    expect(voice.engine.stops).toHaveLength(1);
-    expect(voice.engine.discarded).toBe(1);
-    voice.playAll();
-    expect(voice.played).toEqual([]);
   });
 
   it("drops the words in progress on mute and hears nothing until unmuted", () => {

@@ -171,28 +171,12 @@ describe("stepEndOfTurn", () => {
     expect(voice.finalized).toEqual([{ reason: "ceiling", atMs: 10_000 }]);
   });
 
-  it("sends at once on a tap, while speaking or paused", () => {
-    const speaking = session();
-    speaking.say("merge it");
-    speaking.send({ type: "tap" });
-    expect(speaking.finalized).toEqual([{ reason: "tap", atMs: 0 }]);
-
-    const paused = session();
-    paused.say("merge it");
-    paused.stopTalking();
-    paused.send({ type: "holdStart" });
-    paused.wait(1_000);
-    paused.send({ type: "tap" });
-    expect(paused.finalized).toEqual([{ reason: "tap", atMs: 1_000 }]);
-  });
-
   it("never sends an empty transcript", () => {
     const voice = session();
     voice.send({ type: "vad", speaking: true });
     voice.send({ type: "partial", text: "  " });
     voice.stopTalking();
     voice.wait(3_000);
-    voice.send({ type: "tap" });
     expect(voice.finalized).toEqual([]);
     expect(voice.state()).toEqual({ kind: "idle" });
   });
