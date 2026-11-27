@@ -59,7 +59,7 @@ export class HomeService extends Context.Service<
     /** Stops Home's run and starts a new provider session in the same thread. */
     readonly startFresh: Effect.Effect<HomeThreadResult, HomeUnavailableError>;
     readonly isHome: (threadId: ThreadId) => Effect.Effect<boolean>;
-    /** Archives every Home thread here but the live one, however it came back. */
+    /** Archives every Home thread here but the live one, or only the parked one while Home is off. */
     readonly archiveFormerHomes: Effect.Effect<void, HomeUnavailableError>;
     /** Home's live thread here. Fails while Home is off. */
     readonly liveThreadId: Effect.Effect<ThreadId, HomeUnavailableError>;
@@ -238,6 +238,7 @@ const make = Effect.gen(function* () {
     modelSelection: ModelSelection,
   ) {
     const threadId = shell.id;
+    yield* folders.ensureHomeProject.pipe(Effect.mapError((error) => fail(error.message)));
     const restore = (command: OrchestrationV2ServerCommand) =>
       threads
         .dispatch(command)
@@ -263,8 +264,8 @@ const make = Effect.gen(function* () {
     return threadId;
   });
 
-  const archiveHomesExcept = Effect.fn("HomeService.archiveHomesExcept")(
-    function* (keep: ThreadId | null) {
+  const archiveHomes = Effect.fn("HomeService.archiveHomes")(
+    function* (shouldArchive: (threadId: ThreadId) => boolean) {
       const listed = yield* threads.listProjectThreads({ includeSubagents: true });
       const archive = (threadId: ThreadId) =>
         commandId("home-off").pipe(
@@ -276,7 +277,7 @@ const make = Effect.gen(function* () {
           ),
         );
       yield* Effect.forEach(
-        listed.filter((thread) => isHomeThreadId(thread.id) && thread.id !== keep),
+        listed.filter((thread) => isHomeThreadId(thread.id) && shouldArchive(thread.id)),
         (thread) => archive(thread.id),
         { discard: true },
       );
@@ -365,7 +366,7 @@ const make = Effect.gen(function* () {
               ? { ...DEFAULT_HOME_SETTINGS, threadId }
               : { ...home, threadId, parkedThreadId: null },
           );
-          yield* archiveHomesExcept(threadId);
+          yield* archiveHomes((id) => id !== threadId);
           return { threadId };
         }),
       ),
@@ -377,7 +378,7 @@ const make = Effect.gen(function* () {
         const parkedThreadId = home.threadId ?? home.parkedThreadId;
         yield* writeHome({ ...home, threadId: null, parkedThreadId });
         if (parkedThreadId !== null) yield* stopFormerHome(parkedThreadId).pipe(Effect.ignore);
-        yield* archiveHomesExcept(null);
+        yield* archiveHomes(() => true);
       }),
     ),
 
@@ -426,7 +427,11 @@ const make = Effect.gen(function* () {
     ),
 
     archiveFormerHomes: withLock(
-      readHome.pipe(Effect.flatMap((home) => archiveHomesExcept(home.threadId))),
+      readHome.pipe(
+        Effect.flatMap(({ threadId, parkedThreadId }) =>
+          archiveHomes((id) => (threadId === null ? id === parkedThreadId : id !== threadId)),
+        ),
+      ),
     ),
 
     liveThreadId: Effect.gen(function* () {

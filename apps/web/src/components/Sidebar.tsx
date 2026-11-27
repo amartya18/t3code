@@ -1335,8 +1335,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const { handleNewThread } = newThreadContext;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const userHome = useAtomValue(userHomeAtom);
-  // The current Home thread gets its own fixed row, on whichever environment
-  // hosts it; older Home threads stay in the normal lists.
   const homeThreadRef = userHomeThreadRef(userHome);
   const clearSelection = useThreadSelectionStore((s) => s.clearSelection);
   const toggleThreadSelection = useThreadSelectionStore((s) => s.toggleThread);
