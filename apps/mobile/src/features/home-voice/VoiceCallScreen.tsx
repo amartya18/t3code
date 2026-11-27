@@ -32,7 +32,6 @@ import {
   VoiceClockTitle,
 } from "./VoiceCallControls";
 import { VOICE_ENGINE_SUPPORT } from "./voiceEngine";
-import { VoiceRenderProfiler } from "./voiceRenderProfiler";
 import {
   sendVoiceMessage,
   VOICE_THREAD_TAG,
@@ -51,11 +50,7 @@ export function VoiceCallScreen() {
     if (session === null && navigation.isFocused() && navigation.canGoBack()) navigation.goBack();
   }, [session, navigation]);
   if (session === null) return null;
-  return (
-    <VoiceRenderProfiler id="call">
-      <VoiceCall session={session} />
-    </VoiceRenderProfiler>
-  );
+  return <VoiceCall session={session} />;
 }
 
 function VoiceCall(props: { readonly session: VoiceSession }) {
