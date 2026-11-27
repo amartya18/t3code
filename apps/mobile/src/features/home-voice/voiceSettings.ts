@@ -14,7 +14,7 @@ import { writeFileAtomically } from "../../lib/atomic-file";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { useProjects } from "../../state/entities";
 import { userHomeAtom } from "../../state/home";
-import { DEFAULT_VOICE_TUNING, type VoiceTuning } from "./voiceEngine";
+import { voiceTuning, type VoiceTuning } from "./voiceEngine";
 
 export const KOKORO_VOICES = ["af_heart", "am_michael", "bf_emma"] as const;
 export type KokoroVoiceId = (typeof KOKORO_VOICES)[number];
@@ -105,10 +105,6 @@ export function useVoiceModeSettings(): VoiceModeSettings | null {
         modelSelection: stored.modelSelection ?? DEFAULT_VOICE_MODEL,
         voiceId: stored.voiceId ?? "af_heart",
         thinking: stored.thinking ?? false,
-        tuning: {
-          minSpeechMs: stored.minSpeechMs ?? DEFAULT_VOICE_TUNING.minSpeechMs,
-          minSilenceMs: stored.minSilenceMs ?? DEFAULT_VOICE_TUNING.minSilenceMs,
-          turnWaitMs: stored.turnWaitMs ?? DEFAULT_VOICE_TUNING.turnWaitMs,
-        },
+        tuning: voiceTuning(stored),
       };
 }

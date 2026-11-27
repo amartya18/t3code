@@ -31,10 +31,23 @@ export const DEFAULT_VOICE_TUNING: VoiceTuning = {
 };
 
 export const VOICE_TUNING_RANGE: Record<keyof VoiceTuning, { min: number; max: number }> = {
-  minSpeechMs: { min: 100, max: 1_000 },
+  minSpeechMs: { min: 100, max: 500 },
   minSilenceMs: { min: 200, max: 1_500 },
   turnWaitMs: { min: 1_500, max: 4_000 },
 };
+
+/** Stored tuning held inside the sliders' range, so an old out-of-range value can't keep the detector deaf. */
+export function voiceTuning(stored: Partial<VoiceTuning>): VoiceTuning {
+  const clamped = (key: keyof VoiceTuning) => {
+    const { min, max } = VOICE_TUNING_RANGE[key];
+    return Math.min(max, Math.max(min, stored[key] ?? DEFAULT_VOICE_TUNING[key]));
+  };
+  return {
+    minSpeechMs: clamped("minSpeechMs"),
+    minSilenceMs: clamped("minSilenceMs"),
+    turnWaitMs: clamped("turnWaitMs"),
+  };
+}
 
 /** Tuning for the native engine; it holds no policy, so all of this ships over the air. */
 export function voiceEngineConfig(voiceId: string, tuning: VoiceTuning): VoiceEngineConfig {
