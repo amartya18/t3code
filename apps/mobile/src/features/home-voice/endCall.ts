@@ -27,17 +27,22 @@ const FILLERS = phrases(
     "then, now",
 );
 
-/**
- * Whether Amar's line only says goodbye: every word belongs to a closing or to filler around one.
- * "Bye, wait, one more thing" has words that do neither, so it keeps the call going.
- */
+const ASKS_TO_END =
+  /\b(?:close|end|finish|stop|hang up|cut|drop)\b(?: \w+){0,2} (?:call|conversation|session)\b|\b(?:close|end) (?:it|this)$|\bhang up\b/;
+const KEEPS_GOING =
+  /\b(?:wait|actually|one more|also|but|hold on|hang on|before|dont|do not|not yet)\b/;
+
+/** Whether Amar's line ends the call: an explicit ask to end it, or nothing but closings and filler. */
 export function isClosing(line: string): boolean {
-  if (line.includes("?")) return false;
   const words = line
     .toLowerCase()
     .replace(/['’‘]/g, "")
     .split(/[^a-z]+/)
     .filter((word) => word !== "");
+  const text = words.join(" ");
+  if (KEEPS_GOING.test(text)) return false;
+  if (ASKS_TO_END.test(text)) return true;
+  if (line.includes("?")) return false;
   let closed = false;
   let at = 0;
   while (at < words.length) {
