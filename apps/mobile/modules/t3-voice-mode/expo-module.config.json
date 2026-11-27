@@ -2,6 +2,7 @@
   "platforms": ["apple"],
   "apple": {
     "modules": ["T3VoiceModeModule"],
+    "appDelegateSubscribers": ["VoiceSelfTestLauncher"],
     "podspecPath": "ios/T3VoiceMode.podspec"
   }
 }
