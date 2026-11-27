@@ -37,7 +37,7 @@ function fakeEngine() {
   return { engine, calls, finishStop: () => finishStop() };
 }
 
-function open(engine: VoiceEngine) {
+function open(engine: VoiceEngine, now: () => number = () => 0) {
   return createVoiceSpeechDriver({
     engine,
     inputs: {
@@ -52,7 +52,7 @@ function open(engine: VoiceEngine) {
       send: async () => {},
     },
     previous: null,
-    now: () => 0,
+    now,
     log: () => {},
     onChange: () => {},
   });
@@ -116,4 +116,32 @@ it("ducks the voice in steps rather than one jump, and restores it the same way"
 
   driver.dispose();
   vi.useRealTimers();
+});
+
+it("counts the pause from when the engine heard his voice end, not when JS got the event", async () => {
+  const listeners = new Map<string, (event: unknown) => void>();
+  let finalized = 0;
+  const engine: VoiceEngine = {
+    ...fakeEngine().engine,
+    stop: async () => {},
+    finalize: async () => {
+      finalized += 1;
+      return { text: "merge it" };
+    },
+    addListener: (name, listener) => {
+      listeners.set(name, listener as (event: unknown) => void);
+      return { remove: () => {} };
+    },
+  };
+  const driver = open(engine, () => 10_000);
+  await settle();
+  const { pauseMs } = DEFAULT_VOICE_SPEECH_CONFIG.endOfTurn;
+
+  listeners.get("vad")!({ speaking: true, probability: 1, atMs: 8_000 });
+  listeners.get("partial")!({ text: "merge it" });
+  listeners.get("vad")!({ speaking: false, probability: 0, atMs: 8_500 });
+  driver.dispatch({ type: "tick", atMs: 8_500 + pauseMs });
+  expect(finalized).toBe(1);
+
+  driver.dispose();
 });

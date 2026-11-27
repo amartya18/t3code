@@ -26,7 +26,11 @@ export type EndOfTurnState =
   | { readonly kind: "idle" }
   | { readonly kind: "muted" }
   | ({ readonly kind: "speaking" } & Utterance)
-  | ({ readonly kind: "paused"; readonly since: number } & Utterance)
+  | ({
+      readonly kind: "paused";
+      readonly since: number;
+      readonly voice: PauseVoice;
+    } & Utterance)
   | { readonly kind: "finalizing"; readonly reason: FinalizeReason };
 
 export type EndOfTurnEvent =
@@ -45,6 +49,17 @@ export interface EndOfTurnStep {
   readonly state: EndOfTurnState;
   readonly effects: ReadonlyArray<EndOfTurnEffect>;
 }
+
+/**
+ * A voice heard in the pause before its words are known. Parakeet decodes in 320 ms chunks, so the
+ * words for a voice arrive up to `WORDS_LAG_MS` after it ends; a voice without words is noise.
+ */
+type PauseVoice =
+  | { readonly kind: "quiet" }
+  | { readonly kind: "voiced" }
+  | { readonly kind: "ended"; readonly atMs: number };
+
+const WORDS_LAG_MS = 400;
 
 export const INITIAL_END_OF_TURN_STATE: EndOfTurnState = { kind: "idle" };
 
@@ -80,7 +95,11 @@ export function stepEndOfTurn(
         case "vad":
           return event.speaking
             ? stay(state)
-            : decide({ ...state, kind: "paused", since: event.atMs }, event.atMs, config);
+            : decide(
+                { ...state, kind: "paused", since: event.atMs, voice: { kind: "quiet" } },
+                event.atMs,
+                config,
+              );
         case "partial":
         case "eou":
           return stay({ ...state, ...heard(state, event) });
@@ -95,17 +114,30 @@ export function stepEndOfTurn(
     case "paused":
       switch (event.type) {
         case "vad":
-          return event.speaking
-            ? stay({
-                kind: "speaking",
-                transcript: state.transcript,
-                touching: state.touching,
-                eou: false,
-              })
+          if (event.speaking) return stay({ ...state, voice: { kind: "voiced" } });
+          return state.voice.kind === "voiced"
+            ? decide({ ...state, voice: { kind: "ended", atMs: event.atMs } }, event.atMs, config)
             : stay(state);
         case "partial":
-        case "eou":
-          return decide({ ...state, ...heard(state, event) }, event.atMs, config);
+        case "eou": {
+          const utterance = heard(state, event);
+          if (utterance.transcript === state.transcript || state.voice.kind === "quiet") {
+            return decide({ ...state, ...utterance }, event.atMs, config);
+          }
+          if (state.voice.kind === "voiced") {
+            return stay({
+              kind: "speaking",
+              transcript: utterance.transcript,
+              touching: state.touching,
+              eou: utterance.eou,
+            });
+          }
+          return decide(
+            { ...state, ...utterance, since: state.voice.atMs, voice: { kind: "quiet" } },
+            event.atMs,
+            config,
+          );
+        }
         case "tap":
           return finalize(state, "tap");
         case "holdStart":
@@ -151,7 +183,10 @@ function decide(
   config: EndOfTurnConfig,
 ): EndOfTurnStep {
   const silentMs = atMs - state.since;
-  if (isHeld(state)) {
+  const wordsMayFollow =
+    state.voice.kind === "voiced" ||
+    (state.voice.kind === "ended" && atMs - state.voice.atMs < WORDS_LAG_MS);
+  if (isHeld(state) || wordsMayFollow) {
     return silentMs >= config.ceilingMs ? finalize(state, "ceiling") : stay(state);
   }
   if (

@@ -154,7 +154,7 @@ export function createVoiceSpeechDriver(options: {
 
   const subscriptions = [
     engine.addListener("vad", (event) =>
-      dispatch({ type: "vad", speaking: event.speaking, atMs: now() }),
+      dispatch({ type: "vad", speaking: event.speaking, atMs: event.atMs }),
     ),
     engine.addListener("partial", (event) =>
       dispatch({ type: "partial", text: event.text, atMs: now() }),
