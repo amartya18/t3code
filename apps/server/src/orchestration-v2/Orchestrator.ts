@@ -227,6 +227,7 @@ import {
   ThreadForkServiceV2,
 } from "./ThreadForkService.ts";
 import { planThreadDeletion } from "./ThreadDeletion.ts";
+import { VoiceThreads } from "./VoiceThreads.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ServerSettings from "../serverSettings.ts";
 
@@ -1666,6 +1667,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const taskFolderStore = yield* TaskFolderStore.TaskFolderStore;
   const projectionStore = yield* ProjectionStoreV2;
   const effectOutbox = yield* EffectOutbox.EffectOutboxV2;
+  const voiceThreads = yield* VoiceThreads;
   const nextTurnItemOrdinal = (
     projection: Pick<OrchestrationV2ThreadProjection, "thread"> &
       Partial<Pick<OrchestrationV2ThreadProjection, "turnItems">>,
@@ -16847,6 +16849,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandThreadId: commandThreadId(command),
       });
     }
+    if (command.type === "thread.tag.set") voiceThreads.noteStoredEvents(committed.storedEvents);
     if (
       command.type === "queue.resume" ||
       command.type === "queued-run.start" ||

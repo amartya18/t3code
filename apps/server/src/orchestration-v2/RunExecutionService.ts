@@ -62,6 +62,7 @@ import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import { userFacingDatabaseErrorMessage } from "./UserFacingErrors.ts";
+import { VoiceThreads } from "./VoiceThreads.ts";
 
 export interface ProviderEventRoutingState {
   readonly ownedThreadIds: ReadonlySet<ThreadId>;
@@ -1298,7 +1299,13 @@ export const layer: Layer.Layer<
         // continuation. Unlike the root's, these must hold the stream past owner loss.
         const childSnapshotPendingWork = new Set<ProviderThreadId>();
         let rootTurnOwnershipChecked = false;
-        const assistantStreaming = makeAssistantStreamingFilter(responseStreamingMode);
+        const voiceThreads = yield* VoiceThreads;
+        voiceThreads.noteRunThread(input.appThread);
+        const assistantStreaming = makeAssistantStreamingFilter(
+          responseStreamingMode,
+          undefined,
+          voiceThreads.has,
+        );
         // Set when ingestion ends or finalization settles the run's open items, which a later
         // streaming snapshot must not reopen.
         let idleFlushClosed = false;

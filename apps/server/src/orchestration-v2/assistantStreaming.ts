@@ -115,6 +115,7 @@ const ASSISTANT_IDLE_FLUSH_MS = 800;
 
 type StreamedMessage = {
   readonly id: string;
+  readonly threadId: string;
   readonly text: string;
   readonly streaming: boolean;
 };
@@ -159,6 +160,7 @@ function withText(
 export function makeAssistantStreamingFilter(
   mode: ResponseStreamingMode,
   idleFlushMs = ASSISTANT_IDLE_FLUSH_MS,
+  isLiveThread: (threadId: string) => boolean = () => false,
 ) {
   const tracks = new Map<string, StreamTrack>();
   // Earliest deadline of any held snapshot, or earlier: a newer snapshot only pushes its own
@@ -183,7 +185,7 @@ export function makeAssistantStreamingFilter(
       const message = streamedMessage(event);
       if (!message) return event;
       const key = `${event.type}:${message.id}`;
-      if (!message.streaming) {
+      if (!message.streaming || isLiveThread(message.threadId)) {
         tracks.delete(key);
         return event;
       }

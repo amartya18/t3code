@@ -42,7 +42,7 @@ type Step =
   | { readonly dueAt: number | null };
 
 const createdAt = DateTime.makeUnsafe(0);
-const snapshot = (id: string, text: string, streaming: boolean) =>
+const snapshot = (id: string, text: string, streaming: boolean, threadId = "thread") =>
   ({
     type: "message.updated",
     driver: ProviderDriverKind.make("codex"),
@@ -50,7 +50,7 @@ const snapshot = (id: string, text: string, streaming: boolean) =>
       createdBy: "agent",
       creationSource: "provider",
       id: MessageId.make(id),
-      threadId: ThreadId.make("thread"),
+      threadId: ThreadId.make(threadId),
       runId: null,
       nodeId: null,
       role: "assistant",
@@ -222,4 +222,43 @@ it("scans each streamed line once while a long code fence is still open", () => 
   }
   text += "```\n";
   assert.equal(shown(filter.filter(snapshot("m", text, true), lineCount * 400)), text);
+});
+
+it("streams every snapshot of a voice thread while other threads keep paragraph deliveries", () => {
+  const filter = makeAssistantStreamingFilter("paragraph", 800, (threadId) => threadId === "voice");
+  const fixture = [
+    { at: 0, text: "Sure" },
+    { at: 50, text: "Sure, it is" },
+    { at: 100, text: "Sure, it is five.\n\nAnd" },
+    { at: 500, text: "Sure, it is five.\n\nAnd six.\n\nOr" },
+  ];
+  const deliveries = (threadId: string) =>
+    fixture.map(({ at, text }) =>
+      shown(filter.filter(snapshot(`m-${threadId}`, text, true, threadId), at)),
+    );
+  assert.deepEqual(deliveries("thread"), [
+    null,
+    null,
+    "Sure, it is five.\n\n",
+    "Sure, it is five.\n\nAnd six.\n\n",
+  ]);
+  assert.deepEqual(
+    deliveries("voice"),
+    fixture.map(({ text }) => text),
+  );
+  assert.deepEqual(filter.takeIdleFlushes(1_300).map(shown), [
+    "Sure, it is five.\n\nAnd six.\n\nOr",
+  ]);
+});
+
+it("streams a thread tagged voice after its first delta without replaying held text", () => {
+  const voiceThreads = new Set<string>();
+  const filter = makeAssistantStreamingFilter("paragraph", 800, (threadId) =>
+    voiceThreads.has(threadId),
+  );
+  assert.equal(shown(filter.filter(snapshot("m", "A\n\nB", true), 0)), "A\n\n");
+  voiceThreads.add("thread");
+  assert.equal(shown(filter.filter(snapshot("m", "A\n\nB c", true), 100)), "A\n\nB c");
+  assert.deepEqual(filter.takeIdleFlushes(5_000).map(shown), []);
+  assert.equal(shown(filter.filter(snapshot("m", "A\n\nB c d", true), 150)), "A\n\nB c d");
 });
