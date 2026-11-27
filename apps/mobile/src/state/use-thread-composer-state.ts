@@ -135,7 +135,7 @@ import {
 } from "./use-thread-detail";
 import { useThreadSelection } from "./use-thread-selection";
 import { enqueueThreadOutboxMessage } from "./thread-outbox";
-import { dispatchingQueuedMessageIdsAtom, useThreadOutboxMessages } from "./use-thread-outbox";
+import { dispatchingQueuedMessageIdsAtom, useQueuedThreadMessages } from "./use-thread-outbox";
 import { threadEnvironment } from "./threads";
 import { useAtomCommand } from "./use-atom-command";
 
@@ -238,7 +238,6 @@ export function useThreadComposerState(input: {
   const selectedThreadProjection = useSelectedThreadProjection();
   const selectedThreadVisibleTurnItems = useSelectedThreadVisibleTurnItems();
   const acknowledgedMessages = useAtomValue(acknowledgedThreadMessagesAtom);
-  const queuedMessagesByThreadKey = useThreadOutboxMessages();
   const dispatchingQueuedMessageIds = useAtomValue(dispatchingQueuedMessageIdsAtom);
   const [feedbackSubmissionsByThreadKey, setFeedbackSubmissionsByThreadKey] = useState<
     Record<string, ReadonlyArray<CodexFeedbackSubmission>>
@@ -257,11 +256,9 @@ export function useThreadComposerState(input: {
   const selectedThreadKey = selectedThreadShell
     ? scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id)
     : null;
-  const selectedThreadQueuedMessages = selectedThreadKey
-    ? (queuedMessagesByThreadKey[selectedThreadKey] ?? []).filter(
-        (message) => message.creation === undefined,
-      )
-    : [];
+  const selectedThreadQueuedMessages = useQueuedThreadMessages(selectedThreadKey).filter(
+    (message) => message.creation === undefined,
+  );
   // The thread sends one message at a time, the head of its queue.
   const dispatchingQueuedMessageId =
     selectedThreadQueuedMessages.find((message) => dispatchingQueuedMessageIds[message.messageId])
