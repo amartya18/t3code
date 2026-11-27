@@ -20,6 +20,10 @@ type Input = VoiceSpeechEvent extends infer E
     : E
   : never;
 
+const ONE = "Sure, I am checking on that.";
+const TWO = "Home is working through the queue.";
+const THREE = "It has three threads running right now.";
+
 const TIMER_ONLY: VoiceSpeechConfig = {
   ...DEFAULT_VOICE_SPEECH_CONFIG,
   endOfTurn: { ...DEFAULT_VOICE_SPEECH_CONFIG.endOfTurn, earlySend: false },
@@ -199,7 +203,7 @@ describe("voice speech", () => {
     voice.reply("r1", "Home is idle.", true);
     voice.reply("r1", "Home is idle. No threads are running.");
     voice.playAll();
-    expect(voice.played).toEqual(["Home is idle.", "No threads are running."]);
+    expect(voice.played).toEqual(["Home is idle. No threads are running."]);
     expect(voice.logs).toEqual([
       "[voice] turn 1 (pause) from speech end: finalized +3000ms, sent +3000ms, first text +3000ms, first audio +3000ms",
     ]);
@@ -214,22 +218,22 @@ describe("voice speech", () => {
     expect(voice.sent).toEqual(["merge it"]);
   });
 
-  it("speaks a streaming reply sentence by sentence, as each sentence completes", () => {
+  it("speaks a streaming reply chunk by chunk, as each chunk completes", () => {
     const voice = call();
-    voice.reply("r1", "Sure, checking.", true);
+    voice.reply("r1", `${ONE} ${TWO}`, true);
     expect(voice.engine.synthesizing).toEqual([]);
 
-    voice.reply("r1", "Sure, checking. PR 43 merged", true);
-    expect(voice.engine.synthesizing.map((item) => item.text)).toEqual(["Sure, checking."]);
+    voice.reply("r1", `${ONE} ${TWO} ${THREE} PR 43`, true);
+    expect(voice.engine.synthesizing.map((item) => item.text)).toEqual([`${ONE} ${TWO} ${THREE}`]);
 
-    voice.reply("r1", "Sure, checking. PR 43 merged an hour ago.");
+    voice.reply("r1", `${ONE} ${TWO} ${THREE} PR 43 merged an hour ago.`);
     voice.playAll();
-    expect(voice.played).toEqual(["Sure, checking.", "PR 43 merged an hour ago."]);
+    expect(voice.played).toEqual([`${ONE} ${TWO} ${THREE}`, "PR 43 merged an hour ago."]);
   });
 
   it("stops the voice when Amar talks over it, and stale sentences never play", () => {
     const voice = call();
-    voice.reply("r1", "First sentence here. Second", true);
+    voice.reply("r1", `${ONE} ${TWO} ${THREE} Second`, true);
     const [first] = voice.engine.synthesizing;
     voice.send({ type: "playback", id: first!.id, state: "started" });
 
@@ -241,7 +245,7 @@ describe("voice speech", () => {
     expect(voice.engine.stops).toEqual([DEFAULT_VOICE_SPEECH_CONFIG.bargeIn.fadeMs]);
     expect(liveWords(voice.state()).current).toBe("wait");
 
-    voice.reply("r1", "First sentence here. Second sentence here. Third sentence here.");
+    voice.reply("r1", `${ONE} ${TWO} ${THREE} Second sentence here. Third sentence here.`);
     expect(voice.engine.synthesizing).toEqual([]);
 
     voice.say("wait, ask Home instead");
@@ -352,7 +356,7 @@ describe("voice speech", () => {
     voice.send({ type: "models", state: "ready", part: null, fraction: 1 });
     expect(voice.state().engine.kind).toBe("listening");
     voice.playAll();
-    expect(voice.played).toEqual(["Hi.", "Home is idle."]);
+    expect(voice.played).toEqual(["Hi. Home is idle."]);
   });
 
   it("waits for microphone access", () => {

@@ -1,5 +1,5 @@
-const CHUNK_MIN = 200;
-const CHUNK_MAX = 400;
+const CHUNK_MIN = 100;
+const CHUNK_MAX = 150;
 
 const FENCE = /^\s*(?:```|~~~)/;
 const HEADING = /^\s{0,3}#{1,6}\s+/;
@@ -27,7 +27,10 @@ interface Unit {
   readonly closed: boolean;
 }
 
-/** A finished reply as speech: the first sentence alone, then 200–400 character chunks. */
+/**
+ * A finished reply as speech: sentences grouped until a chunk reaches 100 characters, so a short
+ * opener like "Sure." plays with what follows while Kokoro voices the next chunk.
+ */
 export function speechChunks(reply: string): ReadonlyArray<string> {
   return chunk(sentences(reply, true), true);
 }
@@ -122,15 +125,9 @@ function speakable(text: string): string {
 }
 
 function chunk(found: ReadonlyArray<string>, complete: boolean): ReadonlyArray<string> {
-  const [first, ...rest] = found.flatMap(splitLong);
-  if (first === undefined) return [];
-  const chunks = [first];
+  const chunks: string[] = [];
   let open = "";
-  for (const sentence of rest) {
-    if (open !== "" && open.length + 1 + sentence.length > CHUNK_MAX) {
-      chunks.push(open);
-      open = "";
-    }
+  for (const sentence of found.flatMap(splitLong)) {
     open = open === "" ? sentence : `${open} ${sentence}`;
     if (open.length >= CHUNK_MIN) {
       chunks.push(open);
