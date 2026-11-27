@@ -165,6 +165,9 @@ export const layer = Layer.effectDiscard(
       threadIds: ReadonlySet<ThreadId>,
     ) {
       const current = yield* settings.getSettings.pipe(Effect.map((value) => value.home));
+      if ([...threadIds].some((id) => isHomeThreadId(id) && id !== current.threadId)) {
+        yield* home.archiveFormerHomes;
+      }
       if (current.threadId === null) {
         previous = new Map();
         return;
@@ -189,6 +192,9 @@ export const layer = Layer.effectDiscard(
       previous = next;
     });
 
+    yield* home.archiveFormerHomes.pipe(
+      Effect.catchCause((cause) => Effect.logWarning("Home start-up archive pass failed", cause)),
+    );
     // Start-up watches whose threads ended while the server was down end now.
     yield* evaluate(knownWatchKeys).pipe(
       Effect.catchCause((cause) => Effect.logWarning("Home start-up watch pass failed", cause)),

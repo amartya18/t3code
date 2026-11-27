@@ -33,6 +33,7 @@ const shell = (
 
 const watching = (...ids: Array<string>): HomeSettings => ({
   threadId: ThreadId.make("home:current"),
+  parkedThreadId: null,
   watchAll: false,
   watches: ids.map((id) => ({ environmentId: hub, threadId: ThreadId.make(id) })),
 });

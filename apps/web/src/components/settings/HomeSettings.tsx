@@ -373,7 +373,7 @@ function HomeOnRows({ host }: { host: HomeHost }) {
         description={
           hostConnected
             ? gt(
-                "{environment}. Moving starts a new Home there and copies its notes and instructions.",
+                "{environment}. Moving copies its notes and instructions, and Home resumes its own thread on an environment it ran on before.",
                 {
                   environment: hostEnvironment?.label ?? gt("This environment"),
                 },
@@ -449,7 +449,9 @@ function HomeOnRows({ host }: { host: HomeHost }) {
       )}
       <SettingsRow
         title={gt("Turn off")}
-        description={gt("Home stops. Its threads stay.")}
+        description={gt(
+          "Home stops and its thread is archived. Turning Home on again brings it back.",
+        )}
         control={
           <Button
             size="sm"
@@ -568,9 +570,9 @@ function MoveHomeDialogPopup(props: {
         </AlertDialogTitle>
         <AlertDialogDescription>
           <T>
-            Home on <Var>{props.fromLabel}</Var> stops, and a new Home thread starts on{" "}
-            <Var>{to.label}</Var>. Its notes and instructions are copied over. The old thread stays
-            in <Var>{props.fromLabel}</Var>'s history.
+            Home on <Var>{props.fromLabel}</Var> stops and its thread is archived until Home returns
+            there. On <Var>{to.label}</Var>, Home resumes its earlier thread if it ran there before,
+            or starts a new one. Its notes and instructions are copied over.
           </T>
         </AlertDialogDescription>
       </AlertDialogHeader>
@@ -630,7 +632,7 @@ function HomeConflictRows({ hosts }: { hosts: ReadonlyArray<HomeHost> }) {
       <SettingsRow
         {...searchableSetting("home")}
         description={gt(
-          "Home is on in more than one place. Keep one; the others turn off and their threads stay.",
+          "Home is on in more than one place. Keep one; the others turn off and their threads are archived.",
         )}
       />
       {hosts.map((host) => (

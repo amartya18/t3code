@@ -50,10 +50,11 @@ threads there; it checks on them when you ask, or waits on them.
 ## Moving Home
 
 **Settings → Home → Runs on** moves Home to another connected environment, on
-desktop and web. The current Home stops, a new Home thread starts on the new
-environment with the model you pick, and Home's notes and instructions are
-copied over. The old thread stays in the old environment's history. Large or
-binary files stay behind, and the move tells you which.
+desktop and web. The current Home stops and its thread is archived, and Home's
+notes and instructions are copied over. If Home ran on the new environment
+before, it resumes that thread, with its history and the threads it watched, on
+the model you pick. Otherwise a new Home thread starts there. Large or binary
+files stay behind, and the move tells you which.
 
 Home can only move while its current environment is reachable. If a move fails
 halfway, Home is off; turn it on again. If Home ever ends up on in two places,
@@ -70,4 +71,5 @@ learns. Its folder is scratch space only.
 thread, and the history above stays visible, but Home no longer sees it. Its
 instructions carry over.
 
-Turning Home off stops it from acting. Its thread stays in your history.
+Turning Home off stops it from acting and archives its thread. Each environment
+keeps one Home thread: turning Home on there again brings the same thread back.
