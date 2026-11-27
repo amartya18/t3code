@@ -2496,6 +2496,7 @@
   "560d5a3e147d864a": "误报（开发）",
   "705468cb2eb4025d": "暂停多久后重新播放（开发）",
   "e6ea926d122bbdc1": "思考（开发）",
+  "6db8686aaf43dcfd": "从说话结束起计算停顿（开发）",
   "66ec4cf525d6d926": "{requests, plural, other {{requests} 个请求}} · {minutes} 分钟",
   "a91b941fbd5a6c44": "无法更改受理人",
   "c2ed09c676ad0e9a": "受理人",

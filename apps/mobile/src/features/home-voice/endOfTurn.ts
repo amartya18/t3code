@@ -4,6 +4,8 @@ export interface EndOfTurnConfig {
   /** The longest a held pause waits before it sends anyway. */
   readonly ceilingMs: number;
   readonly earlySend: boolean;
+  /** How late the VAD reports that speech ended; pauses count from the real end. */
+  readonly vadEndLagMs: number;
 }
 
 export const DEFAULT_END_OF_TURN_CONFIG: EndOfTurnConfig = {
@@ -11,6 +13,7 @@ export const DEFAULT_END_OF_TURN_CONFIG: EndOfTurnConfig = {
   floorMs: 500,
   ceilingMs: 10_000,
   earlySend: true,
+  vadEndLagMs: 0,
 };
 
 export type FinalizeReason = "pause" | "ceiling" | "tap" | "early";
@@ -96,7 +99,12 @@ export function stepEndOfTurn(
           return event.speaking
             ? stay(state)
             : decide(
-                { ...state, kind: "paused", since: event.atMs, voice: { kind: "quiet" } },
+                {
+                  ...state,
+                  kind: "paused",
+                  since: event.atMs - config.vadEndLagMs,
+                  voice: { kind: "quiet" },
+                },
                 event.atMs,
                 config,
               );
@@ -133,7 +141,12 @@ export function stepEndOfTurn(
             });
           }
           return decide(
-            { ...state, ...utterance, since: state.voice.atMs, voice: { kind: "quiet" } },
+            {
+              ...state,
+              ...utterance,
+              since: state.voice.atMs - config.vadEndLagMs,
+              voice: { kind: "quiet" },
+            },
             event.atMs,
             config,
           );

@@ -199,6 +199,16 @@ export function VoiceSessionSheet() {
                 onValueChange={(thinking) => void saveVoiceSettings({ thinking })}
               />
             </View>
+            <View className="border-t border-border-subtle">
+              <ListToggleRow
+                icon="timer"
+                label={gt("Pause from speech end (dev)")}
+                value={settings.pauseFromSpeechEnd}
+                onValueChange={(pauseFromSpeechEnd) =>
+                  void saveVoiceSettings({ pauseFromSpeechEnd })
+                }
+              />
+            </View>
           </ListSection>
         ) : null}
       </ScrollView>

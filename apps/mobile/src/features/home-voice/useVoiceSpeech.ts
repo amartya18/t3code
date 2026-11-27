@@ -88,13 +88,15 @@ export function useVoiceSpeech(session: VoiceSession) {
   const settings = useVoiceModeSettings();
   const threadState = useVoiceThread(session);
   const messages = Option.getOrNull(Option.map(threadState.data, (data) => data.messages));
+  const engineConfig = voiceEngineConfig(settings?.voiceId ?? "af_heart");
   const inputs: VoiceSpeechInputs = {
-    engineConfig: voiceEngineConfig(settings?.voiceId ?? "af_heart"),
+    engineConfig,
     config: {
       endOfTurn: {
         ...DEFAULT_END_OF_TURN_CONFIG,
         pauseMs: settings?.pauseMs ?? DEFAULT_END_OF_TURN_CONFIG.pauseMs,
         earlySend: settings?.earlySend ?? DEFAULT_END_OF_TURN_CONFIG.earlySend,
+        vadEndLagMs: (settings?.pauseFromSpeechEnd ?? true) ? engineConfig.vad.minSilenceMs : 0,
       },
       bargeIn: {
         ...DEFAULT_BARGE_IN_CONFIG,

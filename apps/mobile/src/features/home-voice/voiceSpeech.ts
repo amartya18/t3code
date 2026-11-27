@@ -86,6 +86,7 @@ interface TurnTiming {
   readonly turn: number;
   readonly reason: FinalizeReason;
   readonly speechEndMs: number;
+  readonly speechEnd: "real" | "vad";
   readonly finalizedMs: number | null;
   readonly sentMs: number | null;
   /** Replies already in the thread when the message was sent; the next new one answers it. */
@@ -559,7 +560,7 @@ function recoverHeld(state: VoiceSpeechState, atMs: number, config: VoiceSpeechC
   const { held } = state;
   if (held === null) return stay(state);
   if (amarAhead(state)) return stay({ ...state, held: null });
-  if (!wordsTooLate(held.stoppedMs, quietSince(state.turn), atMs, config.bargeIn)) {
+  if (!wordsTooLate(held.stoppedMs, quietSince(state.turn, config), atMs, config.bargeIn)) {
     return stay(state);
   }
   const pausedMs = atMs - held.stoppedMs;
@@ -574,11 +575,12 @@ function recoverHeld(state: VoiceSpeechState, atMs: number, config: VoiceSpeechC
   );
 }
 
-function quietSince(turn: EndOfTurnState): number | null {
+/** When the VAD reported quiet: words lag its report, not the real end of speech. */
+function quietSince(turn: EndOfTurnState, config: VoiceSpeechConfig): number | null {
   if (turn.kind === "speaking") return null;
   if (turn.kind !== "paused") return Number.NEGATIVE_INFINITY;
   if (turn.voice.kind === "voiced") return null;
-  return turn.voice.kind === "ended" ? turn.voice.atMs : turn.since;
+  return turn.voice.kind === "ended" ? turn.voice.atMs : turn.since + config.endOfTurn.vadEndLagMs;
 }
 
 /** Queues cut chunks again under the current revision: each reply from its first cut chunk on. */
@@ -701,6 +703,7 @@ function stepTurn(
           turn: next.turns + 1,
           reason: effect.reason,
           speechEndMs,
+          speechEnd: config.endOfTurn.vadEndLagMs > 0 ? "real" : "vad",
           finalizedMs: null,
           sentMs: null,
           repliesBefore: null,
@@ -901,7 +904,7 @@ function timingLog(timing: TurnTiming, firstAudioMs: number | null): VoiceSpeech
   return {
     type: "log",
     line:
-      `[voice] turn ${timing.turn} (${timing.reason}) from speech end: ` +
+      `[voice] turn ${timing.turn} (${timing.reason}) from ${timing.speechEnd} speech end: ` +
       `finalized ${after(timing.finalizedMs)}, sent ${after(timing.sentMs)}, ` +
       `first text ${after(timing.firstTextMs)}, first speak ${after(timing.firstSpeakMs)}, ` +
       `first audio ${after(firstAudioMs)}`,

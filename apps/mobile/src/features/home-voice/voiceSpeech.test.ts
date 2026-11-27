@@ -255,7 +255,30 @@ describe("voice speech", () => {
     voice.playAll();
     expect(voice.played).toEqual(["Home is idle. No threads are running."]);
     expect(voice.logs).toEqual([
-      "[voice] turn 1 (pause) from speech end: finalized +3000ms, sent +3000ms, first text +3000ms, first speak +3000ms, first audio +3000ms",
+      "[voice] turn 1 (pause) from vad speech end: finalized +3000ms, sent +3000ms, first text +3000ms, first speak +3000ms, first audio +3000ms",
+    ]);
+  });
+
+  it("counts the pause and its latency log from his real end of speech", () => {
+    const voice = call({
+      config: {
+        ...DEFAULT_VOICE_SPEECH_CONFIG,
+        endOfTurn: { ...DEFAULT_VOICE_SPEECH_CONFIG.endOfTurn, earlySend: false, vadEndLagMs: 300 },
+      },
+    });
+    voice.say("what is home doing");
+    voice.wait(300);
+    voice.stopTalking();
+    voice.engine.transcript = "What is Home doing?";
+    voice.wait(2_600);
+    expect(voice.sent).toEqual([]);
+
+    voice.wait(100);
+    expect(voice.sent).toEqual(["What is Home doing?"]);
+    voice.reply("r1", "Home is idle. No threads are running.");
+    voice.playAll();
+    expect(voice.logs).toEqual([
+      "[voice] turn 1 (pause) from real speech end: finalized +3000ms, sent +3000ms, first text +3000ms, first speak +3000ms, first audio +3000ms",
     ]);
   });
 
@@ -317,15 +340,18 @@ describe("voice speech", () => {
 
   it("speaks a streaming reply chunk by chunk, as each chunk completes", () => {
     const voice = call();
-    voice.reply("r1", `${ONE} ${TWO}`, true);
+    voice.reply("r1", ONE, true);
     expect(voice.engine.synthesizing).toEqual([]);
 
+    voice.reply("r1", `${ONE} Home`, true);
+    expect(voice.engine.synthesizing.map((item) => item.text)).toEqual([ONE]);
+
     voice.reply("r1", `${ONE} ${TWO} ${THREE} PR 43`, true);
-    expect(voice.engine.synthesizing.map((item) => item.text)).toEqual([`${ONE} ${TWO} ${THREE}`]);
+    expect(voice.engine.synthesizing.map((item) => item.text)).toEqual([ONE]);
 
     voice.reply("r1", `${ONE} ${TWO} ${THREE} PR 43 merged an hour ago.`);
     voice.playAll();
-    expect(voice.played).toEqual([`${ONE} ${TWO} ${THREE}`, "PR 43 merged an hour ago."]);
+    expect(voice.played).toEqual([ONE, `${TWO} ${THREE} PR 43 merged an hour ago.`]);
   });
 
   it("stops the voice when Amar talks over it, and stale sentences never play", () => {
@@ -594,7 +620,7 @@ describe("what the transcript shows of a reply", () => {
 
     const [first, second] = voice.engine.synthesizing;
     voice.send({ type: "playback", id: first!.id, state: "started" });
-    expect(voice.state().shown.get("r1")).toEqual({ kind: "spoken", text: OPENER });
+    expect(voice.state().shown.get("r1")).toEqual({ kind: "spoken", text: ONE });
     voice.send({ type: "playback", id: first!.id, state: "finished" });
     voice.send({ type: "playback", id: second!.id, state: "started" });
     expect(voice.state().shown.get("r1")).toEqual({ kind: "spoken", text: REPLY });
@@ -611,7 +637,7 @@ describe("what the transcript shows of a reply", () => {
     voice.reply("r1", `${REPLY} It found two more threads.`);
     voice.playAll();
 
-    expect(voice.state().shown.get("r1")).toEqual({ kind: "spoken", text: OPENER });
+    expect(voice.state().shown.get("r1")).toEqual({ kind: "spoken", text: ONE });
   });
 
   it("shows a reply whole when it is cut off before it plays a word", () => {

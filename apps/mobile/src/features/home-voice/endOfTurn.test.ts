@@ -293,3 +293,81 @@ describe("early send", () => {
     expect(voice.finalized).toEqual([]);
   });
 });
+
+describe("pause from the real end of speech", () => {
+  const LAG = 300;
+  const FROM_SPEECH_END: EndOfTurnConfig = { ...TIMER_ONLY, pauseMs: 500, vadEndLagMs: LAG };
+
+  /** The VAD reports the end `LAG` ms after he stopped, so the clock starts at his real end. */
+  function stoppedAt(config: EndOfTurnConfig, text = "tell Home to merge") {
+    const voice = session(config);
+    voice.say(text);
+    voice.wait(LAG);
+    voice.stopTalking();
+    return voice;
+  }
+
+  it("sends the pause after he stopped, not after the VAD said so", () => {
+    const voice = stoppedAt(FROM_SPEECH_END);
+    voice.wait(100);
+    expect(voice.finalized).toEqual([]);
+    voice.wait(100);
+    expect(voice.finalized).toEqual([{ reason: "pause", atMs: LAG + 200 }]);
+  });
+
+  it("counts from the VAD's report when off", () => {
+    const voice = stoppedAt({ ...FROM_SPEECH_END, vadEndLagMs: 0 });
+    voice.wait(400);
+    expect(voice.finalized).toEqual([]);
+    voice.wait(100);
+    expect(voice.finalized).toEqual([{ reason: "pause", atMs: LAG + 500 }]);
+  });
+
+  it("counts a later voice's words from that voice's real end", () => {
+    const voice = stoppedAt(FROM_SPEECH_END, "tell Home");
+    voice.send({ type: "vad", speaking: true });
+    voice.wait(600);
+    voice.send({ type: "vad", speaking: false });
+    voice.wait(100);
+    voice.send({ type: "partial", text: "tell Home to merge" });
+    expect(voice.finalized).toEqual([]);
+    voice.wait(100);
+    expect(voice.finalized).toEqual([{ reason: "pause", atMs: LAG + 800 }]);
+  });
+
+  it("still holds a touched pause and a trailing hang on until the ceiling", () => {
+    const touched = stoppedAt(FROM_SPEECH_END);
+    touched.send({ type: "holdStart" });
+    touched.wait(9_600);
+    expect(touched.finalized).toEqual([]);
+    touched.wait(100);
+    expect(touched.finalized).toEqual([{ reason: "ceiling", atMs: LAG + 9_700 }]);
+
+    const hangOn = stoppedAt(FROM_SPEECH_END, "merge it, hang on");
+    hangOn.wait(9_600);
+    expect(hangOn.finalized).toEqual([]);
+    hangOn.wait(100);
+    expect(hangOn.finalized).toEqual([{ reason: "ceiling", atMs: LAG + 9_700 }]);
+  });
+
+  it("starts a fresh full pause when the finger lifts", () => {
+    const voice = stoppedAt(FROM_SPEECH_END);
+    voice.send({ type: "holdStart" });
+    voice.wait(2_000);
+    voice.send({ type: "holdEnd" });
+    voice.wait(400);
+    expect(voice.finalized).toEqual([]);
+    voice.wait(100);
+    expect(voice.finalized).toEqual([{ reason: "pause", atMs: LAG + 2_500 }]);
+  });
+
+  it("sends early once the floor has passed since he stopped", () => {
+    const voice = stoppedAt({ ...FROM_SPEECH_END, pauseMs: 3_000, earlySend: true });
+    voice.send({ type: "eou", text: "tell Home to merge" });
+    expect(voice.finalized).toEqual([]);
+    voice.wait(100);
+    expect(voice.finalized).toEqual([]);
+    voice.wait(100);
+    expect(voice.finalized).toEqual([{ reason: "early", atMs: LAG + 200 }]);
+  });
+});
