@@ -5,7 +5,7 @@ public final class T3VoiceModeModule: Module {
 
   public func definition() -> ModuleDefinition {
     Name("T3VoiceMode")
-    Events("vad", "partial", "eou", "playback", "models", "route", "interruption", "stage", "error")
+    Events("vad", "playback", "models", "route", "interruption", "stage", "error")
 
     OnCreate {
       self.engine.events.attach(self)
@@ -45,9 +45,18 @@ public final class T3VoiceModeModule: Module {
       self.engine.setMuted(muted)
     }
 
-    AsyncFunction("finalize") { () async throws -> [String: Any] in
-      let text = try await self.engine.finalize()
+    AsyncFunction("setVocabulary") { (words: [String]) async throws in
+      try await self.engine.setVocabulary(words)
+    }
+
+    AsyncFunction("transcribe") { (fromMs: Double, toMs: Double) async throws -> [String: Any] in
+      let text = try await self.engine.transcribe(fromMs: fromMs, toMs: toMs)
       return ["text": text]
+    }
+
+    AsyncFunction("turnScore") { (fromMs: Double, toMs: Double) async throws -> [String: Any] in
+      let probability = try await self.engine.turnScore(fromMs: fromMs, toMs: toMs)
+      return ["probability": Double(probability)]
     }
 
     AsyncFunction("speak") { (id: String, text: String, seq: Int) async throws in

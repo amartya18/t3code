@@ -5,7 +5,10 @@ import Foundation
 actor VoiceEngine {
   nonisolated let events: EventSink
   nonisolated let controls: Controls
+  nonisolated let ring: AudioRing
   let listener: Listener
+  let transcriber = Transcriber()
+  let turn = TurnDetector()
   let speaker: Speaker
   private(set) var config: VoiceConfig?
   private var audio: AVAudioEngine?
@@ -19,9 +22,11 @@ actor VoiceEngine {
   init() {
     let events = EventSink()
     let controls = Controls()
+    let ring = AudioRing(seconds: 60)
     self.events = events
     self.controls = controls
-    listener = Listener(events: events)
+    self.ring = ring
+    listener = Listener(events: events, ring: ring)
     speaker = Speaker(events: events, controls: controls)
   }
 
@@ -59,6 +64,8 @@ actor VoiceEngine {
   func deleteModels() async throws {
     guard !running, !downloading else { throw VoiceModeError.busy }
     await listener.unload()
+    await transcriber.unload()
+    await turn.unload()
     await speaker.unload()
     try ModelStore.delete()
   }
@@ -72,11 +79,14 @@ actor VoiceEngine {
       guard await AVAudioApplication.requestRecordPermission() else { throw VoiceModeError.permissionDenied }
       guard ModelStore.isReady(config) else { throw VoiceModeError.modelsMissing }
       events.stage("load.start")
-      async let heard: Void = listener.load(config)
+      async let heard: Void = listener.load()
+      async let written: Void = transcriber.load()
+      async let turned: Void = turn.load()
       async let spoken: Void = speaker.load(config)
-      _ = try await (heard, spoken)
+      _ = try await (heard, written, turned, spoken)
       events.stage("load.end")
       guard running else { return }
+      ring.clear()
       listener.input.yield(.reset)
       try activateSession(config)
       try await buildAudio(config)
@@ -106,8 +116,19 @@ actor VoiceEngine {
     stopping = nil
   }
 
-  func finalize() async throws -> String {
-    try await listener.finalize()
+  func setVocabulary(_ words: [String]) async throws {
+    try await transcriber.setVocabulary(words)
+  }
+
+  func transcribe(fromMs: Double, toMs: Double) async throws -> String {
+    let samples = ring.samples(fromMs: fromMs, toMs: toMs)
+    events.stage("transcribe.start")
+    defer { events.stage("transcribe.end") }
+    return try await transcriber.transcribe(samples)
+  }
+
+  func turnScore(fromMs: Double, toMs: Double) async throws -> Float {
+    try await turn.probability(ring.samples(fromMs: fromMs, toMs: toMs))
   }
 
   func speak(id: String, text: String, seq: Int) async throws {
@@ -171,10 +192,14 @@ actor VoiceEngine {
       throw VoiceModeError.noInput
     }
     let controls = self.controls
+    let ring = self.ring
     let sink = listener.input
-    input.installTap(onBus: 0, bufferSize: 4096, format: format) { buffer, _ in
-      guard let converted = mic.convert(buffer, silence: controls.muted) else { return }
-      sink.yield(.audio(converted))
+    let sampleRate = format.sampleRate
+    input.installTap(onBus: 0, bufferSize: 4096, format: format) { buffer, when in
+      guard let samples = mic.convert(buffer, silence: controls.muted) else { return }
+      let capturedMs =
+        when.isHostTimeValid ? hostMs(when.hostTime) : nowMs() - Double(buffer.frameLength) / sampleRate * 1000
+      sink.yield(.audio(samples, start: ring.append(samples, atMs: capturedMs)))
     }
     if aec { input.isVoiceProcessingInputMuted = controls.muted }
     await speaker.attach(engine)
@@ -274,7 +299,7 @@ final class MicConverter: @unchecked Sendable {
     ratio = Self.format.sampleRate / input.sampleRate
   }
 
-  func convert(_ buffer: AVAudioPCMBuffer, silence: Bool) -> AVAudioPCMBuffer? {
+  func convert(_ buffer: AVAudioPCMBuffer, silence: Bool) -> [Float]? {
     let capacity = AVAudioFrameCount((Double(buffer.frameLength) * ratio).rounded(.up)) + 32
     guard let output = AVAudioPCMBuffer(pcmFormat: Self.format, frameCapacity: capacity) else { return nil }
     var supplied = false
@@ -289,12 +314,13 @@ final class MicConverter: @unchecked Sendable {
       return buffer
     }
     guard status != .error, output.frameLength > 0, let channel = output.floatChannelData?[0] else { return nil }
-    if silence { channel.update(repeating: 0, count: Int(output.frameLength)) }
-    return output
+    let count = Int(output.frameLength)
+    return silence ? [Float](repeating: 0, count: count) : Array(UnsafeBufferPointer(start: channel, count: count))
   }
 }
 
-/// Sends `models` progress once per whole percent per part, so a download doesn't flood the bridge.
+/// Sends `models` progress once per whole percent per part, never going back within a part, so a
+/// download doesn't flood the bridge and FluidAudio's per-file restarts don't rewind the bar.
 final class DownloadProgressEvents: @unchecked Sendable {
   private let lock = NSLock()
   private let events: EventSink
@@ -307,7 +333,7 @@ final class DownloadProgressEvents: @unchecked Sendable {
   func report(_ part: String, _ fraction: Double) {
     let percent = Int(fraction * 100)
     let changed = lock.withLock { () -> Bool in
-      guard last?.0 != part || last?.1 != percent else { return false }
+      if let last, last.0 == part, percent <= last.1 { return false }
       last = (part, percent)
       return true
     }

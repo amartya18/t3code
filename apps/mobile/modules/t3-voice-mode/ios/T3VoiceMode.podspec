@@ -10,7 +10,7 @@ Pod::Spec.new do |s|
   s.static_framework = true
   s.dependency 'ExpoModulesCore'
   s.source_files = '*.swift'
-  s.frameworks = 'AVFoundation', 'CoreML'
+  s.frameworks = 'Accelerate', 'AVFoundation', 'CoreML', 'CryptoKit'
 
   # React Native builds a static pod with SwiftPM dependencies into the shared products directory,
   # where ClerkExpo already sits, and two umbrella module maps in one directory break clang.

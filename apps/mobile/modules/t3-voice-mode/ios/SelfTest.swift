@@ -3,62 +3,133 @@ import AVFoundation
 import Foundation
 
 extension VoiceEngine {
-  /// Speaks a sentence with Kokoro and hears it back with a fresh Parakeet instance: no bundled audio, no mic.
-  func selfTest() async throws -> String {
+  /// Loads every model and runs each on audio made here, with no bundled audio and no mic: Kokoro
+  /// speaks a sentence full of list words, Silero and Smart Turn hear it, and Parakeet transcribes
+  /// it without and with the word list. `dumpTo` keeps the 16 kHz audio for an off-device comparison.
+  func selfTest(dumpTo folder: URL? = nil) async throws -> String {
     let config = try requireConfig()
-    let sentence = "The quick brown fox jumps over the lazy dog."
+    let sentence = "Ask Kokoro to check the Tailscale link before FluidAudio downloads Parakeet."
+    let words = ["Kokoro", "Tailscale", "FluidAudio", "Parakeet", "T3 Code"]
     var report: [String: Any] = [
       "os": ProcessInfo.processInfo.operatingSystemVersionString,
       "models": ModelStore.status(config),
       "expected": sentence,
+      "words": words,
     ]
     guard ModelStore.isReady(config) else {
       report["ok"] = false
-      return try json(report)
+      return try selfTestJSON(report)
     }
-
+    var errors: [String: String] = [:]
     var mark = Date()
     func lap() -> Int {
       defer { mark = Date() }
       return Int(Date().timeIntervalSince(mark) * 1000)
     }
 
-    try await speaker.load(config)
-    report["ttsLoadMs"] = lap()
-    let speech = try await speaker.synthesize(sentence)
-    report["synthMs"] = lap()
-    report["audioMs"] = speech.samples.count * 1000 / max(speech.sampleRate, 1)
+    var speech: [Float] = []
+    do {
+      try await speaker.load(config)
+      report["ttsLoadMs"] = lap()
+      let spoken = try await speaker.synthesize(sentence)
+      report["synthMs"] = lap()
+      speech = try resampled(spoken.samples, rate: spoken.sampleRate)
+      report["audioMs"] = speech.count / 16
+    } catch {
+      errors["tts"] = String(describing: error)
+    }
 
-    let asr = StreamingEouAsrManager(chunkSize: config.chunkSize, eouDebounceMs: config.eouDebounceMs)
-    try await asr.loadModels(to: ModelStore.root)
-    report["asrLoadMs"] = lap()
-    guard
-      let format = AVAudioFormat(
-        commonFormat: .pcmFormatFloat32, sampleRate: Double(speech.sampleRate), channels: 1, interleaved: false),
-      let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(speech.samples.count)),
-      let channel = buffer.floatChannelData?[0]
-    else { throw VoiceModeError.make("bad_audio", "Kokoro returned no audio.") }
-    buffer.frameLength = AVAudioFrameCount(speech.samples.count)
-    speech.samples.withUnsafeBufferPointer { channel.update(from: $0.baseAddress!, count: speech.samples.count) }
-    try await asr.appendAudio(buffer)
-    try await asr.processBufferedAudio()
-    let heard = try await asr.finish()
-    await asr.cleanup()
-    report["transcribeMs"] = lap()
-    report["transcript"] = heard
-    report["ok"] = normalized(heard) == normalized(sentence)
-    return try json(report)
+    let lead = [Float](repeating: 0, count: 8_000)
+    let trail = [Float](repeating: 0, count: 16_000)
+    let heard = lead + speech + trail
+    do {
+      let vad = try SileroVad.load()
+      report["vadLoadMs"] = lap()
+      var gate = SpeechGate(settings: config.vad)
+      var frames: [Double] = []
+      var changes: [[String: Any]] = []
+      let frame = SileroVad.frameSamples
+      for start in stride(from: 0, through: heard.count - frame, by: frame) {
+        let window = heard[start..<start + frame]
+        let probability = try vad.probability(window)
+        frames.append((Double(probability) * 1000).rounded() / 1000)
+        let energy = window.reduce(0) { $0 + Double($1 * $1) }
+        if let change = gate.push(start: start, count: frame, probability: probability, energy: energy) {
+          changes.append(["speaking": change.speaking, "ms": change.sample / 16, "level": Double(change.level)])
+        }
+      }
+      report["vadMs"] = lap()
+      report["vadFrames"] = frames
+      report["vadChanges"] = changes
+      report["vadSpeechFromMs"] = lead.count / 16
+    } catch {
+      errors["vad"] = String(describing: error)
+    }
+
+    do {
+      try await turn.load()
+      report["turnLoadMs"] = lap()
+      var scores: [String: Double] = [:]
+      scores["silence"] = Double(try await turn.probability(trail))
+      if !speech.isEmpty {
+        let sentence = try await turn.probability(speech + trail.prefix(3_200))
+        let firstHalf = try await turn.probability(Array(speech.prefix(speech.count / 2)))
+        scores["sentence"] = Double(sentence)
+        scores["firstHalf"] = Double(firstHalf)
+      }
+      report["turnMs"] = lap()
+      report["turn"] = scores
+    } catch {
+      errors["turn"] = String(describing: error)
+    }
+
+    if !speech.isEmpty {
+      do {
+        try await transcriber.load()
+        report["asrLoadMs"] = lap()
+        let previous = await transcriber.vocabulary
+        try await transcriber.setVocabulary([])
+        report["transcript"] = try await transcriber.transcribe(speech)
+        report["transcribeMs"] = lap()
+        try await transcriber.setVocabulary(words)
+        report["vocabLoadMs"] = lap()
+        report["vocabTranscript"] = try await transcriber.transcribe(speech)
+        report["vocabTranscribeMs"] = lap()
+        try await transcriber.setVocabulary(previous)
+      } catch {
+        errors["asr"] = String(describing: error)
+      }
+    }
+
+    if let folder {
+      try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+      try heard.withUnsafeBufferPointer { Data(buffer: $0) }.write(to: folder.appendingPathComponent("heard-16k-f32le.raw"))
+    }
+    report["errors"] = errors
+    let transcript = report["transcript"] as? String ?? ""
+    let started = (report["vadChanges"] as? [[String: Any]])?.contains { $0["speaking"] as? Bool == true } ?? false
+    report["ok"] = errors.isEmpty && !transcript.isEmpty && started
+    return try selfTestJSON(report)
   }
 }
 
-private func normalized(_ text: String) -> String {
-  text.lowercased()
-    .filter { $0.isLetter || $0.isNumber || $0 == " " }
-    .split(separator: " ")
-    .joined(separator: " ")
+private func resampled(_ samples: [Float], rate: Int) throws -> [Float] {
+  guard
+    let format = AVAudioFormat(
+      commonFormat: .pcmFormatFloat32, sampleRate: Double(rate), channels: 1, interleaved: false),
+    let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count)),
+    let channel = buffer.floatChannelData?[0],
+    let converter = MicConverter(from: format)
+  else { throw VoiceModeError.make("bad_audio", "Kokoro returned no audio.") }
+  buffer.frameLength = AVAudioFrameCount(samples.count)
+  samples.withUnsafeBufferPointer { channel.update(from: $0.baseAddress!, count: samples.count) }
+  guard let converted = converter.convert(buffer, silence: false) else {
+    throw VoiceModeError.make("bad_audio", "Kokoro's audio didn't convert to 16 kHz.")
+  }
+  return converted
 }
 
-private func json(_ report: [String: Any]) throws -> String {
+func selfTestJSON(_ report: [String: Any]) throws -> String {
   let data = try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys])
   return String(decoding: data, as: UTF8.self)
 }

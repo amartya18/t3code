@@ -1,7 +1,16 @@
 import ExpoModulesCore
 import Foundation
 
-func nowMs() -> Double { Date().timeIntervalSince1970 * 1000 }
+private let msPerHostTick: Double = {
+  var timebase = mach_timebase_info_data_t()
+  mach_timebase_info(&timebase)
+  return Double(timebase.numer) / Double(timebase.denom) / 1_000_000
+}()
+
+/// The engine clock: host time in milliseconds, the clock audio buffers are stamped with.
+func hostMs(_ hostTime: UInt64) -> Double { Double(hostTime) * msPerHostTick }
+
+func nowMs() -> Double { hostMs(mach_absolute_time()) }
 
 /// Thread-safe path from any actor or audio thread to JS events.
 final class EventSink: @unchecked Sendable {
