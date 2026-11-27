@@ -17,13 +17,10 @@ export function isVoiceEngineAvailable(): boolean {
 
 export const ECHO_CANCELLATION = true;
 
-/** Dev tuning of when Amar's turn starts and ends, each on its own slider. */
+/** Dev tuning of when the user's turn starts and ends. */
 export interface VoiceTuning {
-  /** How long a voice must last before the detector calls it speech. */
   readonly minSpeechMs: number;
-  /** How long a silence must last before the detector calls the speech over and Smart Turn scores it. */
   readonly minSilenceMs: number;
-  /** How long a pause Smart Turn calls unfinished waits for him to go on. */
   readonly turnWaitMs: number;
 }
 

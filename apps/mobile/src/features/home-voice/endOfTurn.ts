@@ -1,6 +1,5 @@
 /** Smart Turn's score at or above which a pause ends the user's turn at once. */
 export const TURN_DONE_PROBABILITY = 0.7;
-/** An unfinished pause is scored again this often, over the silence heard since. */
 export const RESCORE_MS = 500;
 /** Audio kept from before the detector's speech start, so the user's first word is whole. */
 export const PRE_ROLL_MS = 400;
@@ -42,7 +41,6 @@ type LiveTurn =
       readonly endMs: number;
       /** When JS heard the user's speech end; the wait and its scores count from here. */
       readonly endedAtMs: number;
-      /** Smart Turn's latest score, null until it first answers. */
       readonly probability: number | null;
       readonly scoresAsked: number;
       /** The end of the audio Smart Turn is scoring now, which its answer must match. */
@@ -93,7 +91,7 @@ export type TurnEffect =
       readonly type: "score";
       readonly turn: number;
       readonly probability: number;
-      /** Null for a score that came after he spoke again or the turn ended. */
+      /** Null for a score that came after speech resumed or the turn ended. */
       readonly silenceMs: number | null;
       readonly decision: "send" | "wait" | "ignore";
     }
@@ -122,10 +120,6 @@ const MUTED: LiveTurn = { kind: "muted" };
 
 export const INITIAL_TURN_STATE: TurnState = { live: IDLE, decided: [], count: 0 };
 
-/**
- * Done ends the turn; unfinished transcribes the piece so far, then rescores every RESCORE_MS
- * until a score is done or the wait runs out.
- */
 export function stepTurn(state: TurnState, event: TurnEvent, config: TurnConfig): TurnStep {
   switch (event.type) {
     case "muted":
@@ -178,7 +172,7 @@ function onVad(state: TurnState, event: Extract<TurnEvent, { type: "vad" }>): Tu
 
 /**
  * Speech that resumes in the wait reaches JS only after the detector's onset hold, so the
- * deadline runs that much past the wait: speech he started inside the wait still continues it.
+ * deadline runs that much past the wait: speech started inside the wait still continues it.
  */
 function onTick(state: TurnState, atMs: number, config: TurnConfig): TurnStep {
   const { live } = state;
@@ -190,7 +184,6 @@ function onTick(state: TurnState, atMs: number, config: TurnConfig): TurnStep {
   return score(state, live, waitedMs);
 }
 
-/** Scores the turn through the silence heard so far; the first score ends at the speech end. */
 function score(state: TurnState, live: Paused, waitedMs = 0): TurnStep {
   const toMs = live.endMs + waitedMs;
   return {

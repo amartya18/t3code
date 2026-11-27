@@ -9,10 +9,6 @@ interface VoiceLogUploader {
   readonly add: (line: string) => void;
 }
 
-/**
- * Posts lines in batches as `text/plain`, one per line and each stamped with the wall clock.
- * A failed post keeps its lines for the next one, up to a bound that drops the oldest.
- */
 function createVoiceLogUploader(options: {
   readonly url: string;
   readonly post: (url: string, body: string) => Promise<void>;

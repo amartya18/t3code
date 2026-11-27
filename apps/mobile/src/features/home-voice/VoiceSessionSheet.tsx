@@ -30,7 +30,6 @@ const VOICE_NAMES: Record<KokoroVoiceId, string> = {
   bf_emma: "Emma",
 };
 
-/** A dev slider in seconds over one tuning setting, saved in milliseconds when let go. */
 function TuningRow(props: {
   readonly tuning: VoiceTuning;
   readonly setting: keyof VoiceTuning;

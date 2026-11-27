@@ -26,7 +26,6 @@ export interface VoiceModeSettings {
   readonly voiceId: KokoroVoiceId;
   /** Dev only: Claude turns run with extended thinking, to compare reply latency. */
   readonly thinking: boolean;
-  /** Dev only. */
   readonly tuning: VoiceTuning;
 }
 
