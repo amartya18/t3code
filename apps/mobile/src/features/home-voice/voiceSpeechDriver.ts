@@ -47,8 +47,9 @@ export function createVoiceSpeechDriver(options: {
 }): VoiceSpeechDriver {
   const { engine, now } = options;
   let inputs = options.inputs;
+  const openedAt = now();
   const devLog = (line: string) => {
-    if (inputs.engineConfig.logStages) options.log(line);
+    if (inputs.engineConfig.logStages) options.log(`${sinceOpen(now() - openedAt)} ${line}`);
   };
   let lastStep = { name: "open", atMs: now() };
   let state: VoiceSpeechState;
@@ -151,6 +152,7 @@ export function createVoiceSpeechDriver(options: {
         return;
       }
       case "speak":
+        devLog(`[voice] speak ${effect.id}`);
         // `speak` rejects without a playback event when the engine never took the item.
         engine
           .speak({ id: effect.id, text: effect.text })
@@ -239,6 +241,11 @@ export function createVoiceSpeechDriver(options: {
       stopping = engine.stop().catch(() => {});
     },
   };
+}
+
+/** Stamps a dev log line with the time since this session's engine opened. */
+function sinceOpen(ms: number): string {
+  return `+${(ms / 1000).toFixed(3)}s`;
 }
 
 function errorCode(error: unknown): string {

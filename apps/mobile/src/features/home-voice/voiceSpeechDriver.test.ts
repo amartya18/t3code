@@ -173,7 +173,48 @@ it("in development, logs a blocked JS thread with the voice step just before it"
 
   clock = 1_600;
   vi.advanceTimersByTime(100);
-  expect(logs).toContain("[voice] js blocked 1500ms, 100ms after tap");
+  expect(logs).toContain("+1.600s [voice] js blocked 1500ms, 100ms after tap");
+
+  driver.dispose();
+  vi.useRealTimers();
+});
+
+it("in development, stamps each line with the time since the session opened, on arrival", async () => {
+  vi.useFakeTimers();
+  let clock = 5_000;
+  const logs: string[] = [];
+  const listeners = new Map<string, (event: unknown) => void>();
+  const engine: VoiceEngine = {
+    ...fakeEngine().engine,
+    stop: async () => {},
+    addListener: (name, listener) => {
+      listeners.set(name, listener as (event: unknown) => void);
+      return { remove: () => {} };
+    },
+  };
+  const driver = open(
+    engine,
+    () => clock,
+    (line) => {
+      logs.push(line);
+    },
+  );
+  await settle();
+  clock = 5_250;
+  driver.dispatch({
+    type: "thread",
+    replies: [{ id: "r1", text: "Hello there.", streaming: false }],
+    userMessageIds: new Set(),
+    lastLine: null,
+    atMs: clock,
+  });
+  clock = 5_400;
+  listeners.get("stage")!({ name: "synth.start:r1:0.0", atMs: 5_390 });
+
+  expect(logs).toEqual([
+    "+0.250s [voice] speak r1:0.0",
+    "+0.400s [voice] stage synth.start:r1:0.0",
+  ]);
 
   driver.dispose();
   vi.useRealTimers();
