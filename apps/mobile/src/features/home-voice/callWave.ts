@@ -22,6 +22,14 @@ export function callWaveHeights(count: number, tallest: number): ReadonlyArray<n
   });
 }
 
+// Reanimated's Babel plugin turns worklet declarations into unhoisted assignments; keep this above waveBar.
+function sweepHighlight(sweep: number, at: number): number {
+  "worklet";
+  if (sweep <= 0 || sweep >= SWEEPS) return 0;
+  const head = (sweep % 1) * 1.5 - 0.25;
+  return Math.max(0, 1 - Math.abs(at - head) * 5);
+}
+
 /**
  * One bar: its scale against its full height, and its tint from grey (0) to blue (1). It sits at
  * `rest`, swings toward `peak` while he talks, and bumps as the send sweep passes.
@@ -41,13 +49,6 @@ export function waveBar(
     scale: Math.max(live, rest * (1 + 1.6 * highlight)),
     tint: Math.max(moment.energy, highlight),
   };
-}
-
-function sweepHighlight(sweep: number, at: number): number {
-  "worklet";
-  if (sweep <= 0 || sweep >= SWEEPS) return 0;
-  const head = (sweep % 1) * 1.5 - 0.25;
-  return Math.max(0, 1 - Math.abs(at - head) * 5);
 }
 
 /** The glow behind the controls: rises while he talks, pulses low through the sweep. */
