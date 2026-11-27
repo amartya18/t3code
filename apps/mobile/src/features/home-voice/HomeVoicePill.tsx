@@ -75,13 +75,15 @@ function MinimizedCall(props: { readonly session: VoiceSession; readonly top: nu
             startedAtMs={props.session.startedAtMs}
             className="font-t3-bold text-base"
           />
-          {status === null ? (
-            <PillWave />
-          ) : (
-            <Text numberOfLines={1} className="text-xs text-foreground-muted">
-              {status}
-            </Text>
-          )}
+          <View className="h-[17px] justify-center">
+            {status === null ? (
+              <PillWave />
+            ) : (
+              <Text numberOfLines={1} className="text-xs text-foreground-muted">
+                {status}
+              </Text>
+            )}
+          </View>
         </View>
       </Pressable>
       <SessionSettingsButton size={40} />

@@ -315,8 +315,8 @@ function VoiceTranscript(props: { readonly session: VoiceSession }) {
 
 /** Amar's words while he talks; the only part that changes on every partial. */
 function LiveWords() {
-  const speech = useAtomValue(voiceSpeechAtom);
-  if (speech === null || (speech.current === null && !speech.hearing)) return null;
+  const words = useAtomValue(voiceSpeechAtom)?.current ?? null;
+  if (words === null) return null;
   return (
     <Animated.View
       entering={ROW_ENTERING}
@@ -324,9 +324,7 @@ function LiveWords() {
       className="self-end"
       style={{ maxWidth: "80%" }}
     >
-      <Text className="text-base text-right text-foreground-muted">
-        {speech.current ?? "\u00a0"}
-      </Text>
+      <Text className="text-base text-right text-foreground-muted">{words}</Text>
     </Animated.View>
   );
 }
