@@ -3,13 +3,15 @@ import { useNavigation } from "@react-navigation/native";
 import * as Option from "effect/Option";
 import * as Haptics from "expo-haptics";
 import { useGT } from "gt-react-native";
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Linking, Pressable, View } from "react-native";
+import { memo, useEffect, useRef, useState, type ReactNode } from "react";
+import { Linking, Pressable, ScrollView, View } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import Animated, {
   cancelAnimation,
   Easing,
   FadeIn,
+  LayoutAnimationConfig,
+  LinearTransition,
   useAnimatedStyle,
   useSharedValue,
   withTiming,
@@ -93,7 +95,6 @@ function VoiceCall(props: { readonly session: VoiceSession }) {
           </VoiceStage>
         ) : (
           <>
-            <View className="flex-1" />
             <VoiceTranscript session={props.session} />
             <TypedMessageField session={props.session} />
           </>
@@ -143,7 +144,7 @@ function VoiceStage(props: { readonly children: ReactNode }) {
       accessibilityRole="button"
       accessibilityLabel={gt("Send now or interrupt")}
       accessibilityHint={gt("Press and hold to keep waiting")}
-      className="flex-1 justify-end"
+      className="flex-1"
       delayLongPress={350}
       onPress={tapVoiceStage}
       onLongPress={() => {
@@ -162,12 +163,21 @@ function VoiceStage(props: { readonly children: ReactNode }) {
   );
 }
 
+const ROW_ENTERING = FadeIn.duration(180);
+const ROW_LAYOUT = LinearTransition.duration(180);
+/** How close to the end still counts as reading the newest line, so new lines scroll into view. */
+const FOLLOW_SLACK = 24;
+
+/** Every line of the call, pinned to the newest; scrolling up to read stops the pinning. */
 function VoiceTranscript(props: { readonly session: VoiceSession }) {
   const gt = useGT();
   const { thread } = props.session;
   const state = useEnvironmentThread(thread.environmentId, thread.threadId);
   const connection = useVoiceConnection(thread);
   const speech = useAtomValue(voiceTranscriptSpeechAtom);
+  const scroll = useRef<React.ComponentRef<typeof ScrollView>>(null);
+  const following = useRef(true);
+  const laidOut = useRef(false);
   const sent = Option.match(state.data, {
     onNone: () => [],
     onSome: (data) =>
@@ -190,47 +200,80 @@ function VoiceTranscript(props: { readonly session: VoiceSession }) {
   );
 
   return (
-    <View className="gap-3 px-6" accessibilityLiveRegion="polite">
-      {lines.map((line, index) =>
-        line.kind === "user" ? (
-          <TranscriptRow key={line.id} line={line} newest={index === lines.length - 1} />
-        ) : (
-          <Animated.View key={line.id} entering={FadeIn.duration(180)}>
-            <TranscriptRow line={line} newest={index === lines.length - 1} />
-          </Animated.View>
-        ),
-      )}
-      <LiveWords />
-      <SpeechNotes />
-      {connection.offline ? (
-        <Text className="text-xs text-foreground-muted">
-          {gt("Reconnecting")}
-          {connection.queued.length > 0
-            ? ` · ${gt("{count} waiting to send", { count: connection.queued.length })}`
-            : ""}
-          {" · "}
-          <Text
-            accessibilityRole="button"
-            className="text-xs text-primary-text"
-            onPress={connection.retry}
-          >
-            {gt("Retry")}
+    <>
+      <ScrollView
+        ref={scroll}
+        className="flex-1"
+        contentContainerClassName="grow justify-end gap-3 px-6 pb-3 pt-4"
+        accessibilityLiveRegion="polite"
+        scrollEventThrottle={100}
+        onScroll={(event) => {
+          const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+          following.current =
+            contentSize.height - contentOffset.y - layoutMeasurement.height <= FOLLOW_SLACK;
+        }}
+        onContentSizeChange={() => {
+          if (!following.current) return;
+          scroll.current?.scrollToEnd({ animated: laidOut.current });
+          laidOut.current = true;
+        }}
+      >
+        <LayoutAnimationConfig skipEntering>
+          {lines.map((line, index) => (
+            <TranscriptRow
+              key={line.id}
+              kind={line.kind}
+              text={line.kind === "homeReply" ? "" : line.text}
+              newest={index === lines.length - 1}
+            />
+          ))}
+          <LiveWords />
+        </LayoutAnimationConfig>
+      </ScrollView>
+      <View className="gap-1 px-6">
+        <SpeechNotes />
+        {connection.offline ? (
+          <Text className="text-xs text-foreground-muted">
+            {gt("Reconnecting")}
+            {connection.queued.length > 0
+              ? ` · ${gt("{count} waiting to send", { count: connection.queued.length })}`
+              : ""}
+            {" · "}
+            <Text
+              accessibilityRole="button"
+              className="text-xs text-primary-text"
+              onPress={connection.retry}
+            >
+              {gt("Retry")}
+            </Text>
           </Text>
-        </Text>
-      ) : null}
-    </View>
+        ) : null}
+      </View>
+    </>
   );
 }
 
-/** Amar's words while he talks; the only part that changes on every partial. */
+/**
+ * Amar's words while he talks; the only part that changes on every partial. The send countdown
+ * hangs below it in the list's bottom padding, so it never pushes a line.
+ */
 function LiveWords() {
   const speech = useAtomValue(voiceSpeechAtom);
   if (speech?.current == null) return null;
   return (
-    <View className="items-end gap-1.5 self-end" style={{ maxWidth: "80%" }}>
+    <Animated.View
+      entering={ROW_ENTERING}
+      layout={ROW_LAYOUT}
+      className="self-end"
+      style={{ maxWidth: "80%" }}
+    >
       <Text className="text-base text-right text-foreground-muted">{speech.current}</Text>
-      {speech.pause != null ? <SendCountdown {...speech.pause} /> : null}
-    </View>
+      {speech.pause != null ? (
+        <View className="absolute -bottom-2 right-0">
+          <SendCountdown {...speech.pause} />
+        </View>
+      ) : null}
+    </Animated.View>
   );
 }
 
@@ -335,10 +378,27 @@ function EngineNote(props: { readonly engine: VoiceSpeechView["engine"] }) {
   }
 }
 
-function TranscriptRow(props: { readonly line: TranscriptLine; readonly newest: boolean }) {
+/** One line of the call; memoized so a streamed reply redraws only its own row. */
+const TranscriptRow = memo(function TranscriptRow(props: {
+  readonly kind: TranscriptLine["kind"];
+  readonly text: string;
+  readonly newest: boolean;
+}) {
+  // His lines take over from his live words in place, so only the others fade in.
+  return (
+    <Animated.View entering={props.kind === "user" ? undefined : ROW_ENTERING} layout={ROW_LAYOUT}>
+      <TranscriptLineText {...props} />
+    </Animated.View>
+  );
+});
+
+function TranscriptLineText(props: {
+  readonly kind: TranscriptLine["kind"];
+  readonly text: string;
+  readonly newest: boolean;
+}) {
   const gt = useGT();
-  const { line } = props;
-  if (line.kind === "homeReply" || line.kind === "homeNote") {
+  if (props.kind === "homeReply" || props.kind === "homeNote") {
     return (
       <View className="flex-row items-center gap-1.5">
         <SymbolView
@@ -348,18 +408,18 @@ function TranscriptRow(props: { readonly line: TranscriptLine; readonly newest: 
           type="monochrome"
         />
         <Text numberOfLines={2} className="shrink text-xs text-foreground-muted">
-          {line.kind === "homeReply" ? gt("Home replied") : line.text}
+          {props.kind === "homeReply" ? gt("Home replied") : props.text}
         </Text>
       </View>
     );
   }
-  if (line.kind === "agent") {
+  if (props.kind === "agent") {
     return (
       <Text
         className={cn("text-base", props.newest ? "text-foreground" : "text-foreground-muted")}
         style={{ maxWidth: "88%" }}
       >
-        {line.text}
+        {props.text}
       </Text>
     );
   }
@@ -371,7 +431,7 @@ function TranscriptRow(props: { readonly line: TranscriptLine; readonly newest: 
       )}
       style={{ maxWidth: "80%" }}
     >
-      {line.text}
+      {props.text}
     </Text>
   );
 }

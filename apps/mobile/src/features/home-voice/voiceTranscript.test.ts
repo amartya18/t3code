@@ -29,10 +29,20 @@ describe("voiceTranscript", () => {
     ]);
   });
 
-  it("appends queued messages once and keeps the last six lines", () => {
-    const sent = Array.from({ length: 6 }, (_, index) => agent(`a${index}`, `Line ${index}`));
-    const lines = voiceTranscript(sent, [agent("a5", "Line 5"), user("q", "Still there?")], null);
-    expect(lines.map((line) => line.id)).toEqual(["a1", "a2", "a3", "a4", "a5", "q"]);
+  it("appends queued messages once and keeps every line", () => {
+    const sent = Array.from({ length: 8 }, (_, index) => agent(`a${index}`, `Line ${index}`));
+    const lines = voiceTranscript(sent, [agent("a7", "Line 7"), user("q", "Still there?")], null);
+    expect(lines.map((line) => line.id)).toEqual([
+      "a0",
+      "a1",
+      "a2",
+      "a3",
+      "a4",
+      "a5",
+      "a6",
+      "a7",
+      "q",
+    ]);
     expect(lines.at(-1)).toEqual({ id: "q", kind: "user", text: "Still there?" });
   });
 

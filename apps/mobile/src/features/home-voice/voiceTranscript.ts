@@ -18,8 +18,6 @@ export type TranscriptLine =
   | { readonly id: string; readonly kind: "homeReply" }
   | { readonly id: string; readonly kind: "homeNote"; readonly text: string };
 
-export const TRANSCRIPT_LINES = 6;
-
 const CATCH_UP = "[Catch-up]";
 const HOME_UPDATE = "[Home update]";
 const HOME_REPLY = "Home replied:";
@@ -47,7 +45,7 @@ function lineFor(
 }
 
 /**
- * The call screen's last lines: sent messages, then any still waiting in the outbox, then Amar's
+ * The call screen's lines: sent messages, then any still waiting in the outbox, then Amar's
  * own line, which stands in for its outbox and thread copies until the thread has it. A reply
  * shows as far as the voice has spoken it.
  */
@@ -67,5 +65,5 @@ export function voiceTranscript(
       .map((message) => lineFor(message, speech)),
     own === null ? null : { id: own.messageId ?? "own", kind: "user" as const, text: own.text },
   ].filter((line) => line !== null);
-  return lines.slice(-TRANSCRIPT_LINES);
+  return lines;
 }
