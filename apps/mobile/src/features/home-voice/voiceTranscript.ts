@@ -1,3 +1,5 @@
+import { withoutEndCall } from "./endCall";
+import { HOME_UPDATE } from "./homeUpdates";
 import type { OwnLine, ReplyShown } from "./voiceSpeech";
 
 /** What the transcript takes from the speech session; null when this build has no voice. */
@@ -18,14 +20,13 @@ export type TranscriptLine =
   | { readonly id: string; readonly kind: "homeReply" }
   | { readonly id: string; readonly kind: "homeNote"; readonly text: string };
 
-const HOME_UPDATE = "[Home update]";
 const HOME_REPLY = "Home replied:";
 
 function lineFor(
   message: TranscriptMessage,
   speech: TranscriptSpeech | null,
 ): TranscriptLine | null {
-  const text = message.text.trim();
+  const text = (message.role === "assistant" ? withoutEndCall(message.text) : message.text).trim();
   if (text === "" || message.role === "system") return null;
   if (message.role === "assistant") {
     const shown: ReplyShown | undefined =

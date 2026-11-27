@@ -28,6 +28,19 @@ describe("voiceTranscript", () => {
     ]);
   });
 
+  it("hides the end-call marker, and a reply that is only the marker", () => {
+    expect(
+      voiceTranscript(
+        [user("u", "Bye."), agent("b", "Bye, Amar. [end call]"), agent("m", "[end call]")],
+        [],
+        null,
+      ),
+    ).toEqual([
+      { id: "u", kind: "user", text: "Bye." },
+      { id: "b", kind: "agent", text: "Bye, Amar." },
+    ]);
+  });
+
   it("appends queued messages once and keeps every line", () => {
     const sent = Array.from({ length: 8 }, (_, index) => agent(`a${index}`, `Line ${index}`));
     const lines = voiceTranscript(sent, [agent("a7", "Line 7"), user("q", "Still there?")], null);

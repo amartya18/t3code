@@ -42,6 +42,7 @@ export function createVoiceSpeechDriver(options: {
   readonly newMessageId: () => string;
   readonly log: (line: string) => void;
   readonly onReady: () => void;
+  readonly onHangUp: () => void;
   readonly onChange: (state: VoiceSpeechState, config: VoiceSpeechConfig) => void;
 }): VoiceSpeechDriver {
   const { engine, now } = options;
@@ -165,6 +166,9 @@ export function createVoiceSpeechDriver(options: {
         return;
       case "ready":
         options.onReady();
+        return;
+      case "hangUp":
+        options.onHangUp();
         return;
       case "log":
         devLog(effect.line);

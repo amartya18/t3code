@@ -46,7 +46,12 @@ function call(
   let replies: AgentReply[] = [];
   let ids = 0;
   /** The thread has a line once the outbox delivers it; `delivering` false holds lines back. */
-  const thread = { delivering: true, landed: new Set<string>(), held: [] as string[] };
+  const thread = {
+    delivering: true,
+    landed: new Set<string>(),
+    lines: [] as string[],
+    held: [] as Array<{ messageId: string; text: string }>,
+  };
   const answers: Array<() => void> = [];
   const engine = {
     transcript: "",
@@ -55,6 +60,7 @@ function call(
     downloading: false,
     discarded: 0,
     readyCues: 0,
+    hangUps: 0,
     stops: [] as number[],
     synthesizing: [] as Array<{ id: string; text: string }>,
   };
@@ -95,8 +101,8 @@ function call(
         return;
       case "send":
         sent.push(effect.text);
-        if (thread.delivering) thread.landed.add(effect.messageId);
-        else thread.held.push(effect.messageId);
+        if (thread.delivering) land(effect.messageId, effect.text);
+        else thread.held.push({ messageId: effect.messageId, text: effect.text });
         answers.push(() => send({ type: "sent", ok: true, messageId: effect.messageId }));
         return;
       case "speak":
@@ -120,6 +126,9 @@ function call(
       case "ready":
         engine.readyCues += 1;
         return;
+      case "hangUp":
+        engine.hangUps += 1;
+        return;
     }
   };
 
@@ -142,8 +151,18 @@ function call(
     while (answers.length > 0) answers.shift()!();
   };
 
+  const land = (messageId: string, text: string) => {
+    thread.landed.add(messageId);
+    thread.lines.push(text);
+  };
+
   const threadChanged = () =>
-    send({ type: "thread", replies, userMessageIds: new Set(thread.landed) });
+    send({
+      type: "thread",
+      replies,
+      userMessageIds: new Set(thread.landed),
+      lastLine: thread.lines.at(-1) ?? null,
+    });
 
   apply(openVoiceSpeech(options.previous ?? null));
   settle();
@@ -184,8 +203,14 @@ function call(
     holdDelivery() {
       thread.delivering = false;
     },
+    /** A line typed rather than spoken: it lands in the thread without the mic. */
+    type(text: string) {
+      land(`typed-${thread.lines.length}`, text);
+      threadChanged();
+      settle();
+    },
     deliver() {
-      for (const messageId of thread.held.splice(0)) thread.landed.add(messageId);
+      for (const line of thread.held.splice(0)) land(line.messageId, line.text);
       thread.delivering = true;
       threadChanged();
       settle();
@@ -478,6 +503,71 @@ describe("voice speech", () => {
     second.reply("r2", "New.");
     second.playAll();
     expect(second.played).toEqual(["New."]);
+  });
+});
+
+describe("ending the call", () => {
+  const sayLine = (voice: ReturnType<typeof call>, text: string) => {
+    voice.say(text);
+    voice.stopTalking();
+    voice.wait(3_000);
+  };
+
+  it("hangs up once the goodbye to Amar's bye has played, never voicing the marker", () => {
+    const voice = call();
+    sayLine(voice, "Okay, that's all, bye.");
+    voice.reply("r1", "Bye, Amar. [end call]", true);
+    voice.reply("r1", "Bye, Amar. [end call]");
+    expect(voice.engine.synthesizing.map((item) => item.text)).toEqual(["Bye, Amar."]);
+    expect(voice.engine.hangUps).toBe(0);
+
+    voice.playAll();
+    expect(voice.played).toEqual(["Bye, Amar."]);
+    expect(voice.engine.hangUps).toBe(1);
+  });
+
+  it("hangs up at once when the voice can't speak the goodbye", () => {
+    const voice = call({ startError: "permission_denied" });
+    voice.type("I'm done.");
+    voice.reply("r1", "Bye, Amar. [end call]");
+    expect(voice.engine.hangUps).toBe(1);
+  });
+
+  it("stays on when Amar says bye and keeps going", () => {
+    const voice = call();
+    sayLine(voice, "Bye bye, wait, one more thing.");
+    voice.reply("r1", "Sure, go ahead. [end call]");
+    voice.playAll();
+    expect(voice.played).toEqual(["Sure, go ahead."]);
+    expect(voice.engine.hangUps).toBe(0);
+  });
+
+  it("never ends the call on the agent's own initiative", () => {
+    const voice = call();
+    sayLine(voice, "What is Home doing?");
+    voice.reply("r1", "Home is idle. [end call]");
+    voice.playAll();
+    expect(voice.engine.hangUps).toBe(0);
+  });
+
+  it("ignores a marker anywhere but the very end of the reply", () => {
+    const voice = call();
+    sayLine(voice, "Bye.");
+    voice.reply("r1", "Bye. [end call] Anything else before you go?");
+    voice.playAll();
+    expect(voice.played).toEqual(["Bye. Anything else before you go?"]);
+    expect(voice.engine.hangUps).toBe(0);
+  });
+
+  it("stays on when Amar talks over the goodbye", () => {
+    const voice = call();
+    sayLine(voice, "Bye.");
+    voice.reply("r1", `${ONE} ${TWO} ${THREE} Bye for now. [end call]`);
+    const [first] = voice.engine.synthesizing;
+    voice.send({ type: "playback", id: first!.id, state: "started" });
+    voice.say("wait, one more thing");
+    voice.playAll();
+    expect(voice.engine.hangUps).toBe(0);
   });
 });
 

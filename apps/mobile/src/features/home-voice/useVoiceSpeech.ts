@@ -8,10 +8,11 @@ import { voiceEngine } from "../../../modules/t3-voice-mode";
 import { uuidv4 } from "../../lib/uuid";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { DEFAULT_END_OF_TURN_CONFIG, sendCountdown } from "./endOfTurn";
+import { HOME_UPDATE } from "./homeUpdates";
 import { DEFAULT_BARGE_IN_CONFIG } from "./speechQueue";
 import { useVoiceThread } from "./useVoiceCall";
 import { ECHO_CANCELLATION, voiceEngineConfig } from "./voiceEngine";
-import { sendVoiceMessage, type VoiceSession } from "./voiceSession";
+import { endVoiceSession, sendVoiceMessage, type VoiceSession } from "./voiceSession";
 import { useVoiceModeSettings } from "./voiceSettings";
 import {
   liveWords,
@@ -117,6 +118,7 @@ export function useVoiceSpeech(session: VoiceSession) {
       newMessageId: uuidv4,
       log: (line) => console.log(line),
       onReady: () => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light),
+      onHangUp: endVoiceSession,
       onChange: (state, config) => {
         remembered = { key, state };
         publish(state, config);
@@ -141,10 +143,10 @@ export function useVoiceSpeech(session: VoiceSession) {
   }, [messages]);
 }
 
-function threadEvent(
+export function threadEvent(
   messages: ReadonlyArray<OrchestrationV2ConversationMessage>,
   atMs: number,
-): VoiceSpeechEvent {
+): Extract<VoiceSpeechEvent, { type: "thread" }> {
   return {
     type: "thread",
     replies: messages
@@ -153,6 +155,13 @@ function threadEvent(
     userMessageIds: new Set(
       messages.filter((message) => message.role === "user").map((message) => message.id),
     ),
+    lastLine:
+      messages.findLast(
+        (message) =>
+          message.role === "user" &&
+          message.notification === undefined &&
+          !message.text.startsWith(HOME_UPDATE),
+      )?.text ?? null,
     atMs,
   };
 }

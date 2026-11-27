@@ -1,3 +1,4 @@
+import { goodbyeReply, withoutEndCall } from "./endCall";
 import {
   DEFAULT_END_OF_TURN_CONFIG,
   INITIAL_END_OF_TURN_STATE,
@@ -64,6 +65,14 @@ interface ReplyProgress {
   readonly done: boolean;
 }
 
+/** The call ends after the agent's goodbye to Amar has played. */
+type CallEnding =
+  | { readonly kind: "open" }
+  | { readonly kind: "goodbye"; readonly replyId: string }
+  | { readonly kind: "ended" };
+
+const OPEN: CallEnding = { kind: "open" };
+
 interface TurnTiming {
   readonly turn: number;
   readonly reason: FinalizeReason;
@@ -91,6 +100,7 @@ export interface VoiceSpeechState {
   readonly progress: ReadonlyMap<string, ReplyProgress>;
   readonly shown: ReadonlyMap<string, ReplyShown>;
   readonly turns: number;
+  readonly ending: CallEnding;
   readonly timing: TurnTiming | null;
   /** When the speech queue last moved, or null until the next tick stamps it. */
   readonly speechMovedAtMs: number | null;
@@ -155,6 +165,8 @@ export type VoiceSpeechEvent =
       readonly type: "thread";
       readonly replies: ReadonlyArray<AgentReply>;
       readonly userMessageIds: ReadonlySet<string>;
+      /** Amar's newest line in the thread; Home's updates are not his. */
+      readonly lastLine: string | null;
       readonly atMs: number;
     };
 
@@ -172,6 +184,7 @@ export type VoiceSpeechEffect =
   | { readonly type: "duck"; readonly level: number }
   /** The mic just started hearing Amar: the call's only cue, since it opens silent. */
   | { readonly type: "ready" }
+  | { readonly type: "hangUp" }
   | { readonly type: "log"; readonly line: string };
 
 export interface VoiceSpeechStep {
@@ -192,6 +205,7 @@ const INITIAL: VoiceSpeechState = {
   progress: new Map(),
   shown: new Map(),
   turns: 0,
+  ending: OPEN,
   timing: null,
   speechMovedAtMs: null,
 };
@@ -235,7 +249,25 @@ export function stepVoiceSpeech(
 ): VoiceSpeechStep {
   const step = stepWatched(state, event, config);
   const shown = speechOff(step.state.engine) ? showAll(step.state) : showUnheard(step.state);
-  return shown === step.state ? step : { ...step, state: shown };
+  return hangUpAfterGoodbye(shown === step.state ? step : { ...step, state: shown });
+}
+
+/** Hangs up once the goodbye has played, or at once when the voice can't play it. Amar talking keeps the call. */
+function hangUpAfterGoodbye(step: VoiceSpeechStep): VoiceSpeechStep {
+  const { state } = step;
+  if (state.ending.kind !== "goodbye") return step;
+  if (amarAhead(state)) return { ...step, state: { ...state, ending: OPEN } };
+  const progress = state.progress.get(state.ending.replyId);
+  if (!speechOff(state.engine) && (progress === undefined || !allPlayed(progress))) return step;
+  return {
+    state: { ...state, ending: { kind: "ended" } },
+    effects: [...step.effects, { type: "hangUp" }],
+  };
+}
+
+/** Amar is talking, or said something the thread doesn't have yet. */
+function amarAhead(state: VoiceSpeechState): boolean {
+  return liveWords(state) !== null || state.own !== null;
 }
 
 /** The engine won't voice replies now, so the transcript is the only way to get them. */
@@ -347,16 +379,19 @@ function stepSpeech(
       return onSent(state, event);
     case "thread":
       return speakReplies(
-        noteFirstText(
-          {
-            ...state,
-            replies: event.replies,
-            own:
-              state.own?.messageId != null && event.userMessageIds.has(state.own.messageId)
-                ? null
-                : state.own,
-          },
-          event.atMs,
+        noteGoodbye(
+          noteFirstText(
+            {
+              ...state,
+              replies: event.replies,
+              own:
+                state.own?.messageId != null && event.userMessageIds.has(state.own.messageId)
+                  ? null
+                  : state.own,
+            },
+            event.atMs,
+          ),
+          event.lastLine,
         ),
       );
   }
@@ -619,6 +654,14 @@ function noteFirstText(state: VoiceSpeechState, atMs: number): VoiceSpeechState 
   return { ...state, timing: { ...timing, replyId: reply.id, firstTextMs: atMs } };
 }
 
+function noteGoodbye(state: VoiceSpeechState, lastLine: string | null): VoiceSpeechState {
+  if (state.ending.kind === "ended") return state;
+  const replyId = amarAhead(state) ? null : goodbyeReply(state.replies, lastLine);
+  const current = state.ending.kind === "goodbye" ? state.ending.replyId : null;
+  if (replyId === current) return state;
+  return { ...state, ending: replyId === null ? OPEN : { kind: "goodbye", replyId } };
+}
+
 function onPlaybackEvent(
   state: VoiceSpeechState,
   event: Extract<VoiceSpeechEvent, { type: "playback" }>,
@@ -700,7 +743,7 @@ function afterSpeech(
  */
 function speakReplies(state: VoiceSpeechState): VoiceSpeechStep {
   if (state.engine.kind !== "listening") return stay(state);
-  const ahead = liveWords(state) !== null || state.own !== null;
+  const ahead = amarAhead(state);
   let queue = state.queue;
   let progress = state.progress;
   let shown = state.shown;
@@ -709,9 +752,10 @@ function speakReplies(state: VoiceSpeechState): VoiceSpeechStep {
     const known = progress.get(reply.id);
     if (known?.done === true) continue;
     const spoken = known?.spoken ?? 0;
+    const words = withoutEndCall(reply.text);
     const chunks = reply.streaming
-      ? nextSpeechChunks(reply.text, spoken)
-      : speechChunks(reply.text).slice(spoken);
+      ? nextSpeechChunks(words, spoken)
+      : speechChunks(words).slice(spoken);
     if (chunks.length === 0 && reply.streaming) continue;
     const revision = ahead ? STALE_REVISION : (known?.revision ?? queue.revision);
     chunks.forEach((text, index) => {

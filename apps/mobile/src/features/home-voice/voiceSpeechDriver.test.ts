@@ -60,6 +60,7 @@ function open(
     newMessageId: () => "m1",
     log: log ?? (() => {}),
     onReady: () => {},
+    onHangUp: () => {},
     onChange: () => {},
   });
 }
@@ -105,6 +106,7 @@ it("ducks the voice in steps rather than one jump, and restores it the same way"
     type: "thread",
     replies: [{ id: "r1", text: "A long answer that keeps going.", streaming: false }],
     userMessageIds: new Set(),
+    lastLine: null,
     atMs: 0,
   });
 
