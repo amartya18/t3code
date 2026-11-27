@@ -623,7 +623,6 @@ const makeTestPictureInPictureWindow = (loadURL: () => Promise<void> = async () 
   return { pictureInPictureWindow, send, webContentsListeners };
 };
 
-// Records listeners so a test can raise Electron events on a fake.
 const makeTestEmitter = () => {
   const listeners = new Map<string, Set<(...args: never[]) => void>>();
   const off = (event: string, listener: (...args: never[]) => void) => {
@@ -647,8 +646,6 @@ const makeTestEmitter = () => {
   return { on: vi.fn(on), once: vi.fn(once), off: vi.fn(off), emit };
 };
 
-// A page's contents with a navigation stack; `restored` notifies when a history restore starts.
-// Empty contents have no renderer until a restore loads a page, and CDP holds their commands until then.
 const makeTestNavigableWebContents = (
   id: number,
   navigation: { readonly entries: Electron.NavigationEntry[]; readonly index: number },
@@ -666,7 +663,6 @@ const makeTestNavigableWebContents = (
   const detachListeners = new Set<() => void>();
   const events = makeTestEmitter();
   let destroyed = false;
-  /** The page finished unloading, as after its beforeunload let a close go on. */
   const unload = () => {
     if (destroyed) return;
     destroyed = true;
@@ -724,16 +720,10 @@ const makeTestNavigableWebContents = (
   };
 };
 
-/** The main window's main frame, which opens every tab's own window. */
 const testAppFrame = { frameTreeNodeId: 1, send: vi.fn() } as unknown as Electron.WebFrameMain;
 
-/** What the main window's open handler is told about the renderer's `window.open`. */
 const testWindowOpen = (frameName: string, url = "about:blank") => ({ frameName, url });
 
-/**
- * A tab's own window as the manager builds it for the renderer's `window.open`: the popup's
- * contents hold the bar, stacked above a view of the page.
- */
 const makeTestPreviewWindow = (page: Electron.WebContents, opener = testAppFrame) => {
   const events = makeTestEmitter();
   const barEvents = makeTestEmitter();
@@ -806,7 +796,6 @@ const makeTestPreviewWindow = (page: Electron.WebContents, opener = testAppFrame
   webContentsViewConstructor.mockImplementation(function (options: { webContents?: unknown }) {
     return options.webContents === undefined ? pageView : barView;
   });
-  /** The window manager maximizing the window: only the root view learns the new size in time. */
   const maximize = (width: number, height: number) => {
     events.emit("maximize");
     events.emit("resize");
@@ -826,7 +815,6 @@ const makeTestPreviewWindow = (page: Electron.WebContents, opener = testAppFrame
 
 type TestPreviewWindow = ReturnType<typeof makeTestPreviewWindow>;
 
-/** The main renderer's `window.open` for a tab's own window; the manager builds it in the background. */
 const requestTestWindow = (
   manager: PreviewManager.PreviewManager["Service"],
   tabId: string,
@@ -840,7 +828,6 @@ const requestTestWindow = (
   response?.createWindow?.({ webContents: bar } as Electron.BrowserWindowConstructorOptions);
 };
 
-/** Opens a tab's own window as the main renderer's `window.open` does. */
 const openTestWindow = (
   manager: PreviewManager.PreviewManager["Service"],
   tabId: string,
@@ -2008,7 +1995,6 @@ describe("PreviewManager", () => {
     ),
   );
 
-  // A guest that Chromium keeps dropping, such as one closing before Electron marks it destroyed.
   effectIt.effect("stops reattaching a debugger that Chromium keeps dropping", () =>
     withManager((manager) =>
       Effect.gen(function* () {
@@ -3796,7 +3782,6 @@ describe("PreviewManager", () => {
             nodeIntegration: false,
           }),
         });
-        // The bar is stacked above the page, so its menus draw over it.
         expect(preview.addChildView.mock.calls).toEqual([[preview.pageView], [preview.barView]]);
         expect(preview.pageView.setBounds).toHaveBeenLastCalledWith({
           x: 0,
@@ -3822,15 +3807,12 @@ describe("PreviewManager", () => {
         yield* restored.until(() => page.restore.mock.calls.length > 0);
         expect(page.restore).toHaveBeenCalledWith(guestHistory);
         expect(preview.window.show).toHaveBeenCalled();
-        // A normal window keeps the app menu's shortcuts, such as Quit and Minimize.
         expect(page.wc.setIgnoreMenuShortcuts).not.toHaveBeenCalled();
 
-        // The panel's guest still reports after the page moved out.
         const staleRegistration = yield* Effect.exit(manager.registerWebview("tab_window", 42));
         expect(Exit.isFailure(staleRegistration)).toBe(true);
         expect(states.at(-1)).toMatchObject({ webContentsId: 77, inWindow: true });
 
-        // Closing asks the page first; it goes once its beforeunload lets it.
         yield* manager.closeWindow("tab_window");
         expect(page.close).toHaveBeenCalledWith({ waitForBeforeUnload: true });
         expect(preview.window.destroy).not.toHaveBeenCalled();
@@ -3840,14 +3822,12 @@ describe("PreviewManager", () => {
         expect(preview.window.destroy).toHaveBeenCalledOnce();
         expect(preview.bar.isDestroyed()).toBe(true);
 
-        // The returning guest attaches empty, and the main window registers it as it attaches.
         yield* manager.prepareWebview(returned.wc);
         yield* manager.registerReturningWebview("tab_window", returned.wc);
         yield* restored.until(() => returned.restore.mock.calls.length > 0);
         expect(returned.restore).toHaveBeenCalledWith(windowHistory);
         expect(states.at(-1)).toMatchObject({ webContentsId: 43, inWindow: false });
 
-        // The renderer registers it too once the restored page is ready.
         const seen = states.length;
         yield* manager.registerWebview("tab_window", 43);
         expect(returned.restore).toHaveBeenCalledOnce();
@@ -3856,7 +3836,6 @@ describe("PreviewManager", () => {
     ),
   );
 
-  // The window's keys reach no panel, so the renderer that draws its bar focuses the address there.
   effectIt.effect("focuses a tab window's address bar for the focus-url shortcut", () =>
     withManager((manager) =>
       Effect.gen(function* () {
@@ -3917,7 +3896,6 @@ describe("PreviewManager", () => {
     ),
   );
 
-  // A reloaded renderer cannot draw the old bars, so its tabs come back where their pages left off.
   effectIt.effect("brings every windowed tab back to the panel with its history", () =>
     withManager((manager) =>
       Effect.gen(function* () {
@@ -3960,7 +3938,6 @@ describe("PreviewManager", () => {
     ),
   );
 
-  // Reattaching while the page unloads restarted the close, so the window never closed and main ran away.
   effectIt.effect("leaves a closing window's dropped debugger detached", () =>
     withManager((manager) =>
       Effect.gen(function* () {
@@ -3991,7 +3968,6 @@ describe("PreviewManager", () => {
     ),
   );
 
-  // Staying keeps the page, so it gets back the debugger it lost and a later close asks it again.
   effectIt.effect("keeps a window open with its page controlled when the user stays", () =>
     withManager((manager) =>
       Effect.gen(function* () {
@@ -4032,7 +4008,6 @@ describe("PreviewManager", () => {
     ),
   );
 
-  // Chromium can hold a close for half a second while the page unloads; the window must not wait on screen.
   effectIt.effect("shows the dark app background, not white, until a new window's page loads", () =>
     withManager((manager) =>
       Effect.gen(function* () {
@@ -4056,7 +4031,6 @@ describe("PreviewManager", () => {
           expect.objectContaining({ backgroundColor: "#000000" }),
         );
         expect(preview.pageView.setBackgroundColor).toHaveBeenLastCalledWith("#000000");
-        // A page without a background of its own then gets a browser's white canvas.
         page.emit("dom-ready");
         expect(preview.pageView.setBackgroundColor).toHaveBeenLastCalledWith("#ffffff");
       }),
@@ -4144,7 +4118,6 @@ describe("PreviewManager", () => {
         } as never);
         yield* manager.startRecording("tab_window_recording");
 
-        // Refused before the popup exists, so the renderer's window.open returns null.
         expect(
           manager.windowOpenResponse(
             testWindowOpen(desktopPreviewWindowName("tab_window_recording")),
@@ -4155,7 +4128,6 @@ describe("PreviewManager", () => {
     ),
   );
 
-  // The bar's menus unmount on the main renderer's next frame, which a hidden window never paints.
   effectIt.effect("keeps the main renderer painting while a tab has its own window", () =>
     withManager((manager) =>
       Effect.gen(function* () {
@@ -4228,12 +4200,10 @@ describe("PreviewManager", () => {
         yield* manager.createTab("tab_window_closed");
         yield* manager.registerWebview("tab_window_closed", 42);
         yield* openTestWindow(manager, "tab_window_closed", preview.bar);
-        // The page's beforeunload is still deciding.
         preview.window.close();
 
         yield* manager.closeTab("tab_window_closed");
 
-        // Closed without asking: a page's beforeunload must not keep an orphaned window open.
         expect(page.close).toHaveBeenLastCalledWith();
         expect(page.wc.isDestroyed()).toBe(true);
         expect(preview.bar.isDestroyed()).toBe(true);
@@ -4249,7 +4219,6 @@ describe("PreviewManager", () => {
     ),
   );
 
-  // Frames inside the app, such as an agent's sandboxed visual, can open popups and render links.
   effectIt.effect("opens a tab's window only for the app's own empty popup", () =>
     withManager((manager) =>
       Effect.gen(function* () {
@@ -4293,7 +4262,6 @@ describe("PreviewManager", () => {
     ),
   );
 
-  // A hidden window or page left behind would outlive everything that could close it.
   effectIt.effect.each([
     {
       stage: "while its views are built",

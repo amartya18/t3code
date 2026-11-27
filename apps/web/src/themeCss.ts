@@ -118,7 +118,6 @@ export function applyThemeCss(css: string | undefined): void {
   for (const listener of themeCssListeners) listener();
 }
 
-/** Runs `listener` after each change to the theme CSS in the document's adopted sheets. */
 export function subscribeToThemeCss(listener: () => void): () => void {
   themeCssListeners.add(listener);
   return () => {

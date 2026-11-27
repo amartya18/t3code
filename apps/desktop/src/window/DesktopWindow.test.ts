@@ -268,7 +268,6 @@ function layerTest(input: {
   }>;
   readonly primaryPasteEnabled?: boolean;
   readonly previewPasskeyBridgeEnabled?: boolean;
-  /** Each guest the main window prepares, and each one it registers for a tab back from its window. */
   readonly previewGuests?: Queue.Queue<PreviewGuestCall>;
 }) {
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
@@ -1593,7 +1592,6 @@ describe("DesktopWindow", () => {
       }),
   );
 
-  // Transparent, a fresh guest shows its host until its first frame, and the host showed white.
   it.effect("makes preview guests paint their own default canvas", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();
@@ -1619,7 +1617,6 @@ describe("DesktopWindow", () => {
     }),
   );
 
-  // The renderer registers a guest once it is ready, which an empty guest never is.
   it.effect("registers the guest a preview tab returns to from its window as it attaches", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();
@@ -1648,7 +1645,6 @@ describe("DesktopWindow", () => {
         const tabId = JSON.stringify(["environment-1", "thread-1", "epoch-1", "tab_1"]);
 
         assert.equal(attach(11, "https://example.com/"), "https://example.com/");
-        // It attaches empty, so the history of the tab's window can be restored into it.
         assert.equal(attach(12, desktopPreviewWindowReturnUrl(tabId)), "");
         assert.equal(attach(13, "about:blank"), "about:blank");
 
@@ -1736,7 +1732,6 @@ describe("DesktopWindow", () => {
           listener(...args);
         };
 
-        // will-navigate cancels an external link, and a download never commits either.
         fakeWindow.webContentsListeners.get("did-start-navigation")?.({
           isMainFrame: true,
           isSameDocument: false,

@@ -30,7 +30,6 @@ it("keeps the app's styles and theme in the window's document, ahead of its rese
   link.href = "/assets/app.css";
   source.head.append(link);
   source.documentElement.className = "dark";
-  // The app's own styles, then the theme's adopted CSS (none here), then the reset.
   const appStyles = () => mirroredStyles().slice(0, -2);
   const reset = (styles: ReadonlyArray<string | null>) => styles.at(-1);
 
@@ -39,7 +38,6 @@ it("keeps the app's styles and theme in the window's document, ahead of its rese
   expect(reset(mirroredStyles())).toContain("background: transparent");
   expect(target.documentElement.className).toBe("dark");
 
-  // Vite injects and rewrites styles at runtime; the theme changes the root's class and style.
   theme.textContent = ".a { color: blue; }";
   const hot = appStyle(".b { color: green; }");
   link.remove();
@@ -65,7 +63,6 @@ it("reports a menu or tooltip open while one is portaled into the window", async
   const menu = popup.overlays.ownerDocument.createElement("div");
   popup.overlays.append(menu);
   await vi.waitFor(() => expect(overlay).toHaveBeenLastCalledWith(true));
-  // A tooltip handing over to a menu keeps the bar over the page.
   popup.overlays.append(popup.overlays.ownerDocument.createElement("div"));
   menu.remove();
   await Promise.resolve();
@@ -96,11 +93,9 @@ it("keeps an imported or agent theme's CSS, which no element carries, ahead of t
 it("draws the bar once the app's stylesheets load, so no control keeps the browser's default look", async () => {
   const source = document.implementation.createHTMLDocument("app");
   const sheet = URL.createObjectURL(
-    new Blob(
-      // The app's inputs hold their background for an age so autofill never paints them.
-      ["input { background-color: transparent; transition: background-color 5000000s; }"],
-      { type: "text/css" },
-    ),
+    new Blob(["input { background-color: transparent; transition: background-color 5000000s; }"], {
+      type: "text/css",
+    }),
   );
   using _sheet = { [Symbol.dispose]: () => URL.revokeObjectURL(sheet) };
   const link = source.createElement("link");

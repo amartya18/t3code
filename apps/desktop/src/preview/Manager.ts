@@ -425,13 +425,11 @@ interface PictureInPictureSession {
 interface WindowSession {
   readonly window: BrowserWindow;
   readonly pageView: WebContentsView;
-  /** The popup the main renderer opened and draws the browser bar into, stacked above the page. */
   readonly barView: WebContentsView;
   // Held directly: a view's contents can't be reached through it once the page is gone.
   readonly page: Electron.WebContents;
   readonly bar: Electron.WebContents;
   readonly webContentsId: number;
-  /** The bar draws over the page, such as a menu or the empty state, so it covers the window. */
   overlay: boolean;
 }
 
@@ -2215,7 +2213,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     barView.setBounds({ x: 0, y: 0, width, height: session.overlay ? height : bar });
   };
 
-  /** Gives the tab back to the panel; its next guest restores whatever history is pending. */
   const releaseWindowUnlocked = Effect.fn("PreviewManager.releaseWindowUnlocked")(function* (
     tabId: string,
     session: WindowSession,
@@ -2333,7 +2330,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               try {
                 pageView = new WebContentsView({
                   webPreferences: hardenPreviewGuestPreferences(
-                    // Same session as the panel's guest, so cookies and storage carry over.
                     { session: wc.session, preload: guestPreloadPath },
                     { passkeyBridge: passkeys.bridgeEnabled, primaryPaste: primaryPaste.enabled },
                   ),

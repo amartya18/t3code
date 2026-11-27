@@ -31,7 +31,6 @@ function PreviewWindowBar(props: {
   );
 }
 
-/** The browser bar of every preview tab in its own desktop window, drawn into that window. */
 export function PreviewWindowBars() {
   const previewByThreadKey = useActivePreviewSessions();
   return Object.entries(previewByThreadKey).flatMap(([threadKey, previewState]) => {

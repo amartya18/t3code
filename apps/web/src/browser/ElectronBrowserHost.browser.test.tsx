@@ -174,7 +174,6 @@ describe("ElectronBrowserHost", () => {
     expect(after).toHaveLength(2);
     expect(after.every((node, index) => node.isSameNode(before[index]!))).toBe(true);
   });
-  // A fresh guest, such as one a tab returns to from its window, shows its element until it paints.
   it("shows the dark theme's background, not white, behind a page that hasn't painted", async () => {
     using _state = setup();
     document.documentElement.classList.add("dark");
@@ -191,8 +190,6 @@ describe("ElectronBrowserHost", () => {
     expect(background).toBe(getComputedStyle(document.body).backgroundColor);
   });
 
-  // The release that brings a tab back clears its guest id. A listener kept from before the window
-  // took each return for a crash, so a few round trips used up the tab's crash recovery.
   it("still recovers a crashed tab after trips to its own window", async () => {
     using _state = setup();
     reconcilePreviewServerSessions(threadRef, {

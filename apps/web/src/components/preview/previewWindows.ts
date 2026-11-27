@@ -8,7 +8,6 @@ import {
 
 import { previewBridge } from "./previewBridge";
 
-/** A popup this renderer opened for a preview tab's own window, keyed by runtime tab id. */
 export interface PreviewWindow extends PreviewWindowDocument {
   readonly popup: Window;
 }

@@ -5,7 +5,6 @@ import { subscribeToThemeCss } from "~/themeCss";
 const STYLE_SELECTOR = 'style, link[rel~="stylesheet"]';
 
 export interface PreviewWindowDocument {
-  /** The browser bar renders here. */
   readonly root: HTMLElement;
   /**
    * Whatever draws over the page, such as a menu or the empty state, portals here so the desktop

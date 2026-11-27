@@ -402,7 +402,6 @@ describe("PreviewView", () => {
     expect(card.element().contains(hit)).toBe(true);
   });
 
-  // The page is a native view under the bar's document, so the empty state draws over it.
   it("shows a new tab's empty state over its own window's page until a pick navigates it", async () => {
     setup();
     mocks.idleDesktopTab = true;
