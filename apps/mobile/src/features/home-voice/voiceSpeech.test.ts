@@ -255,7 +255,30 @@ describe("voice speech", () => {
     voice.playAll();
     expect(voice.played).toEqual(["Home is idle. No threads are running."]);
     expect(voice.logs).toEqual([
-      "[voice] turn 1 (pause) from speech end: finalized +3000ms, sent +3000ms, first text +3000ms, first speak +3000ms, first audio +3000ms",
+      "[voice] turn 1 (pause) from vad speech end: finalized +3000ms, sent +3000ms, first text +3000ms, first speak +3000ms, first audio +3000ms",
+    ]);
+  });
+
+  it("counts the pause and its latency log from his real end of speech", () => {
+    const voice = call({
+      config: {
+        ...DEFAULT_VOICE_SPEECH_CONFIG,
+        endOfTurn: { ...DEFAULT_VOICE_SPEECH_CONFIG.endOfTurn, earlySend: false, vadEndLagMs: 300 },
+      },
+    });
+    voice.say("what is home doing");
+    voice.wait(300);
+    voice.stopTalking();
+    voice.engine.transcript = "What is Home doing?";
+    voice.wait(2_600);
+    expect(voice.sent).toEqual([]);
+
+    voice.wait(100);
+    expect(voice.sent).toEqual(["What is Home doing?"]);
+    voice.reply("r1", "Home is idle. No threads are running.");
+    voice.playAll();
+    expect(voice.logs).toEqual([
+      "[voice] turn 1 (pause) from real speech end: finalized +3000ms, sent +3000ms, first text +3000ms, first speak +3000ms, first audio +3000ms",
     ]);
   });
 

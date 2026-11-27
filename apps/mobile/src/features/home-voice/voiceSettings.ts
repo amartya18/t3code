@@ -45,6 +45,8 @@ export interface VoiceModeSettings {
   readonly smartCutoffMs: number;
   /** Dev only: Claude turns run with extended thinking, to compare reply latency. */
   readonly thinking: boolean;
+  /** Dev only: the pause counts from when Amar stopped talking, not from the VAD's later report. */
+  readonly pauseFromSpeechEnd: boolean;
 }
 
 const DEFAULT_VOICE_MODEL: ModelSelectionType = {
@@ -66,6 +68,7 @@ const StoredVoiceSettings = Schema.Struct({
   recovery: Schema.optional(Schema.Literals(RECOVERY_MODES)),
   smartCutoffMs: Schema.optional(Schema.Number),
   thinking: Schema.optional(Schema.Boolean),
+  pauseFromSpeechEnd: Schema.optional(Schema.Boolean),
 });
 type StoredVoiceSettings = typeof StoredVoiceSettings.Type;
 const StoredVoiceSettingsJson = Schema.fromJsonString(StoredVoiceSettings);
@@ -136,5 +139,6 @@ export function useVoiceModeSettings(): VoiceModeSettings | null {
           ),
         ),
         thinking: stored.thinking ?? false,
+        pauseFromSpeechEnd: stored.pauseFromSpeechEnd ?? true,
       };
 }
