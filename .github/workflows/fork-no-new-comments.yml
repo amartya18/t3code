@@ -1,0 +1,29 @@
+name: Fork no new comments
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  no-new-comments:
+    name: no-new-comments
+    if: ${{ !startsWith(github.head_ref, 'fork-sync/') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: package.json
+      - name: Reject added comment lines
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/fork-no-new-comments.ts "$BASE_SHA...$HEAD_SHA"
