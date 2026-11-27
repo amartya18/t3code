@@ -4,16 +4,23 @@ import * as Option from "effect/Option";
 import * as Haptics from "expo-haptics";
 import { useGT } from "gt-react-native";
 import { memo, useEffect, useRef, useState, type ReactNode } from "react";
-import { Linking, Pressable, ScrollView, View } from "react-native";
+import { Linking, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
-import Animated, { FadeIn, LayoutAnimationConfig, LinearTransition } from "react-native-reanimated";
+import Animated, {
+  FadeIn,
+  LayoutAnimationConfig,
+  LinearTransition,
+  useAnimatedStyle,
+} from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import Svg, { Defs, RadialGradient, Rect, Stop } from "react-native-svg";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
 import * as Dialog from "../../components/ui/Dialog";
 import { cn } from "../../lib/cn";
 import { serverEnvironment } from "../../state/server";
+import { callGlow, callWaveHeights } from "./callWave";
 import { useVoiceConnection, useVoiceThread } from "./useVoiceCall";
 import {
   holdVoiceStage,
@@ -29,7 +36,11 @@ import {
   MicWaveform,
   MuteButton,
   SessionSettingsButton,
+  useSendSweep,
+  useThemeColor,
+  useVoiceWave,
   VoiceClockTitle,
+  type VoiceWave,
 } from "./VoiceCallControls";
 import { VOICE_ENGINE_SUPPORT } from "./voiceEngine";
 import {
@@ -61,10 +72,7 @@ function VoiceCall(props: { readonly session: VoiceSession }) {
 
   return (
     <KeyboardAvoidingView automaticOffset behavior="padding" className="flex-1 bg-screen">
-      <View
-        className="flex-1"
-        style={{ paddingTop: insets.top + 8, paddingBottom: Math.max(insets.bottom, 16) + 8 }}
-      >
+      <View className="flex-1" style={{ paddingTop: insets.top + 8 }}>
         <View className="flex-row items-center justify-between px-4">
           <CircleButton
             icon="chevron.down"
@@ -90,12 +98,54 @@ function VoiceCall(props: { readonly session: VoiceSession }) {
             <TypedMessageField session={props.session} />
           </>
         )}
-        <View className="flex-row items-center justify-between px-7 pt-5">
-          <MuteButton muted={props.session.muted} size={58} />
-          <HangUpButton size={58} />
-        </View>
+        <CallControls muted={props.session.muted} paddingBottom={Math.max(insets.bottom, 16) + 8} />
       </View>
     </KeyboardAvoidingView>
+  );
+}
+
+const CALL_WAVE = callWaveHeights(29, 30);
+
+/** Mute, the wave, and hang up, over a glow that rises while Amar talks. */
+function CallControls(props: { readonly muted: boolean; readonly paddingBottom: number }) {
+  const wave = useVoiceWave();
+  useSendSweep(wave);
+  return (
+    <View className="pt-5" style={{ paddingBottom: props.paddingBottom }}>
+      <CallGlow wave={wave} />
+      <View className="flex-row items-center justify-between px-7">
+        <MuteButton muted={props.muted} size={58} />
+        <MicWaveform heights={CALL_WAVE} wave={wave} dot={3} />
+        <HangUpButton size={58} />
+      </View>
+    </View>
+  );
+}
+
+/** A gradient drawn once; only its opacity and scale move, on the UI thread. */
+function CallGlow(props: { readonly wave: VoiceWave }) {
+  const blue = useThemeColor("text-primary");
+  const { energy, sweep } = props.wave;
+  const style = useAnimatedStyle(() => {
+    const glow = callGlow({ energy: energy.value, sweep: sweep.value });
+    return { opacity: glow.opacity, transform: [{ scaleY: glow.scale }] };
+  });
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[StyleSheet.absoluteFill, { transformOrigin: "bottom" }, style]}
+    >
+      <Svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 100 100">
+        <Defs>
+          <RadialGradient id="voice-call-glow" cx="50%" cy="100%" rx="60%" ry="100%">
+            <Stop offset="0" stopColor={blue} stopOpacity={0.55} />
+            <Stop offset="0.45" stopColor={blue} stopOpacity={0.18} />
+            <Stop offset="0.75" stopColor={blue} stopOpacity={0} />
+          </RadialGradient>
+        </Defs>
+        <Rect width="100" height="100" fill="url(#voice-call-glow)" />
+      </Svg>
+    </Animated.View>
   );
 }
 
@@ -244,12 +294,7 @@ function VoiceTranscript(props: { readonly session: VoiceSession }) {
   );
 }
 
-const LINE_WAVE = [4, 7, 10, 7, 4];
-
-/**
- * Amar's words while he talks; the only part that changes on every partial. The wave beside it
- * hangs outside its box, so it never pushes a line.
- */
+/** Amar's words while he talks; the only part that changes on every partial. */
 function LiveWords() {
   const speech = useAtomValue(voiceSpeechAtom);
   if (speech === null || (speech.current === null && !speech.hearing)) return null;
@@ -260,9 +305,6 @@ function LiveWords() {
       className="self-end"
       style={{ maxWidth: "80%" }}
     >
-      <View className="absolute -left-8 top-0 h-6 justify-center">
-        <MicWaveform heights={LINE_WAVE} />
-      </View>
       <Text className="text-base text-right text-foreground-muted">
         {speech.current ?? "\u00a0"}
       </Text>

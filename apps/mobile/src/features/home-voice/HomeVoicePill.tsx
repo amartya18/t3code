@@ -6,20 +6,20 @@ import { Pressable, View } from "react-native";
 
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { AppText as Text } from "../../components/ui/AppText";
+import { PILL_WAVE } from "./callWave";
 import { useVoiceConnection } from "./useVoiceCall";
 import {
   HangUpButton,
   MuteButton,
   MicWaveform,
   SessionSettingsButton,
+  useVoiceWave,
   VoiceClockTitle,
 } from "./VoiceCallControls";
 import { useVoiceModelOptions } from "./voiceModels";
 import { VoiceRenderProfiler } from "./voiceRenderProfiler";
 import { voiceSessionAtom, type VoiceSession } from "./voiceSession";
 import { useVoiceModeSettings } from "./voiceSettings";
-
-const PILL_WAVE = [3, 5, 8, 5, 10, 6, 3, 7, 4, 3];
 
 /** Fork hook on Home's thread: the minimized call, below the header. Tap returns to the call. */
 export function HomeVoicePill(props: {
@@ -76,7 +76,7 @@ function MinimizedCall(props: { readonly session: VoiceSession; readonly top: nu
             className="font-t3-bold text-base"
           />
           {status === null ? (
-            <MicWaveform heights={PILL_WAVE} />
+            <PillWave />
           ) : (
             <Text numberOfLines={1} className="text-xs text-foreground-muted">
               {status}
@@ -89,4 +89,8 @@ function MinimizedCall(props: { readonly session: VoiceSession; readonly top: nu
       <HangUpButton size={40} />
     </View>
   );
+}
+
+function PillWave() {
+  return <MicWaveform heights={PILL_WAVE} wave={useVoiceWave()} />;
 }

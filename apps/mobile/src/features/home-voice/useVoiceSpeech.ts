@@ -49,6 +49,12 @@ export const voiceHearingAtom = Atom.make((get) => get(voiceSpeechAtom)?.hearing
   Atom.withLabel("home-voice:hearing"),
 );
 
+/** The id of Amar's latest line sent by voice; changes once per sent line. */
+export const voiceSentAtom = Atom.make(
+  (get): string | null =>
+    get(voiceSpeechAtom)?.own?.messageId ?? Option.getOrNull(get.self<string | null>()),
+).pipe(Atom.withLabel("home-voice:sent"));
+
 /** What the transcript draws of the session; changes once a line or a chunk, not every word. */
 export const voiceTranscriptSpeechAtom = Atom.make((get): TranscriptSpeech | null => {
   const view = get(voiceSpeechAtom);
