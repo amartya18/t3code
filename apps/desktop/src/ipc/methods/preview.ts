@@ -27,6 +27,7 @@ import {
   DesktopPortForwardSchema,
   DesktopSharesLoopbackInputSchema,
   DesktopPreviewWebviewConfigSchema,
+  DesktopPreviewWindowOverlayInputSchema,
   PreviewAnnotationSubmissionResultSchema,
   PreviewCaptureFailure,
   DEFAULT_BROWSER_PROFILE_ID,
@@ -299,6 +300,25 @@ const closePictureInPicture = tabMethod(
   "desktop.ipc.preview.closePictureInPicture",
   (manager, tabId) => manager.closePictureInPicture(tabId),
 );
+const focusWindow = tabMethod(
+  IpcChannels.PREVIEW_WINDOW_FOCUS_CHANNEL,
+  "desktop.ipc.preview.focusWindow",
+  (manager, tabId) => manager.focusWindow(tabId),
+);
+const closeWindow = tabMethod(
+  IpcChannels.PREVIEW_WINDOW_CLOSE_CHANNEL,
+  "desktop.ipc.preview.closeWindow",
+  (manager, tabId) => manager.closeWindow(tabId),
+);
+const setWindowOverlay = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_WINDOW_OVERLAY_CHANNEL,
+  payload: DesktopPreviewWindowOverlayInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.setWindowOverlay")(function* ({ tabId, open }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.setWindowOverlay(tabId, open);
+  }),
+});
 
 const clearCookies = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_CLEAR_COOKIES_CHANNEL,
@@ -585,6 +605,9 @@ export const methods = [
   copyArtifactToClipboard,
   openPictureInPicture,
   closePictureInPicture,
+  focusWindow,
+  closeWindow,
+  setWindowOverlay,
   startRecording,
   stopRecording,
   saveRecording,

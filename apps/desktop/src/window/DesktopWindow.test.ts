@@ -1,7 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
-import { DesktopSnapShotId } from "@t3tools/contracts";
+import { DesktopSnapShotId, desktopPreviewWindowReturnUrl } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -235,6 +235,10 @@ const desktopWindowBoundsEquivalence = Schema.toEquivalence(
   DesktopAppSettings.DesktopWindowBoundsSchema,
 );
 
+type PreviewGuestCall =
+  | readonly [event: "prepare", webContentsId: number]
+  | readonly [event: "register", webContentsId: number, tabId: string];
+
 function layerTest(input: {
   readonly window: Electron.BrowserWindow;
   readonly createCount: Ref.Ref<number>;
@@ -253,6 +257,7 @@ function layerTest(input: {
   readonly onCopyText?: (text: string) => Effect.Effect<void>;
   readonly onPopupTemplate?: (input: ElectronMenu.ElectronMenuTemplateInput) => Effect.Effect<void>;
   readonly previewZoomReapplies?: number[];
+  readonly onClosePreviewWindows?: () => void;
   readonly onReveal?: (window: Electron.BrowserWindow) => void;
   readonly focusedWindow?: Electron.BrowserWindow;
   readonly fallbackWindow?: Electron.BrowserWindow;
@@ -263,6 +268,7 @@ function layerTest(input: {
   }>;
   readonly primaryPasteEnabled?: boolean;
   readonly previewPasskeyBridgeEnabled?: boolean;
+  readonly previewGuests?: Queue.Queue<PreviewGuestCall>;
 }) {
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
   const layerDesktopAppSettings = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
@@ -377,8 +383,20 @@ function layerTest(input: {
         Layer.mock(PreviewManager.PreviewManager)({
           getBrowserSession: () => Effect.succeed({} as Electron.Session),
           setMainWindow: input.setPreviewMainWindow ?? (() => Effect.void),
-          prepareWebview: () => Effect.void,
+          setGuestContextMenu: () => Effect.void,
+          prepareWebview: (contents) =>
+            input.previewGuests
+              ? Queue.offer(input.previewGuests, ["prepare", contents.id]).pipe(Effect.asVoid)
+              : Effect.void,
+          registerReturningWebview: (tabId, contents) =>
+            input.previewGuests
+              ? Queue.offer(input.previewGuests, ["register", contents.id, tabId]).pipe(
+                  Effect.asVoid,
+                )
+              : Effect.void,
           isBrowserPartition: (partition) => partition.startsWith("persist:t3code-preview-"),
+          windowOpenResponse: () => null,
+          closeAllWindows: () => Effect.sync(() => input.onClosePreviewWindows?.()),
           getBrowserPartition: () => Effect.succeed("persist:t3code-preview-test"),
           reapplyZoom: () =>
             Effect.sync(() => {
@@ -489,7 +507,9 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
           Layer.mock(PreviewManager.PreviewManager)({
             getBrowserSession: () => Effect.succeed({} as Electron.Session),
             setMainWindow: () => Effect.void,
+            setGuestContextMenu: () => Effect.void,
             isBrowserPartition: (partition) => partition.startsWith("persist:t3code-preview-"),
+            windowOpenResponse: () => null,
             getBrowserPartition: () => Effect.succeed("persist:t3code-preview-test"),
           }),
         ),
@@ -1559,9 +1579,8 @@ describe("DesktopWindow", () => {
             return yield* Effect.die("will-attach-webview listener was not registered");
           }
           const webPreferences: Electron.WebPreferences = { preload: "/repo/elsewhere/other.cjs" };
-          willAttachWebview({ preventDefault: () => {} }, webPreferences, {
-            partition: "persist:t3code-preview-test",
-          });
+          const params = { partition: "persist:t3code-preview-test", src: "https://example.com/" };
+          willAttachWebview({ preventDefault: () => {} }, webPreferences, params);
 
           assert.deepEqual(webPreferences.additionalArguments, expected);
           assert.isTrue(webPreferences.contextIsolation);
@@ -1571,6 +1590,75 @@ describe("DesktopWindow", () => {
           );
         }).pipe(Effect.provide(layer));
       }),
+  );
+
+  it.effect("makes preview guests paint their own default canvas", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const layer = layerTest({
+        window: fakeWindow.window,
+        createCount: yield* Ref.make(0),
+        mainWindow: yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none()),
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        const willAttachWebview = fakeWindow.webContentsListeners.get("will-attach-webview");
+        if (!willAttachWebview) {
+          return yield* Effect.die("will-attach-webview listener was not registered");
+        }
+        const webPreferences: Electron.WebPreferences = {};
+        const params = { partition: "persist:t3code-preview-test", src: "https://example.com/" };
+        willAttachWebview({ preventDefault: () => {} }, webPreferences, params);
+
+        assert.isFalse(webPreferences.transparent);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("registers the guest a preview tab returns to from its window as it attaches", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const previewGuests = yield* Queue.unbounded<PreviewGuestCall>();
+      const layer = layerTest({
+        window: fakeWindow.window,
+        createCount: yield* Ref.make(0),
+        mainWindow: yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none()),
+        previewGuests,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        const willAttach = fakeWindow.webContentsListeners.get("will-attach-webview");
+        const didAttach = fakeWindow.webContentsListeners.get("did-attach-webview");
+        if (!willAttach || !didAttach) {
+          return yield* Effect.die("webview attach listeners were not registered");
+        }
+        const attach = (id: number, src: string) => {
+          const params = { partition: "persist:t3code-preview-test", src };
+          willAttach({ preventDefault: () => {} }, {}, params);
+          didAttach({}, { id, on: vi.fn() });
+          return params.src;
+        };
+        const tabId = JSON.stringify(["environment-1", "thread-1", "epoch-1", "tab_1"]);
+
+        assert.equal(attach(11, "https://example.com/"), "https://example.com/");
+        assert.equal(attach(12, desktopPreviewWindowReturnUrl(tabId)), "");
+        assert.equal(attach(13, "about:blank"), "about:blank");
+
+        const calls = [];
+        for (let call = 0; call < 4; call++) calls.push(yield* Queue.take(previewGuests));
+        assert.deepEqual(calls, [
+          ["prepare", 11],
+          ["prepare", 12],
+          ["register", 12, tabId],
+          ["prepare", 13],
+        ]);
+        assert.equal(yield* Queue.size(previewGuests), 0);
+      }).pipe(Effect.provide(layer));
+    }),
   );
 
   it.effect("opens safe off-origin renderer navigations in the system browser", () =>
@@ -1618,6 +1706,46 @@ describe("DesktopWindow", () => {
 
         assert.isTrue(prevented);
         assert.deepEqual(openedExternalUrls, ["https://accounts.microsoft.com/oauth"]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("brings preview tabs back from their windows only when the app's document goes", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      let previewWindowCloses = 0;
+      const layer = layerTest({
+        window: fakeWindow.window,
+        createCount: yield* Ref.make(0),
+        mainWindow: yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none()),
+        onClosePreviewWindows: () => {
+          previewWindowCloses += 1;
+        },
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        const emit = (eventName: string, ...args: unknown[]) => {
+          const listener = fakeWindow.webContentsListeners.get(eventName);
+          if (!listener) assert.fail(`${eventName} listener was not registered`);
+          listener(...args);
+        };
+
+        fakeWindow.webContentsListeners.get("did-start-navigation")?.({
+          isMainFrame: true,
+          isSameDocument: false,
+        });
+        yield* Effect.promise(() => Promise.resolve());
+        assert.equal(previewWindowCloses, 0);
+
+        emit("did-navigate", {}, "t3code-dev://app/");
+        yield* Effect.promise(() => Promise.resolve());
+        assert.equal(previewWindowCloses, 1);
+
+        emit("render-process-gone", {}, { reason: "crashed", exitCode: 1 });
+        yield* Effect.promise(() => Promise.resolve());
+        assert.equal(previewWindowCloses, 2);
       }).pipe(Effect.provide(layer));
     }),
   );

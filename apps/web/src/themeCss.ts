@@ -7,6 +7,7 @@ import { themeCssValueFetches, themeCssWithoutDeclarations } from "@t3tools/shar
 
 let themeSheet: CSSStyleSheet | null = null;
 let appliedCss = "";
+const themeCssListeners = new Set<() => void>();
 
 type RuleParent = Pick<CSSStyleSheet, "cssRules" | "deleteRule">;
 
@@ -114,4 +115,12 @@ export function applyThemeCss(css: string | undefined): void {
   }
   themeSheet.replaceSync(withoutFetchingShorthands(next));
   stripFetches(themeSheet);
+  for (const listener of themeCssListeners) listener();
+}
+
+export function subscribeToThemeCss(listener: () => void): () => void {
+  themeCssListeners.add(listener);
+  return () => {
+    themeCssListeners.delete(listener);
+  };
 }

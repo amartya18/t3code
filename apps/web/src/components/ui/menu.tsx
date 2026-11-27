@@ -6,6 +6,7 @@ import { cn } from "~/lib/utils";
 import { buttonVariants } from "./button";
 import { renderClosingPositioner } from "./closing-positioner";
 import { Input, type InputProps } from "./input";
+import { usePortalContainer } from "./portal-container";
 import { Spinner } from "./spinner";
 
 const Menu = MenuPrimitive.Root;
@@ -41,7 +42,7 @@ function MenuPopup({
   width?: "default" | "content";
 }) {
   return (
-    <MenuPrimitive.Portal keepMounted={keepMounted}>
+    <MenuPrimitive.Portal keepMounted={keepMounted} container={usePortalContainer()}>
       <MenuPrimitive.Positioner
         align={align}
         alignOffset={alignOffset}

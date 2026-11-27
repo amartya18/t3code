@@ -3,7 +3,7 @@ import { m } from "~/i18n/messages";
 import { FILL_PREVIEW_VIEWPORT, type ScopedThreadRef } from "@t3tools/contracts";
 import { previewPdfAssetUrl } from "@t3tools/shared/preview";
 import { useEnvironmentHttpBaseUrl } from "~/state/environments";
-import { PanelRightIcon, PictureInPicture2, XIcon } from "lucide-react";
+import { AppWindow, PanelRightIcon, PictureInPicture2, XIcon } from "lucide-react";
 import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
@@ -60,6 +60,7 @@ import { deviceScreenKey, deviceStreamScreenAtom } from "../device/deviceStreamS
 import type { PreviewStreamViewport } from "@t3tools/client-runtime/preview/server-browser-stream";
 import { previewBridge } from "./previewBridge";
 import { PreviewUnreachable } from "./PreviewUnreachable";
+import { PreviewWindowPlaceholder, usePreviewWindowActions } from "./PreviewWindowPlaceholder";
 import { showPreviewPopup } from "./showPreviewPopup";
 import {
   type PreviewMiniPlayerGesture,
@@ -237,6 +238,8 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
     threadRef,
     previewMiniPlayerSourceKey(browserMiniPlayerSource(tabId)),
   );
+  const inWindow = !serverTab && Boolean(desktopOverlay?.inWindow);
+  const windowActions = usePreviewWindowActions(runtimeTabId);
 
   const openInPanel = () => {
     usePreviewMiniPlayerStore.getState().close(threadRef);
@@ -279,7 +282,7 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
   const poppedOut = serverTab ? serverPictureInPicture : Boolean(desktopOverlay?.pictureInPicture);
   const canPopOut = serverTab
     ? poppedOut || (pdfUrl === null && supportsServerPictureInPicture())
-    : true;
+    : !inWindow;
 
   return (
     <MiniPlayerShell
@@ -290,27 +293,47 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
       recording={recording}
       onOpenInPanel={openInPanel}
       pillActions={
-        canPopOut ? (
-          <SharedTooltipTrigger
-            render={
-              <Button
-                variant={poppedOut ? "secondary" : "ghost"}
-                size="icon-xs"
-                aria-label={
-                  poppedOut
-                    ? gt("Close popped-out preview")
-                    : gt("Pop preview into separate window")
-                }
-                disabled={!serverTab && !desktopOverlay?.hasWebContents}
-                onPointerDown={(event) => event.stopPropagation()}
-                onClick={toggleNativePictureInPicture}
-              />
-            }
-            label={poppedOut ? gt("Close separate window") : gt("Pop into separate window")}
-          >
-            <PictureInPicture2 />
-          </SharedTooltipTrigger>
-        ) : null
+        <>
+          {!serverTab && previewBridge ? (
+            <SharedTooltipTrigger
+              render={
+                <Button
+                  variant={inWindow ? "secondary" : "ghost"}
+                  size="icon-xs"
+                  aria-label={inWindow ? gt("Bring back") : gt("Open in window")}
+                  aria-pressed={inWindow ? "true" : "false"}
+                  disabled={!desktopOverlay?.hasWebContents || (recording && !inWindow)}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={inWindow ? windowActions.close : windowActions.open}
+                />
+              }
+              label={inWindow ? gt("Bring back") : gt("Open in window")}
+            >
+              <AppWindow />
+            </SharedTooltipTrigger>
+          ) : null}
+          {canPopOut ? (
+            <SharedTooltipTrigger
+              render={
+                <Button
+                  variant={poppedOut ? "secondary" : "ghost"}
+                  size="icon-xs"
+                  aria-label={
+                    poppedOut
+                      ? gt("Close popped-out preview")
+                      : gt("Pop preview into separate window")
+                  }
+                  disabled={!serverTab && !desktopOverlay?.hasWebContents}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={toggleNativePictureInPicture}
+                />
+              }
+              label={poppedOut ? gt("Close separate window") : gt("Pop into separate window")}
+            >
+              <PictureInPicture2 />
+            </SharedTooltipTrigger>
+          ) : null}
+        </>
       }
     >
       {(frame) =>
@@ -343,6 +366,11 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
               className="size-full"
             />
           </div>
+        ) : inWindow ? (
+          <PreviewWindowPlaceholder
+            runtimeTabId={runtimeTabId}
+            className="pointer-events-auto absolute inset-0 z-[48] overflow-hidden rounded-[inherit]"
+          />
         ) : (
           <>
             <BrowserSurfaceSlot

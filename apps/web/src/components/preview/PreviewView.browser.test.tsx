@@ -18,6 +18,8 @@ import type { PreviewableServer } from "./useDiscoveredLocalServers";
 
 const mocks = vi.hoisted(() => ({
   navigate: vi.fn(async (_tabId: string, _url: string): Promise<void> => undefined),
+  focusWindow: vi.fn(async (_tabId: string): Promise<void> => undefined),
+  focusUrlListeners: new Set<(tabId: string) => void>(),
   rememberPreviewUrl: vi.fn(),
   readPreparedConnection: vi.fn(() => ({ httpBaseUrl: "http://172.25.85.75:3773" })),
   readEnvironmentScope: vi.fn((_environmentId?: unknown, _scope?: unknown) => true),
@@ -79,6 +81,13 @@ vi.mock(import("./previewBridge"), async (original) => ({
     findInPage: vi.fn(async () => undefined),
     stopFindInPage: vi.fn(async () => undefined),
     onFindResult: vi.fn(() => () => undefined),
+    window: {
+      focus: mocks.focusWindow,
+      onFocusUrl: (listener: (tabId: string) => void) => {
+        mocks.focusUrlListeners.add(listener);
+        return () => mocks.focusUrlListeners.delete(listener);
+      },
+    },
   } as never,
 }));
 vi.mock(import("~/browserHistoryStore"), async (original) => ({
@@ -189,6 +198,7 @@ import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
 import { dispatchPreviewAction } from "./previewActionBus";
 import { PreviewView } from "./PreviewView";
+import { PortalContainer } from "~/components/ui/portal-container";
 import { ToastProvider } from "~/components/ui/toast";
 
 const TEST_THREAD_REF = {
@@ -242,6 +252,7 @@ function setup() {
   mocks.servers = [];
   mocks.recordingTabIds = new Set();
   mocks.recordingRuntimeTabId = null;
+  mocks.focusUrlListeners.clear();
   useComposerDraftStore.setState({
     addPreviewAnnotation: mocks.addPreviewAnnotation,
     addImage: mocks.addImage,
@@ -391,6 +402,49 @@ describe("PreviewView", () => {
     expect(card.element().contains(hit)).toBe(true);
   });
 
+  it("shows a new tab's empty state over its own window's page until a pick navigates it", async () => {
+    setup();
+    mocks.idleDesktopTab = true;
+    mocks.idleDesktopOverlay = true;
+    mocks.servers = [
+      {
+        host: "localhost",
+        port: 8081,
+        url: "http://localhost:8081/",
+        requestedUrl: "http://localhost:8081/",
+        processName: "python3",
+        pid: 4242,
+        terminal: null,
+        source: "scanner",
+      },
+    ];
+    using stack = new DisposableStack();
+    const overlays = document.body.appendChild(document.createElement("div"));
+    stack.defer(() => overlays.remove());
+    const windowBar = () => (
+      <ToastProvider timeout={0}>
+        <PortalContainer value={overlays}>
+          <PreviewView threadRef={TEST_THREAD_REF} tabId="tab-1" visible chromeOnly />
+        </PortalContainer>
+      </ToastProvider>
+    );
+    await using screen = await render(windowBar());
+    const card = page.getByRole("button", { name: /localhost:8081/ });
+    await expect.element(card).toBeVisible();
+    expect(overlays.contains(card.element())).toBe(true);
+
+    await userEvent.click(card);
+    await vi.waitFor(() =>
+      expect(mocks.navigate).toHaveBeenCalledWith(TEST_RUNTIME_TAB_ID, "http://172.25.85.75:8081/"),
+    );
+    expect(mocks.focusWindow).toHaveBeenCalledWith(TEST_RUNTIME_TAB_ID);
+
+    mocks.idleDesktopOverlay = false;
+    await screen.rerender(windowBar());
+    await expect.element(card).not.toBeInTheDocument();
+    expect(overlays.childElementCount).toBe(0);
+  });
+
   it("sizes the first device viewport of a streamed tab to its panel", async () => {
     setup();
     mocks.streamedServerTab = true;
@@ -463,6 +517,29 @@ describe("PreviewView", () => {
     await expect.element(address).not.toHaveFocus();
     act(() => dispatchPreviewAction("focus-url"));
     await expect.element(address).toHaveFocus();
+  });
+
+  it("selects a window bar's whole address when the desktop reports focus-url for its tab", async () => {
+    setup();
+    await using _screen = await render(
+      <PreviewView threadRef={TEST_THREAD_REF} tabId="tab-1" visible chromeOnly />,
+    );
+    const address = page.getByRole("textbox");
+    const input = address.element() as HTMLInputElement;
+    const reportFocusUrl = (tabId: string) =>
+      act(() => {
+        for (const listener of mocks.focusUrlListeners) listener(tabId);
+      });
+
+    await reportFocusUrl(previewRuntimeTabId(TEST_THREAD_REF, null, "tab-2"));
+    await expect.element(address).not.toHaveFocus();
+
+    await reportFocusUrl(TEST_RUNTIME_TAB_ID);
+    await expect.element(address).toHaveFocus();
+    input.setSelectionRange(input.value.length, input.value.length);
+    await reportFocusUrl(TEST_RUNTIME_TAB_ID);
+    expect([input.selectionStart, input.selectionEnd]).toEqual([0, input.value.length]);
+    expect(input.value).not.toBe("");
   });
 
   it("does not reopen find when the user returns to a tab they left with find open", async () => {

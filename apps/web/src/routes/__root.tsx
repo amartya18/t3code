@@ -24,6 +24,7 @@ import { AddProjectToMachineDialogHost } from "../components/AddProjectToMachine
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
 import { WorktreeLayoutApprovalDialogHost } from "../components/WorktreeLayoutApprovalDialogHost";
 import { DevReplayHost } from "../components/DevReplayHost";
+import { PreviewWindowBars } from "../components/preview/PreviewWindowBars";
 import { FirstRunGate } from "../components/onboarding/FirstRunGate";
 import { ConnectOnboardingDialog } from "../components/cloud/ConnectOnboardingDialog";
 import { RelayClientInstallDialog } from "../components/cloud/RelayClientInstallDialog";
@@ -199,6 +200,7 @@ function RootRouteBranch() {
         </>
       ) : null}
       {isElectron ? <RunningThreadKeepAlive /> : null}
+      {isElectron ? <PreviewWindowBars /> : null}
       <RelayClientInstallDialog />
       <ConnectOnboardingDialog />
       <SshPasswordPromptDialog />

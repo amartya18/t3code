@@ -39,6 +39,7 @@ export interface PreviewMoreMenuActions {
   readonly clearCache: () => void;
   readonly openDevTools?: () => void;
   readonly toggleNativePictureInPicture?: () => void;
+  readonly toggleWindow?: () => void;
   readonly find?: () => void;
 }
 
@@ -48,8 +49,11 @@ interface Props {
   zoomFactor: number;
   colorScheme: DesktopPreviewColorScheme;
   deviceToolbarVisible: boolean;
-  onToggleDeviceToolbar: () => void;
+  onToggleDeviceToolbar?: (() => void) | undefined;
   nativePictureInPicture: boolean;
+  inWindow: boolean;
+  /** A recording is bound to the panel's page, so it cannot move into a window. */
+  recording: boolean;
   profileName: string | undefined;
   findShortcutLabel?: string | null;
   move?: { readonly label: string; readonly onMove: () => void };
@@ -85,6 +89,8 @@ export function PreviewMoreMenu({
   deviceToolbarVisible,
   onToggleDeviceToolbar,
   nativePictureInPicture,
+  inWindow,
+  recording,
   profileName,
   findShortcutLabel,
   move,
@@ -112,16 +118,23 @@ export function PreviewMoreMenu({
           </MenuItem>
         ) : null}
         {actions.toggleNativePictureInPicture ? (
-          <MenuItem onClick={actions.toggleNativePictureInPicture} disabled={disabled}>
+          <MenuItem onClick={actions.toggleNativePictureInPicture} disabled={disabled || inWindow}>
             {nativePictureInPicture
               ? gt("Close separate preview window")
               : gt("Open separate preview window")}
           </MenuItem>
         ) : null}
+        {actions.toggleWindow ? (
+          <MenuItem onClick={actions.toggleWindow} disabled={disabled || (recording && !inWindow)}>
+            {inWindow ? gt("Bring back to panel") : gt("Open in window")}
+          </MenuItem>
+        ) : null}
         {move ? <MenuItem onClick={move.onMove}>{move.label}</MenuItem> : null}
-        <MenuItem onClick={onToggleDeviceToolbar} disabled={disabled}>
-          {deviceToolbarVisible ? gt("Hide device toolbar") : gt("Show device toolbar")}
-        </MenuItem>
+        {onToggleDeviceToolbar ? (
+          <MenuItem onClick={onToggleDeviceToolbar} disabled={disabled}>
+            {deviceToolbarVisible ? gt("Hide device toolbar") : gt("Show device toolbar")}
+          </MenuItem>
+        ) : null}
         <MenuSub>
           <MenuSubTrigger disabled={disabled}>
             <T>Appearance</T>
