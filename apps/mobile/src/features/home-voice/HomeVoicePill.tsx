@@ -15,6 +15,7 @@ import {
   VoiceClockTitle,
 } from "./VoiceCallControls";
 import { useVoiceModelOptions } from "./voiceModels";
+import { VoiceRenderProfiler } from "./voiceRenderProfiler";
 import { voiceSessionAtom, type VoiceSession } from "./voiceSession";
 import { useVoiceModeSettings } from "./voiceSettings";
 
@@ -34,7 +35,11 @@ export function HomeVoicePill(props: {
   ) {
     return null;
   }
-  return <MinimizedCall session={session} top={props.top} />;
+  return (
+    <VoiceRenderProfiler id="pill">
+      <MinimizedCall session={session} top={props.top} />
+    </VoiceRenderProfiler>
+  );
 }
 
 function MinimizedCall(props: { readonly session: VoiceSession; readonly top: number }) {
