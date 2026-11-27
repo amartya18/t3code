@@ -2479,6 +2479,8 @@
   "577a82cbd28c817e": "Mostrar modelos anteriores",
   "d399fd774a249937": "Opciones de desarrollo. Se aplican de inmediato a la llamada en curso.",
   "e6ea926d122bbdc1": "Razonamiento (dev)",
+  "f53067e7d3f642bb": "Duración mínima del habla (dev)",
+  "b696ea0a2c85192c": "{seconds} s",
   "66ec4cf525d6d926": "{requests, plural, one {{requests} solicitud} other {{requests} solicitudes}} · {minutes} min",
   "a91b941fbd5a6c44": "No se pudieron cambiar los asignados",
   "c2ed09c676ad0e9a": "Asignados",

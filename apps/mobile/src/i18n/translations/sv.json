@@ -2479,6 +2479,8 @@
   "577a82cbd28c817e": "Visa äldre modeller",
   "d399fd774a249937": "Utvecklaralternativ. De gäller direkt för det pågående samtalet.",
   "e6ea926d122bbdc1": "Tänkande (dev)",
+  "f53067e7d3f642bb": "Minsta taltid (dev)",
+  "b696ea0a2c85192c": "{seconds} s",
   "66ec4cf525d6d926": "{requests, plural, one {{requests} begäran} other {{requests} begäranden}} · {minutes} min",
   "a91b941fbd5a6c44": "Kunde inte ändra tilldelade",
   "c2ed09c676ad0e9a": "Tilldelade",

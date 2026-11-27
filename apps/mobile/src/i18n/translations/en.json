@@ -2479,6 +2479,8 @@
   "577a82cbd28c817e": "Show older models",
   "d399fd774a249937": "Developer options. They apply to the live call at once.",
   "e6ea926d122bbdc1": "Thinking (dev)",
+  "f53067e7d3f642bb": "Minimum speech (dev)",
+  "b696ea0a2c85192c": "{seconds} s",
   "66ec4cf525d6d926": "{requests, plural, one {{requests} request} other {{requests} requests}} · {minutes} min",
   "a91b941fbd5a6c44": "Couldn't change assignees",
   "c2ed09c676ad0e9a": "Assignees",

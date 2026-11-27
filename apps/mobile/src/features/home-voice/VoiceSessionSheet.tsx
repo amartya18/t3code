@@ -12,11 +12,14 @@ import { ListChoiceRow } from "../../components/ui/ListChoiceRow";
 import { ListSection } from "../../components/ui/ListSection";
 import { ListToggleRow } from "../../components/ui/ListToggleRow";
 import { SheetHeader } from "../../components/ui/SheetHeader";
+import { SliderRow } from "../../components/ui/SliderRow";
 import { groupByProvider } from "../../lib/modelOptions";
 import { splitOlderModels, useVoiceModelOptions, withLowEffort } from "./voiceModels";
 import { VoiceReasoningRow } from "./VoiceMenuRow";
 import {
   KOKORO_VOICES,
+  MIN_SPEECH_MAX_MS,
+  MIN_SPEECH_MIN_MS,
   saveVoiceSettings,
   useVoiceModeSettings,
   type KokoroVoiceId,
@@ -35,6 +38,7 @@ export function VoiceSessionSheet() {
   const insets = useSafeAreaInsets();
   const settings = useVoiceModeSettings();
   const [showOlder, setShowOlder] = useState(false);
+  const [draggedMinSpeech, setDraggedMinSpeech] = useState<number | null>(null);
   const { options, selected } = useVoiceModelOptions(settings, settings?.environmentId ?? null);
   const close = () => navigation.goBack();
   const title = gt("Session settings");
@@ -98,6 +102,24 @@ export function VoiceSessionSheet() {
               value={settings.thinking}
               onValueChange={(thinking) => void saveVoiceSettings({ thinking })}
             />
+            <View className="border-t border-border-subtle">
+              <SliderRow
+                icon="mic"
+                label={gt("Minimum speech (dev)")}
+                valueLabel={gt("{seconds} s", {
+                  seconds: (draggedMinSpeech ?? settings.minSpeechMs / 1000).toFixed(2),
+                })}
+                min={MIN_SPEECH_MIN_MS / 1000}
+                max={MIN_SPEECH_MAX_MS / 1000}
+                step={0.05}
+                value={settings.minSpeechMs / 1000}
+                onDrag={setDraggedMinSpeech}
+                onChange={(seconds) => {
+                  setDraggedMinSpeech(null);
+                  void saveVoiceSettings({ minSpeechMs: Math.round(seconds * 1000) });
+                }}
+              />
+            </View>
           </ListSection>
         ) : null}
       </ScrollView>

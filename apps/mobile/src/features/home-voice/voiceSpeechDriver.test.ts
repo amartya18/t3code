@@ -1,7 +1,12 @@
 import { expect, it, vi } from "vite-plus/test";
 
 import type { VoiceEngine, VoiceEngineConfig } from "../../../modules/t3-voice-mode";
+import { voiceEngineConfig } from "./voiceEngine";
 import { createVoiceSpeechDriver } from "./voiceSpeechDriver";
+
+vi.mock("react-native", () => ({ Platform: { OS: "ios", Version: "26.0" } }));
+vi.mock("../../../modules/t3-voice-mode", () => ({ voiceEngine: null }));
+vi.stubGlobal("__DEV__", false);
 
 function fakeEngine() {
   const calls: string[] = [];
@@ -98,6 +103,26 @@ it("gives Parakeet the call's word list once the engine has started", async () =
   open({ ...fake.engine, stop: async () => {} });
   await settle();
   expect(fake.calls).toEqual(["start", "setVocabulary T3, laptop13"]);
+});
+
+it("feeds a new minimum speech length to the live engine without restarting it", async () => {
+  const fake = fakeEngine();
+  const configured: number[] = [];
+  const engine: VoiceEngine = {
+    ...fake.engine,
+    stop: async () => {},
+    configure: async (config) => {
+      configured.push(config.vad.minSpeechMs);
+    },
+  };
+  const driver = open(engine);
+  await settle();
+  driver.update(inputs(voiceEngineConfig("af_heart", 400), async () => {}));
+  await settle();
+
+  expect(configured.at(-1)).toBe(400);
+  expect(fake.calls.filter((call) => call === "start")).toHaveLength(1);
+  driver.dispose();
 });
 
 it("ducks the voice in steps rather than one jump, and restores it the same way", async () => {
