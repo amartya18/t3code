@@ -78,6 +78,49 @@ describe("stepEndOfTurn", () => {
     expect(voice.finalized).toEqual([{ reason: "pause", atMs: 10_500 }]);
   });
 
+  it("keeps counting from his last word through a sound with no words", () => {
+    const voice = session();
+    voice.say("tell Home to merge");
+    voice.stopTalking();
+    voice.wait(2_000);
+    voice.send({ type: "vad", speaking: true });
+    voice.wait(300);
+    voice.stopTalking();
+    voice.wait(700);
+    expect(voice.finalized).toEqual([{ reason: "pause", atMs: 3_000 }]);
+  });
+
+  it("waits out a voice in the pause, then sends once no words came of it", () => {
+    const voice = session();
+    voice.say("tell Home to merge");
+    voice.stopTalking();
+    voice.wait(2_500);
+    voice.send({ type: "vad", speaking: true });
+    voice.wait(1_000);
+    expect(voice.finalized).toEqual([]);
+    voice.stopTalking();
+    voice.wait(300);
+    expect(voice.finalized).toEqual([]);
+    voice.wait(100);
+    expect(voice.finalized).toEqual([{ reason: "pause", atMs: 3_900 }]);
+  });
+
+  it("restarts the countdown from a voice whose words arrive just after it ends", () => {
+    const voice = session();
+    voice.say("tell Home to merge");
+    voice.stopTalking();
+    voice.wait(2_000);
+    voice.send({ type: "vad", speaking: true });
+    voice.wait(300);
+    voice.stopTalking();
+    voice.wait(200);
+    voice.send({ type: "partial", text: "tell Home to merge it" });
+    voice.wait(2_700);
+    expect(voice.finalized).toEqual([]);
+    voice.wait(100);
+    expect(voice.finalized).toEqual([{ reason: "pause", atMs: 5_300 }]);
+  });
+
   it("holds a touched pause until the 10 s ceiling, then sends", () => {
     const voice = session();
     voice.say("rerun the iOS build");

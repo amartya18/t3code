@@ -1,4 +1,4 @@
-import { expect, it } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 
 import type { VoiceEngine } from "../../../modules/t3-voice-mode";
 import { DEFAULT_VOICE_SPEECH_CONFIG } from "./voiceSpeech";
@@ -37,7 +37,11 @@ function fakeEngine() {
   return { engine, calls, finishStop: () => finishStop() };
 }
 
-function open(engine: VoiceEngine) {
+function open(
+  engine: VoiceEngine,
+  now: () => number = () => 0,
+  log: ((line: string) => void) | null = null,
+) {
   return createVoiceSpeechDriver({
     engine,
     inputs: {
@@ -46,14 +50,15 @@ function open(engine: VoiceEngine) {
         vad: { threshold: 0.5, minSpeechMs: 150, minSilenceMs: 300 },
         tts: { voiceId: "af_heart", speed: 1, vocoderFloat32: false },
         aec: { enabled: false },
-        logStages: false,
+        logStages: log !== null,
       },
       config: DEFAULT_VOICE_SPEECH_CONFIG,
       send: async () => {},
     },
     previous: null,
-    now: () => 0,
-    log: () => {},
+    now,
+    newMessageId: () => "m1",
+    log: log ?? (() => {}),
     onChange: () => {},
   });
 }
@@ -76,4 +81,94 @@ it("hanging up mid-speech stops the voice, and the next call starts only after t
   fake.finishStop();
   await settle();
   expect(fake.calls.slice(-2)).toEqual(["stopped", "start"]);
+});
+
+it("ducks the voice in steps rather than one jump, and restores it the same way", async () => {
+  vi.useFakeTimers();
+  const levels: number[] = [];
+  const listeners = new Map<string, (event: unknown) => void>();
+  const engine: VoiceEngine = {
+    ...fakeEngine().engine,
+    stop: async () => {},
+    duck: (level) => {
+      levels.push(level);
+    },
+    addListener: (name, listener) => {
+      listeners.set(name, listener as (event: unknown) => void);
+      return { remove: () => {} };
+    },
+  };
+  const driver = open(engine);
+  await settle();
+  driver.dispatch({
+    type: "thread",
+    replies: [{ id: "r1", text: "A long answer that keeps going.", streaming: false }],
+    userMessageIds: new Set(),
+    atMs: 0,
+  });
+
+  listeners.get("vad")!({ speaking: true, probability: 1, atMs: 0 });
+  vi.advanceTimersByTime(200);
+  const ducked = levels.splice(0);
+  expect(ducked.length).toBeGreaterThan(2);
+  expect(ducked.at(-1)).toBe(DEFAULT_VOICE_SPEECH_CONFIG.bargeIn.duckLevel);
+  expect(ducked).toEqual([...ducked].sort((left, right) => right - left));
+
+  listeners.get("vad")!({ speaking: false, probability: 0, atMs: 0 });
+  vi.advanceTimersByTime(200);
+  expect(levels.length).toBeGreaterThan(2);
+  expect(levels.at(-1)).toBe(1);
+  expect(levels).toEqual([...levels].sort((left, right) => left - right));
+
+  driver.dispose();
+  vi.useRealTimers();
+});
+
+it("counts the pause from when the engine heard his voice end, not when JS got the event", async () => {
+  const listeners = new Map<string, (event: unknown) => void>();
+  let finalized = 0;
+  const engine: VoiceEngine = {
+    ...fakeEngine().engine,
+    stop: async () => {},
+    finalize: async () => {
+      finalized += 1;
+      return { text: "merge it" };
+    },
+    addListener: (name, listener) => {
+      listeners.set(name, listener as (event: unknown) => void);
+      return { remove: () => {} };
+    },
+  };
+  const driver = open(engine, () => 10_000);
+  await settle();
+  const { pauseMs } = DEFAULT_VOICE_SPEECH_CONFIG.endOfTurn;
+
+  listeners.get("vad")!({ speaking: true, probability: 1, atMs: 8_000 });
+  listeners.get("partial")!({ text: "merge it" });
+  listeners.get("vad")!({ speaking: false, probability: 0, atMs: 8_500 });
+  driver.dispatch({ type: "tick", atMs: 8_500 + pauseMs });
+  expect(finalized).toBe(1);
+
+  driver.dispose();
+});
+
+it("in development, logs a blocked JS thread with the voice step just before it", () => {
+  vi.useFakeTimers();
+  let clock = 0;
+  const logs: string[] = [];
+  const driver = open(
+    { ...fakeEngine().engine, stop: async () => {} },
+    () => clock,
+    (line) => {
+      logs.push(line);
+    },
+  );
+  driver.dispatch({ type: "tap", atMs: clock });
+
+  clock = 1_600;
+  vi.advanceTimersByTime(100);
+  expect(logs).toContain("[voice] js blocked 1500ms, 100ms after tap");
+
+  driver.dispose();
+  vi.useRealTimers();
 });

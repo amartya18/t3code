@@ -72,26 +72,20 @@ function fill(queue: SpeechQueue): SpeechQueueStep {
 }
 
 export interface BargeInConfig {
-  /** How long speech must go on, with words heard, before the voice stops. */
-  readonly confirmMs: number;
   readonly duckLevel: number;
   readonly fadeMs: number;
 }
 
 export const DEFAULT_BARGE_IN_CONFIG: BargeInConfig = {
-  confirmMs: 300,
   duckLevel: 0.25,
   fadeMs: 80,
 };
 
-export type BargeInState =
-  | { readonly kind: "listening" }
-  | { readonly kind: "ducked"; readonly since: number; readonly heardWords: boolean };
+export type BargeInState = { readonly kind: "listening" } | { readonly kind: "ducked" };
 
 export type BargeInEvent =
   | { readonly type: "vad"; readonly speaking: boolean; readonly atMs: number }
-  | { readonly type: "partial"; readonly text: string; readonly atMs: number }
-  | { readonly type: "tick"; readonly atMs: number };
+  | { readonly type: "partial"; readonly text: string; readonly atMs: number };
 
 /** `interrupt` means: call `bargeIn` on the queue, then the engine's `stopSpeech(fadeMs)`. */
 export type BargeInEffect =
@@ -100,29 +94,28 @@ export type BargeInEffect =
 
 export const INITIAL_BARGE_IN_STATE: BargeInState = { kind: "listening" };
 
+/**
+ * Any word Amar says over the voice stops it. On the speaker his voice without words only ducks
+ * it, since that can be the voice's own echo; on headphones the mic can't hear the voice, so his
+ * voice alone stops it.
+ */
 export function stepBargeIn(
   state: BargeInState,
   event: BargeInEvent,
-  speaking: boolean,
+  input: { readonly speaking: boolean; readonly headphones: boolean },
   config: BargeInConfig = DEFAULT_BARGE_IN_CONFIG,
 ): { readonly state: BargeInState; readonly effects: ReadonlyArray<BargeInEffect> } {
-  if (state.kind === "listening") {
-    return event.type === "vad" && event.speaking && speaking
-      ? {
-          state: { kind: "ducked", since: event.atMs, heardWords: false },
-          effects: [{ type: "duck", level: config.duckLevel }],
-        }
-      : { state, effects: [] };
-  }
-  if (!speaking || (event.type === "vad" && !event.speaking)) {
-    return { state: INITIAL_BARGE_IN_STATE, effects: [{ type: "duck", level: 1 }] };
-  }
-  const heardWords = state.heardWords || (event.type === "partial" && event.text.trim() !== "");
-  if (heardWords && event.atMs - state.since >= config.confirmMs) {
-    return {
-      state: INITIAL_BARGE_IN_STATE,
-      effects: [{ type: "interrupt", fadeMs: config.fadeMs }],
-    };
-  }
-  return { state: { ...state, heardWords }, effects: [] };
+  const interrupt = {
+    state: INITIAL_BARGE_IN_STATE,
+    effects: [{ type: "interrupt", fadeMs: config.fadeMs }],
+  } as const;
+  const unduck = { state: INITIAL_BARGE_IN_STATE, effects: [{ type: "duck", level: 1 }] } as const;
+  const stay = { state, effects: [] };
+  if (!input.speaking) return state.kind === "ducked" ? unduck : stay;
+  if (event.type === "partial") return event.text.trim() === "" ? stay : interrupt;
+  if (!event.speaking) return state.kind === "ducked" ? unduck : stay;
+  if (input.headphones) return interrupt;
+  return state.kind === "ducked"
+    ? stay
+    : { state: { kind: "ducked" }, effects: [{ type: "duck", level: config.duckLevel }] };
 }

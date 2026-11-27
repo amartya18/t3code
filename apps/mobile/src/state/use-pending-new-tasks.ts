@@ -12,13 +12,12 @@ import {
   type ThreadOutboxSendGate,
 } from "./pending-new-tasks-model";
 import { pendingThreadCreationOutcomesAtom, withLaunchingThreads } from "./pending-thread-creation";
-import { flattenQueuedThreadMessages } from "./thread-outbox-model";
 import { environmentThreadShells } from "./threads";
 import { newTaskComposerDraftsAtom } from "./use-composer-drafts";
 import {
+  queuedCreationMessagesAtom,
   retryingQueuedMessageIdsAtom,
   threadOutboxShellStatusesAtom,
-  useThreadOutboxMessages,
 } from "./use-thread-outbox";
 import { environmentSession, sessionHasScope } from "./session";
 import { workspaceConnections } from "./workspace";
@@ -50,14 +49,12 @@ const threadOutboxSendGateAtom = Atom.make((get): ThreadOutboxSendGate => {
 
 export function usePendingNewTasks(): ReadonlyArray<PendingNewTask> {
   const resolve = useMessages();
-  const queuedMessagesByThreadKey = useThreadOutboxMessages();
+  const creations = useAtomValue(queuedCreationMessagesAtom);
   const drafts = useAtomValue(newTaskComposerDraftsAtom);
   const hiddenKeys = useAtomValue(environmentThreadShells.hiddenThreadKeysAtom);
   const sendGate = useAtomValue(threadOutboxSendGateAtom);
   // A delivered creation can stay queued after its thread is live and hidden.
-  const queuedMessages = flattenQueuedThreadMessages(queuedMessagesByThreadKey).filter(
-    (message) => !hiddenKeys.has(threadKey(message)),
-  );
+  const queuedMessages = creations.filter((message) => !hiddenKeys.has(threadKey(message)));
   return buildPendingNewTasks(
     {
       queuedMessages,
@@ -72,19 +69,17 @@ export function usePendingNewTasks(): ReadonlyArray<PendingNewTask> {
 export function useLaunchingThreads(
   threads: ReadonlyArray<EnvironmentThreadShell>,
 ): ReadonlyArray<EnvironmentThreadShell> {
-  const queuedMessagesByThreadKey = useThreadOutboxMessages();
+  const creations = useAtomValue(queuedCreationMessagesAtom);
   const outcomes = useAtomValue(pendingThreadCreationOutcomesAtom);
   const hiddenThreadKeys = useAtomValue(environmentThreadShells.hiddenThreadKeysAtom);
   const sendGate = useAtomValue(threadOutboxSendGateAtom);
   return useMemo(() => {
     const launches = [
-      ...flattenQueuedThreadMessages(queuedMessagesByThreadKey).filter((message) =>
-        isQueuedCreationSending(message, sendGate),
-      ),
+      ...creations.filter((message) => isQueuedCreationSending(message, sendGate)),
       ...Object.values(outcomes).flatMap((outcome) =>
         outcome.kind === "delivered" ? [outcome.message] : [],
       ),
     ];
     return withLaunchingThreads({ threads, launches, hiddenThreadKeys });
-  }, [threads, queuedMessagesByThreadKey, outcomes, hiddenThreadKeys, sendGate]);
+  }, [threads, creations, outcomes, hiddenThreadKeys, sendGate]);
 }
