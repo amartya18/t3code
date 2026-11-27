@@ -17,7 +17,6 @@ import { voiceDevLog } from "./voiceLogUpload";
 import { endVoiceSession, sendVoiceMessage, type VoiceSession } from "./voiceSession";
 import { useVoiceModeSettings } from "./voiceSettings";
 import {
-  isHearing,
   type OwnLine,
   type ReplyShown,
   type VoiceEngineStatus,
@@ -37,17 +36,11 @@ export interface VoiceSpeechView {
   readonly engine: VoiceEngineStatus;
   readonly own: OwnLine | null;
   readonly shown: ReadonlyMap<string, ReplyShown>;
-  readonly hearing: boolean;
 }
 
 export const voiceSpeechAtom = Atom.make<VoiceSpeechView | null>(null).pipe(
   Atom.keepAlive,
   Atom.withLabel("home-voice:speech"),
-);
-
-/** Flips only when Amar starts or stops talking, so the minimized call redraws that rarely. */
-export const voiceHearingAtom = Atom.make((get) => get(voiceSpeechAtom)?.hearing === true).pipe(
-  Atom.withLabel("home-voice:hearing"),
 );
 
 /** The id of Amar's latest line sent by voice; changes once per sent line. */
@@ -168,7 +161,6 @@ function publish(state: VoiceSpeechState) {
     engine: state.engine,
     own: state.own,
     shown: state.shown,
-    hearing: isHearing(state),
   };
   const shown = appAtomRegistry.get(voiceSpeechAtom);
   if (shown !== null && sameView(shown, next)) return;
@@ -176,10 +168,5 @@ function publish(state: VoiceSpeechState) {
 }
 
 function sameView(left: VoiceSpeechView, right: VoiceSpeechView): boolean {
-  return (
-    left.engine === right.engine &&
-    left.own === right.own &&
-    left.shown === right.shown &&
-    left.hearing === right.hearing
-  );
+  return left.engine === right.engine && left.own === right.own && left.shown === right.shown;
 }

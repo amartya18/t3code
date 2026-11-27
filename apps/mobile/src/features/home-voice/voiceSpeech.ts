@@ -372,11 +372,6 @@ export function needsTicks(state: VoiceSpeechState): boolean {
   return state.turn.live.kind === "paused" || isSpeaking(state.queue);
 }
 
-/** Whether the mic hears Amar's voice in his turn; sound over the agent may be its own echo. */
-export function isHearing(state: VoiceSpeechState): boolean {
-  return state.turn.live.kind === "speaking";
-}
-
 function onModels(
   state: VoiceSpeechState,
   event: Extract<VoiceSpeechEvent, { type: "models" }>,

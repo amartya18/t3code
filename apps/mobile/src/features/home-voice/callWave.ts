@@ -1,14 +1,66 @@
+import type { VoiceEngineEvents } from "../../../modules/t3-voice-mode";
+
 /** The send highlight crosses the wave this many times, then the wave rests. */
 export const SWEEPS = 2;
 
+// The wave's tuning against the engine's raw mic RMS (0 to 1); a Metro reload applies changes.
+/** Time constant of the level's rise toward a louder window. */
+export const MIC_RISE_MS = 10;
+/** Time constant of the level's fall toward a quieter window. */
+export const MIC_FALL_MS = 100;
+/** Raw RMS at or below this is room noise and reads as 0. */
+export const MIC_FLOOR = 0.003;
+/** The wave turns active once the level above the floor passes this. */
+export const MIC_ACTIVE_LEVEL = 0.005;
+/** How far loudness sways an active wave: 0 swings it fully at any level, else energy is level × this. */
+export const MIC_LOUDNESS_SCALE = 0;
+
 /** One moment of the call's wave and glow, read on the UI thread. */
 export interface WaveMoment {
-  /** How much voice the mic hears, 0 to 1. Voice detection drives it today; a level can later. */
+  /** How much the wave swings, 0 to 1, from the mic's level. */
   readonly energy: number;
   /** The ripple's position, in cycles. */
   readonly phase: number;
   /** The send sweep's progress, 0 to SWEEPS; at SWEEPS it rests. */
   readonly sweep: number;
+}
+
+/** Moves the level toward one raw window `dtMs` after the last, above the floor. */
+export function smoothMicLevel(previous: number, raw: number, dtMs: number): number {
+  "worklet";
+  const level = Math.max(0, raw - MIC_FLOOR);
+  const timeMs = level > previous ? MIC_RISE_MS : MIC_FALL_MS;
+  const keep = timeMs > 0 ? Math.exp(-Math.max(0, dtMs) / timeMs) : 0;
+  return level + (previous - level) * keep;
+}
+
+export function micWaveEnergy(level: number): number {
+  "worklet";
+  if (level <= MIC_ACTIVE_LEVEL) return 0;
+  return MIC_LOUDNESS_SCALE > 0 ? Math.min(1, level * MIC_LOUDNESS_SCALE) : 1;
+}
+
+/** Writes the mic's smoothed level into `level` until the returned stop runs. */
+export function followMicLevel(
+  engine: {
+    addListener(
+      event: "micLevel",
+      listener: (event: VoiceEngineEvents["micLevel"]) => void,
+    ): { remove(): void };
+  },
+  level: { set(value: number): void },
+): () => void {
+  let smoothed = 0;
+  let lastAtMs = Number.NEGATIVE_INFINITY;
+  const subscription = engine.addListener("micLevel", (event) => {
+    smoothed = event.level === 0 ? 0 : smoothMicLevel(smoothed, event.level, event.atMs - lastAtMs);
+    lastAtMs = event.atMs;
+    level.set(smoothed);
+  });
+  return () => {
+    subscription.remove();
+    level.set(0);
+  };
 }
 
 /** The pill's contour; the call's wave repeats it under a hump. */

@@ -8,6 +8,7 @@ import Animated, {
   cancelAnimation,
   Easing,
   interpolateColor,
+  useAnimatedReaction,
   useAnimatedStyle,
   useReducedMotion,
   useSharedValue,
@@ -17,12 +18,13 @@ import Animated, {
 } from "react-native-reanimated";
 import { useResolveClassNames } from "uniwind";
 
+import { voiceEngine } from "../../../modules/t3-voice-mode";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { AppText } from "../../components/ui/AppText";
 import { cn } from "../../lib/cn";
-import { SWEEPS, waveBar } from "./callWave";
+import { followMicLevel, micWaveEnergy, SWEEPS, waveBar } from "./callWave";
 import { useVoiceClock } from "./useVoiceCall";
-import { voiceHearingAtom, voiceSentAtom } from "./useVoiceSpeech";
+import { voiceSentAtom } from "./useVoiceSpeech";
 import { VoiceCallSymbol } from "./VoiceCallSymbol";
 import { endVoiceSession, toggleVoiceMuted } from "./voiceSession";
 
@@ -155,34 +157,38 @@ export interface VoiceWave {
 }
 
 /**
- * Moves the wave while the mic hears Amar and settles it when he stops. The engine reports only
- * when his voice starts and stops, so it follows his voice, not how loud it is.
+ * Moves the wave while the mic picks up sound and settles it when the sound stops. It follows the
+ * engine's raw mic level, not voice detection, so it reacts within one tap buffer.
  */
 export function useVoiceWave(): VoiceWave {
-  const hearing = useAtomValue(voiceHearingAtom);
   const reducedMotion = useReducedMotion();
+  const level = useSharedValue(0);
   const energy = useSharedValue(0);
   const phase = useSharedValue(0);
   const sweep = useSharedValue(SWEEPS);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the wave runs on the UI thread, only while he talks
-  useEffect(() => {
-    if (!hearing) {
-      cancelAnimation(phase);
-      energy.value = reducedMotion ? 0 : withTiming(0, { duration: 250 });
-      return;
-    }
-    cancelAnimation(sweep);
-    sweep.value = SWEEPS;
-    if (reducedMotion) {
-      energy.value = 1;
-      return;
-    }
-    energy.value = withTiming(1, { duration: 150 });
-    phase.value = withRepeat(
-      withTiming(phase.value + 1, { duration: WAVE_PERIOD_MS, easing: Easing.linear }),
-      -1,
-    );
-  }, [hearing, reducedMotion, phase, energy, sweep]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the native mic's level feeds the wave
+  useEffect(() => (voiceEngine === null ? undefined : followMicLevel(voiceEngine, level)), [level]);
+  useAnimatedReaction(
+    () => micWaveEnergy(level.get()),
+    (target, previous) => {
+      if (target === previous) return;
+      if (target > 0 && !previous) {
+        cancelAnimation(sweep);
+        sweep.set(SWEEPS);
+        if (!reducedMotion) {
+          phase.set(
+            withRepeat(
+              withTiming(phase.get() + 1, { duration: WAVE_PERIOD_MS, easing: Easing.linear }),
+              -1,
+            ),
+          );
+        }
+      }
+      if (target === 0) cancelAnimation(phase);
+      energy.set(reducedMotion ? target : withTiming(target, { duration: target > 0 ? 150 : 250 }));
+    },
+    [reducedMotion],
+  );
   return { energy, phase, sweep };
 }
 

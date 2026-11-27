@@ -2,7 +2,6 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { speechChunks } from "./speakable";
 import {
-  isHearing,
   needsTicks,
   openVoiceSpeech,
   stepVoiceSpeech,
@@ -474,7 +473,6 @@ describe("his turn", () => {
     voice.startTalking("Never mind.");
     voice.send({ type: "muted", muted: true });
     expect(voice.engine.muted).toBe(true);
-    expect(isHearing(voice.state())).toBe(false);
     voice.stopTalking();
     voice.talk("A secret.");
     voice.wait(5_000);
@@ -483,25 +481,6 @@ describe("his turn", () => {
     voice.send({ type: "muted", muted: false });
     voice.talk("OK, go.");
     expect(voice.sent).toEqual(["OK, go."]);
-  });
-
-  it("hears Amar while his voice is on, settles in his pause, and ignores sound over the agent", () => {
-    const voice = call();
-    voice.engine.smartTurn = () => 0.2;
-    expect(isHearing(voice.state())).toBe(false);
-
-    voice.startTalking("Merge it");
-    expect(isHearing(voice.state())).toBe(true);
-    voice.stopTalking();
-    expect(isHearing(voice.state())).toBe(false);
-    voice.startTalking("now.");
-    expect(isHearing(voice.state())).toBe(true);
-    voice.stopTalking();
-    voice.wait(3_300);
-
-    voice.reply("r1", "A long answer that keeps going.");
-    voice.send({ type: "vad", speaking: true, speechMs: 0 });
-    expect(isHearing(voice.state())).toBe(false);
   });
 });
 
@@ -639,7 +618,6 @@ describe("interrupting the voice", () => {
 
     voice.wait(100);
     expect(voice.engine.stops).toEqual([80]);
-    expect(isHearing(voice.state())).toBe(true);
     const toMs = voice.stopTalking();
     expect(voice.sent).toEqual(["Wait, ask Home instead."]);
     expect(voice.engine.transcribed).toEqual([[fromMs - 400, toMs]]);

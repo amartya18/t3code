@@ -1,6 +1,18 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { callGlow, callWaveHeights, SWEEPS, waveBar, type WaveMoment } from "./callWave";
+import type { VoiceEngineEvents } from "../../../modules/t3-voice-mode";
+import {
+  callGlow,
+  callWaveHeights,
+  followMicLevel,
+  MIC_FALL_MS,
+  MIC_FLOOR,
+  micWaveEnergy,
+  smoothMicLevel,
+  SWEEPS,
+  waveBar,
+  type WaveMoment,
+} from "./callWave";
 
 const COUNT = 29;
 const REST = 0.1;
@@ -73,5 +85,59 @@ describe("callGlow", () => {
     expect(callGlow({ ...idle, sweep: 1.5 }).opacity).toBeGreaterThan(0.1);
     expect(callGlow({ ...idle, sweep: SWEEPS - 0.01 }).opacity).toBeLessThan(0.01);
     expect(callGlow({ ...idle, sweep: 0 }).opacity).toBe(0);
+  });
+});
+
+describe("mic level", () => {
+  const WINDOW_MS = 32;
+  const SPEECH = 0.05;
+
+  function settle(level: number, raw: number, ms: number): number {
+    let next = level;
+    for (let at = 0; at < ms; at += WINDOW_MS) next = smoothMicLevel(next, raw, WINDOW_MS);
+    return next;
+  }
+
+  it("lights the wave on the first window of speech and never on room noise", () => {
+    expect(micWaveEnergy(smoothMicLevel(0, SPEECH, WINDOW_MS))).toBe(1);
+    expect(micWaveEnergy(settle(0, MIC_FLOOR, 2_000))).toBe(0);
+    expect(micWaveEnergy(settle(0, MIC_FLOOR * 2, 2_000))).toBe(0);
+  });
+
+  it("holds through a pause between words and settles soon after he stops", () => {
+    const talking = settle(0, SPEECH, 500);
+    expect(micWaveEnergy(settle(talking, 0.001, 150))).toBe(1);
+    expect(micWaveEnergy(settle(talking, 0.001, 500))).toBe(0);
+  });
+
+  it("falls by e over the fall time", () => {
+    const talking = smoothMicLevel(0, SPEECH, Number.POSITIVE_INFINITY);
+    expect(smoothMicLevel(talking, 0, MIC_FALL_MS)).toBeCloseTo(talking / Math.E, 6);
+  });
+
+  it("writes the smoothed level to the wave until stopped, dropping at once when the mic goes quiet", () => {
+    let listener: ((event: VoiceEngineEvents["micLevel"]) => void) | null = null;
+    const engine = {
+      addListener: (_event: "micLevel", next: (event: VoiceEngineEvents["micLevel"]) => void) => {
+        listener = next;
+        return { remove: () => (listener = null) };
+      },
+    };
+    const written: number[] = [];
+    const stop = followMicLevel(engine, { set: (value) => written.push(value) });
+    const hear = (level: number, atMs: number) => listener?.({ level, atMs });
+
+    hear(SPEECH, 1_000);
+    hear(SPEECH / 2, 1_032);
+    hear(0, 1_040);
+    expect(written).toEqual([
+      SPEECH - MIC_FLOOR,
+      smoothMicLevel(SPEECH - MIC_FLOOR, SPEECH / 2, 32),
+      0,
+    ]);
+
+    stop();
+    expect(listener).toBeNull();
+    expect(written.at(-1)).toBe(0);
   });
 });
