@@ -1,7 +1,5 @@
 import Foundation
 
-// Built with swiftc next to AudioRing.swift, SpeechGate.swift and MicLevel.swift by fork-ios-compile.yml.
-
 var failures = 0
 
 func check(_ condition: Bool, _ message: String, line: Int = #line) {

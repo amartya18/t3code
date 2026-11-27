@@ -104,7 +104,7 @@ describe("mic level", () => {
     expect(micWaveEnergy(settle(0, MIC_FLOOR * 2, 2_000))).toBe(0);
   });
 
-  it("holds through a pause between words and settles soon after he stops", () => {
+  it("holds through a pause between words and settles soon after speech stops", () => {
     const talking = settle(0, SPEECH, 500);
     expect(micWaveEnergy(settle(talking, 0.001, 150))).toBe(1);
     expect(micWaveEnergy(settle(talking, 0.001, 500))).toBe(0);

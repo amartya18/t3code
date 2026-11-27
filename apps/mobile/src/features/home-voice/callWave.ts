@@ -3,7 +3,7 @@ import type { VoiceEngineEvents } from "../../../modules/t3-voice-mode";
 /** The send highlight crosses the wave this many times, then the wave rests. */
 export const SWEEPS = 2;
 
-// The wave's tuning against the engine's raw mic RMS (0 to 1); a Metro reload applies changes.
+// Tuned against the engine's raw mic RMS (0 to 1).
 /** Time constant of the level's rise toward a louder window. */
 export const MIC_RISE_MS = 10;
 /** Time constant of the level's fall toward a quieter window. */
@@ -12,7 +12,7 @@ export const MIC_FALL_MS = 100;
 export const MIC_FLOOR = 0.003;
 /** The wave turns active once the level above the floor passes this. */
 export const MIC_ACTIVE_LEVEL = 0.005;
-/** How far loudness sways an active wave: 0 swings it fully at any level, else energy is level × this. */
+/** 0 swings an active wave fully at any level; otherwise energy is level × this. */
 export const MIC_LOUDNESS_SCALE = 0;
 
 /** One moment of the call's wave and glow, read on the UI thread. */
@@ -25,7 +25,7 @@ export interface WaveMoment {
   readonly sweep: number;
 }
 
-/** Moves the level toward one raw window `dtMs` after the last, above the floor. */
+/** Smooths toward one raw window `dtMs` after the last, with room noise below the floor removed. */
 export function smoothMicLevel(previous: number, raw: number, dtMs: number): number {
   "worklet";
   const level = Math.max(0, raw - MIC_FLOOR);
@@ -40,7 +40,6 @@ export function micWaveEnergy(level: number): number {
   return MIC_LOUDNESS_SCALE > 0 ? Math.min(1, level * MIC_LOUDNESS_SCALE) : 1;
 }
 
-/** Writes the mic's smoothed level into `level` until the returned stop runs. */
 export function followMicLevel(
   engine: {
     addListener(
