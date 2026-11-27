@@ -198,6 +198,16 @@ jobs:
           T3CODE_TELEMETRY_CHANNEL: dev
         run: vp run build:desktop
 
+      # Upload only the expected hidden file, without opting all build outputs into hidden uploads.
+      # release-desktop.yml restores it to client/.vite/manifest.json.
+      - name: Stage web asset manifest
+        shell: bash
+        run: |
+          manifest=apps/server/dist/client/.vite/manifest.json
+          if [[ -f "$manifest" ]]; then
+            cp "$manifest" apps/server/dist/client/vite-manifest.release.json
+          fi
+
       # The npm launcher manifest, which the fork publishes as a release asset instead of to npm.
       # Track switches read its version and database migration (apps/server/src/cloud/npmRelease.ts).
       - name: Write release manifest
