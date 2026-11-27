@@ -886,7 +886,11 @@ const RootStackConfig = createWorkspaceStackNavigator({
 
 function GuardedScreenLayout(props: {
   readonly children: ReactNode;
-  readonly route: { readonly name: string; readonly params?: object | undefined };
+  readonly route: {
+    readonly key: string;
+    readonly name: string;
+    readonly params?: object | undefined;
+  };
 }) {
   return (
     <RenderErrorBoundary
