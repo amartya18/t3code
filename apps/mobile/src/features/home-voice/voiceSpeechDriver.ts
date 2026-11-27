@@ -10,6 +10,9 @@ import {
 } from "./voiceSpeech";
 
 const TICK_MS = 100;
+/** The engine only sets a volume, so a duck steps there instead of jumping. */
+const DUCK_STEPS = 4;
+const DUCK_STEP_MS = 20;
 
 // A hung-up session's stop must finish before the next session starts: native start does not wait for it.
 let stopping: Promise<unknown> = Promise.resolve();
@@ -40,7 +43,26 @@ export function createVoiceSpeechDriver(options: {
   let inputs = options.inputs;
   let state: VoiceSpeechState;
   let ticker: ReturnType<typeof setInterval> | null = null;
+  let volume = 1;
+  let ramp: ReturnType<typeof setInterval> | null = null;
   let disposed = false;
+
+  const duck = (level: number) => {
+    if (ramp !== null) clearInterval(ramp);
+    const from = volume;
+    let step = 0;
+    const next = () => {
+      step += 1;
+      volume = from + ((level - from) * step) / DUCK_STEPS;
+      engine.duck(volume);
+      if (step === DUCK_STEPS && ramp !== null) {
+        clearInterval(ramp);
+        ramp = null;
+      }
+    };
+    next();
+    ramp = setInterval(next, DUCK_STEP_MS);
+  };
 
   const dispatch = (event: VoiceSpeechEvent) => {
     if (disposed) return;
@@ -122,7 +144,7 @@ export function createVoiceSpeechDriver(options: {
         engine.stopSpeech(effect.fadeMs);
         return;
       case "duck":
-        engine.duck(effect.level);
+        duck(effect.level);
         return;
       case "log":
         if (inputs.engineConfig.logStages) options.log(effect.line);
@@ -175,6 +197,7 @@ export function createVoiceSpeechDriver(options: {
     dispose() {
       disposed = true;
       if (ticker !== null) clearInterval(ticker);
+      if (ramp !== null) clearInterval(ramp);
       for (const subscription of subscriptions) subscription.remove();
       engine.stopSpeech(0);
       stopping = engine.stop().catch(() => {});

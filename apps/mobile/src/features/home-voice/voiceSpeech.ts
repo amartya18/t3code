@@ -65,6 +65,8 @@ export interface VoiceSpeechState {
   readonly bargeIn: BargeInState;
   readonly queue: SpeechQueue;
   readonly volume: number;
+  /** Where the voice plays; on headphones the mic can't hear it, so Amar's voice alone stops it. */
+  readonly route: "speaker" | "headphones";
   /** The mic's transcript while the agent speaks: echo until Amar interrupts. */
   readonly overheard: string;
   /** Amar's finished words between finalize and the outbox taking them. */
@@ -153,6 +155,7 @@ const INITIAL: VoiceSpeechState = {
   bargeIn: INITIAL_BARGE_IN_STATE,
   queue: EMPTY_SPEECH_QUEUE,
   volume: 1,
+  route: "speaker",
   overheard: "",
   sending: null,
   replies: [],
@@ -259,9 +262,7 @@ function stepSpeech(
     case "holdEnd":
       return stepTurn(state, event, config);
     case "tick":
-      return then(stepTurn(state, event, config), (next) =>
-        next.bargeIn.kind === "ducked" ? stepHeard(next, event, config) : stay(next),
-      );
+      return stepTurn(state, event, config);
     case "vad":
     case "partial":
     case "eou":
@@ -278,9 +279,9 @@ function stepSpeech(
   }
 }
 
-/** Whether the session needs clock ticks: a pause counting down, a barge-in waiting, or speech to watch. */
+/** Whether the session needs clock ticks: a pause counting down, or speech to watch. */
 export function needsTicks(state: VoiceSpeechState): boolean {
-  return state.turn.kind === "paused" || state.bargeIn.kind === "ducked" || isSpeaking(state.queue);
+  return state.turn.kind === "paused" || isSpeaking(state.queue);
 }
 
 /** Amar's words on screen: what is being sent, then what he is saying now. */
@@ -322,9 +323,10 @@ function onInterruption(state: VoiceSpeechState, phase: "began" | "ended"): Voic
 
 function onRoute(state: VoiceSpeechState, output: string): VoiceSpeechStep {
   const log: VoiceSpeechEffect = { type: "log", line: `[voice] route: ${output}` };
-  if (state.bargeIn.kind !== "ducked") return { state, effects: [log] };
+  const routed = { ...state, route: output === "Speaker" ? "speaker" : "headphones" } as const;
+  if (state.bargeIn.kind !== "ducked") return { state: routed, effects: [log] };
   return {
-    state: { ...state, bargeIn: INITIAL_BARGE_IN_STATE, volume: 1 },
+    state: { ...routed, bargeIn: INITIAL_BARGE_IN_STATE, volume: 1 },
     effects: [log, { type: "duck", level: 1 }],
   };
 }
@@ -369,7 +371,12 @@ function stepHeard(
   const overheard =
     event.type === "partial" && event.text.trim() !== "" ? event.text : state.overheard;
   const step = config.voiceBargeIn
-    ? stepBargeIn(state.bargeIn, event, isSpeaking(state.queue), config.bargeIn)
+    ? stepBargeIn(
+        state.bargeIn,
+        event,
+        { speaking: isSpeaking(state.queue), headphones: state.route === "headphones" },
+        config.bargeIn,
+      )
     : { state: state.bargeIn, effects: [] };
   if (step.state === state.bargeIn && step.effects.length === 0 && overheard === state.overheard) {
     return stay(state);

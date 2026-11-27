@@ -1,4 +1,4 @@
-import { expect, it } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 
 import type { VoiceEngine } from "../../../modules/t3-voice-mode";
 import { DEFAULT_VOICE_SPEECH_CONFIG } from "./voiceSpeech";
@@ -76,4 +76,44 @@ it("hanging up mid-speech stops the voice, and the next call starts only after t
   fake.finishStop();
   await settle();
   expect(fake.calls.slice(-2)).toEqual(["stopped", "start"]);
+});
+
+it("ducks the voice in steps rather than one jump, and restores it the same way", async () => {
+  vi.useFakeTimers();
+  const levels: number[] = [];
+  const listeners = new Map<string, (event: unknown) => void>();
+  const engine: VoiceEngine = {
+    ...fakeEngine().engine,
+    stop: async () => {},
+    duck: (level) => {
+      levels.push(level);
+    },
+    addListener: (name, listener) => {
+      listeners.set(name, listener as (event: unknown) => void);
+      return { remove: () => {} };
+    },
+  };
+  const driver = open(engine);
+  await settle();
+  driver.dispatch({
+    type: "replies",
+    replies: [{ id: "r1", text: "A long answer that keeps going.", streaming: false }],
+    atMs: 0,
+  });
+
+  listeners.get("vad")!({ speaking: true, probability: 1, atMs: 0 });
+  vi.advanceTimersByTime(200);
+  const ducked = levels.splice(0);
+  expect(ducked.length).toBeGreaterThan(2);
+  expect(ducked.at(-1)).toBe(DEFAULT_VOICE_SPEECH_CONFIG.bargeIn.duckLevel);
+  expect(ducked).toEqual([...ducked].sort((left, right) => right - left));
+
+  listeners.get("vad")!({ speaking: false, probability: 0, atMs: 0 });
+  vi.advanceTimersByTime(200);
+  expect(levels.length).toBeGreaterThan(2);
+  expect(levels.at(-1)).toBe(1);
+  expect(levels).toEqual([...levels].sort((left, right) => left - right));
+
+  driver.dispose();
+  vi.useRealTimers();
 });

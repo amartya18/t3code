@@ -241,7 +241,6 @@ describe("voice speech", () => {
     expect(voice.engine.volume).toBe(DEFAULT_VOICE_SPEECH_CONFIG.bargeIn.duckLevel);
     voice.engine.transcript = "wait";
     voice.send({ type: "partial", text: "wait" });
-    voice.wait(300);
     expect(voice.engine.stops).toEqual([DEFAULT_VOICE_SPEECH_CONFIG.bargeIn.fadeMs]);
     expect(liveWords(voice.state()).current).toBe("wait");
 
@@ -259,12 +258,11 @@ describe("voice speech", () => {
     expect(voice.played).toEqual(["Asking Home."]);
   });
 
-  it("lets its own echo neither interrupt it nor end Amar's turn", () => {
+  it("ducks for a sound with no words and plays on, and the sound starts no turn", () => {
     const voice = call();
     voice.reply("r1", "A long answer that keeps going.");
     voice.send({ type: "vad", speaking: true });
-    voice.engine.transcript = "a long answer";
-    voice.send({ type: "partial", text: "a long answer" });
+    expect(voice.engine.volume).toBe(DEFAULT_VOICE_SPEECH_CONFIG.bargeIn.duckLevel);
     voice.wait(100);
     voice.send({ type: "vad", speaking: false });
     voice.wait(5_000);
@@ -275,8 +273,21 @@ describe("voice speech", () => {
 
     voice.playAll();
     expect(voice.played).toEqual(["A long answer that keeps going."]);
-    expect(voice.engine.discarded).toBe(1);
     expect(voice.sent).toEqual([]);
+  });
+
+  it("on headphones, stops the voice at the first sound of Amar's voice", () => {
+    const voice = call();
+    voice.send({ type: "route", output: "Headphones" });
+    voice.reply("r1", "A long answer that keeps going.");
+    voice.send({ type: "vad", speaking: true });
+    expect(voice.engine.stops).toEqual([DEFAULT_VOICE_SPEECH_CONFIG.bargeIn.fadeMs]);
+
+    voice.send({ type: "route", output: "Speaker" });
+    voice.reply("r2", "Another answer.");
+    voice.send({ type: "vad", speaking: false });
+    voice.send({ type: "vad", speaking: true });
+    expect(voice.engine.stops).toHaveLength(1);
   });
 
   it("without echo cancellation, only a tap stops the voice", () => {
@@ -309,8 +320,8 @@ describe("voice speech", () => {
     expect(voice.sent).toEqual(["are you there"]);
   });
 
-  it("stops the voice on a tap and drops what the mic overheard", () => {
-    const voice = call();
+  it("without echo cancellation, a tap stops the voice and drops what the mic overheard", () => {
+    const voice = call({ config: { ...TIMER_ONLY, voiceBargeIn: false } });
     voice.reply("r1", "One. Two. Three.");
     voice.send({ type: "partial", text: "one" });
     voice.send({ type: "tap" });
