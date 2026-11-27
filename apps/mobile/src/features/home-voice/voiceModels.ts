@@ -8,6 +8,7 @@ import {
   resolveProviderOptionDescriptors,
 } from "../../lib/providerOptions";
 import { useEnvironmentServerConfig } from "../../state/entities";
+import { isVoiceInstance } from "./voiceInstances";
 import type { VoiceModeSettings } from "./voiceSettings";
 
 // Like the composer, the first select option is the model's reasoning control.
@@ -58,7 +59,7 @@ export function useVoiceModelOptions(
     settings?.modelSelection ?? null,
     undefined,
     settings?.projectId ?? null,
-  ).filter((option) => !option.isUnavailable);
+  ).filter((option) => !option.isUnavailable && !isVoiceInstance(option.selection.instanceId));
   const selected = options.find(
     (option) =>
       option.selection.instanceId === settings?.modelSelection.instanceId &&

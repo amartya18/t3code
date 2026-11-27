@@ -43,6 +43,8 @@ export interface VoiceModeSettings {
   readonly interruptMode: InterruptMode;
   readonly recovery: RecoveryMode;
   readonly smartCutoffMs: number;
+  /** Dev only: Claude turns run with extended thinking, to compare reply latency. */
+  readonly thinking: boolean;
 }
 
 const DEFAULT_VOICE_MODEL: ModelSelectionType = {
@@ -63,6 +65,7 @@ const StoredVoiceSettings = Schema.Struct({
   interruptMode: Schema.optional(Schema.Literals(INTERRUPT_MODES)),
   recovery: Schema.optional(Schema.Literals(RECOVERY_MODES)),
   smartCutoffMs: Schema.optional(Schema.Number),
+  thinking: Schema.optional(Schema.Boolean),
 });
 type StoredVoiceSettings = typeof StoredVoiceSettings.Type;
 const StoredVoiceSettingsJson = Schema.fromJsonString(StoredVoiceSettings);
@@ -132,5 +135,6 @@ export function useVoiceModeSettings(): VoiceModeSettings | null {
             stored.smartCutoffMs ?? DEFAULT_BARGE_IN_CONFIG.smartCutoffMs,
           ),
         ),
+        thinking: stored.thinking ?? false,
       };
 }

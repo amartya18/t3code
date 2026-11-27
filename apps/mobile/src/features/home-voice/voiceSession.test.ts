@@ -1,4 +1,5 @@
 import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import { Atom } from "effect/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { QueuedThreadMessage } from "../../state/thread-outbox";
@@ -11,6 +12,17 @@ const outbox = vi.hoisted(() => ({
   ids: 0,
 }));
 
+vi.stubGlobal("__DEV__", false);
+const voiceServerConfig = Atom.make({
+  providers: [
+    { instanceId: "claudeAgent", enabled: true },
+    { instanceId: "claudeVoice", enabled: true },
+    { instanceId: "claudeVoiceThinking", enabled: true },
+  ],
+});
+vi.mock("../../state/server", () => ({
+  serverEnvironment: { configValueAtom: () => voiceServerConfig },
+}));
 vi.mock("expo-crypto", () => ({ randomUUID: () => `id-${++outbox.ids}` }));
 vi.mock("../../connection/runtime", () => ({ connectionAtomRuntime: {} }));
 vi.mock("@t3tools/client-runtime/state/runtime", () => ({
@@ -35,7 +47,8 @@ const START = Date.parse("2026-11-27T12:00:00.000Z");
 const settings = {
   environmentId: EnvironmentId.make("env"),
   projectId: ProjectId.make("voice"),
-  modelSelection: { instanceId: "claude", model: "claude-haiku-4-5" },
+  modelSelection: { instanceId: "claudeAgent", model: "claude-haiku-4-5" },
+  thinking: false,
 } as unknown as VoiceModeSettings;
 const home = { environmentId: settings.environmentId, threadId: ThreadId.make("home") };
 
@@ -99,5 +112,16 @@ describe("a voice session", () => {
 
     await sendVoiceMessage(thread, settings, "Hello again.");
     expect(outbox.queued.map((message) => message.creation?.projectId)).toEqual(["voice"]);
+  });
+
+  it("runs Claude without thinking on the server's voice instance, and with it when asked", async () => {
+    const thread = start();
+    await sendVoiceMessage(thread, settings, "Quick one.");
+    await sendVoiceMessage(thread, { ...settings, thinking: true }, "Think about it.");
+    expect(outbox.queued.map((message) => message.modelSelection)).toEqual([
+      { instanceId: "claudeVoice", model: "claude-haiku-4-5" },
+      { instanceId: "claudeVoiceThinking", model: "claude-haiku-4-5" },
+    ]);
+    expect(outbox.queued[0]!.creation?.projectId).toBe("voice");
   });
 });

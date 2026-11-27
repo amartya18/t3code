@@ -15,6 +15,7 @@ import { makeQueuedMessageMetadata } from "../../lib/commandMetadata";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { uuidv4 } from "../../lib/uuid";
 import { appAtomRegistry } from "../../state/atom-registry";
+import { serverEnvironment } from "../../state/server";
 import { enqueueThreadOutboxMessage } from "../../state/thread-outbox";
 import {
   diffHomeUpdates,
@@ -23,6 +24,7 @@ import {
   type HomeUpdateCursor,
 } from "./homeUpdates";
 import type { HomeView } from "./homeView";
+import { voiceTurnSelection } from "./voiceInstances";
 import type { VoiceModeSettings } from "./voiceSettings";
 
 export const VOICE_THREAD_TAG = "voice";
@@ -87,6 +89,12 @@ export async function sendVoiceMessage(
       } as const)
     : null;
   const metadata = makeQueuedMessageMetadata();
+  const modelSelection = voiceTurnSelection(
+    settings.modelSelection,
+    appAtomRegistry.get(serverEnvironment.configValueAtom(thread.environmentId))?.providers ?? [],
+    settings.thinking,
+  );
+  if (__DEV__) console.log(`[voice] turn on ${modelSelection.instanceId}/${modelSelection.model}`);
   try {
     await enqueueThreadOutboxMessage({
       ...thread,
@@ -94,7 +102,7 @@ export async function sendVoiceMessage(
       commandId: CommandId.make(metadata.commandId),
       text,
       attachments: [],
-      modelSelection: settings.modelSelection,
+      modelSelection,
       // Home's MCP access check refuses senders in a narrower mode; the project's deny list keeps tools narrow.
       runtimeMode: "full-access",
       interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
