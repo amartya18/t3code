@@ -12,14 +12,13 @@ import { ListChoiceRow } from "../../components/ui/ListChoiceRow";
 import { ListSection } from "../../components/ui/ListSection";
 import { ListToggleRow } from "../../components/ui/ListToggleRow";
 import { SheetHeader } from "../../components/ui/SheetHeader";
-import { SliderRow } from "../../components/ui/SliderRow";
+import { SliderRow, type SliderRowProps } from "../../components/ui/SliderRow";
 import { groupByProvider } from "../../lib/modelOptions";
+import { VOICE_TUNING_RANGE, type VoiceTuning } from "./voiceEngine";
 import { splitOlderModels, useVoiceModelOptions, withLowEffort } from "./voiceModels";
 import { VoiceReasoningRow } from "./VoiceMenuRow";
 import {
   KOKORO_VOICES,
-  MIN_SPEECH_MAX_MS,
-  MIN_SPEECH_MIN_MS,
   saveVoiceSettings,
   useVoiceModeSettings,
   type KokoroVoiceId,
@@ -31,6 +30,38 @@ const VOICE_NAMES: Record<KokoroVoiceId, string> = {
   bf_emma: "Emma",
 };
 
+/** A dev slider in seconds over one tuning setting, saved in milliseconds when let go. */
+function TuningRow(props: {
+  readonly tuning: VoiceTuning;
+  readonly setting: keyof VoiceTuning;
+  readonly icon: SliderRowProps["icon"];
+  readonly label: string;
+  readonly step: number;
+}) {
+  const gt = useGT();
+  const [dragged, setDragged] = useState<number | null>(null);
+  const { min, max } = VOICE_TUNING_RANGE[props.setting];
+  const seconds = props.tuning[props.setting] / 1000;
+  return (
+    <View className="border-t border-border-subtle">
+      <SliderRow
+        icon={props.icon}
+        label={props.label}
+        valueLabel={gt("{seconds} s", { seconds: (dragged ?? seconds).toFixed(2) })}
+        min={min / 1000}
+        max={max / 1000}
+        step={props.step}
+        value={seconds}
+        onDrag={setDragged}
+        onChange={(next) => {
+          setDragged(null);
+          void saveVoiceSettings({ [props.setting]: Math.round(next * 1000) });
+        }}
+      />
+    </View>
+  );
+}
+
 /** Opened from the gear in the call and the pill; every change is saved for later sessions. */
 export function VoiceSessionSheet() {
   const gt = useGT();
@@ -38,7 +69,6 @@ export function VoiceSessionSheet() {
   const insets = useSafeAreaInsets();
   const settings = useVoiceModeSettings();
   const [showOlder, setShowOlder] = useState(false);
-  const [draggedMinSpeech, setDraggedMinSpeech] = useState<number | null>(null);
   const { options, selected } = useVoiceModelOptions(settings, settings?.environmentId ?? null);
   const close = () => navigation.goBack();
   const title = gt("Session settings");
@@ -102,24 +132,27 @@ export function VoiceSessionSheet() {
               value={settings.thinking}
               onValueChange={(thinking) => void saveVoiceSettings({ thinking })}
             />
-            <View className="border-t border-border-subtle">
-              <SliderRow
-                icon="mic"
-                label={gt("Minimum speech (dev)")}
-                valueLabel={gt("{seconds} s", {
-                  seconds: (draggedMinSpeech ?? settings.minSpeechMs / 1000).toFixed(2),
-                })}
-                min={MIN_SPEECH_MIN_MS / 1000}
-                max={MIN_SPEECH_MAX_MS / 1000}
-                step={0.05}
-                value={settings.minSpeechMs / 1000}
-                onDrag={setDraggedMinSpeech}
-                onChange={(seconds) => {
-                  setDraggedMinSpeech(null);
-                  void saveVoiceSettings({ minSpeechMs: Math.round(seconds * 1000) });
-                }}
-              />
-            </View>
+            <TuningRow
+              tuning={settings.tuning}
+              setting="minSpeechMs"
+              icon="mic"
+              label={gt("Minimum speech (dev)")}
+              step={0.05}
+            />
+            <TuningRow
+              tuning={settings.tuning}
+              setting="minSilenceMs"
+              icon="pause"
+              label={gt("Silence before scoring (dev)")}
+              step={0.05}
+            />
+            <TuningRow
+              tuning={settings.tuning}
+              setting="turnWaitMs"
+              icon="clock"
+              label={gt("Wait when not done (dev)")}
+              step={0.1}
+            />
           </ListSection>
         ) : null}
       </ScrollView>

@@ -14,11 +14,11 @@ import { groupByProvider, type ModelOption } from "../../lib/modelOptions";
 import { useProjects } from "../../state/entities";
 import { userHomeAtom } from "../../state/home";
 import { SettingsSection } from "../settings/components/SettingsSection";
-import { voiceEngineConfig } from "./voiceEngine";
+import { DEFAULT_VOICE_TUNING, voiceEngineConfig, type VoiceTuning } from "./voiceEngine";
 import { splitOlderModels, useVoiceModelOptions, withLowEffort } from "./voiceModels";
 import { VoiceMenuRow, VoiceReasoningRow } from "./VoiceMenuRow";
 import { voiceSessionAtom } from "./voiceSession";
-import { DEFAULT_MIN_SPEECH_MS, saveVoiceSettings, useVoiceModeSettings } from "./voiceSettings";
+import { saveVoiceSettings, useVoiceModeSettings } from "./voiceSettings";
 
 /** Fork: the project and model a voice session starts with, on this device. */
 export function HomeVoiceSettingsSection() {
@@ -90,7 +90,7 @@ export function HomeVoiceSettingsSection() {
       {voiceEngine === null ? null : (
         <VoiceDownloadRow
           voiceId={settings?.voiceId ?? "af_heart"}
-          minSpeechMs={settings?.minSpeechMs ?? DEFAULT_MIN_SPEECH_MS}
+          tuning={settings?.tuning ?? DEFAULT_VOICE_TUNING}
         />
       )}
     </SettingsSection>
@@ -98,10 +98,11 @@ export function HomeVoiceSettingsSection() {
 }
 
 /** The on-device speech models: their size on disk, and a way to free it. */
-function VoiceDownloadRow(props: { readonly voiceId: string; readonly minSpeechMs: number }) {
+function VoiceDownloadRow(props: { readonly voiceId: string; readonly tuning: VoiceTuning }) {
   const gt = useGT();
   const sessionLive = useAtomValue(voiceSessionAtom) !== null;
   const [bytes, setBytes] = useState<number | null>(null);
+  const { minSpeechMs, minSilenceMs, turnWaitMs } = props.tuning;
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the models live on disk, measured by the native engine
   useEffect(() => {
@@ -109,7 +110,7 @@ function VoiceDownloadRow(props: { readonly voiceId: string; readonly minSpeechM
     const engine = voiceEngine;
     let current = true;
     void engine
-      .configure(voiceEngineConfig(props.voiceId, props.minSpeechMs))
+      .configure(voiceEngineConfig(props.voiceId, { minSpeechMs, minSilenceMs, turnWaitMs }))
       .then(() => engine.modelStatus())
       .then((status) => {
         if (current) setBytes(status.bytesOnDisk);
@@ -118,7 +119,7 @@ function VoiceDownloadRow(props: { readonly voiceId: string; readonly minSpeechM
     return () => {
       current = false;
     };
-  }, [props.voiceId, props.minSpeechMs]);
+  }, [props.voiceId, minSpeechMs, minSilenceMs, turnWaitMs]);
 
   const label = gt("Voice download");
   const size = bytes === null ? "" : bytes === 0 ? gt("None") : formatBytes(bytes);

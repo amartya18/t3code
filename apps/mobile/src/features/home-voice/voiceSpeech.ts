@@ -5,6 +5,7 @@ import {
   INITIAL_TURN_STATE,
   isTurnOpen,
   stepTurn,
+  type TurnConfig,
   type TurnEffect,
   type TurnEvent,
   type TurnState,
@@ -106,9 +107,7 @@ export interface VoiceSpeechState {
   readonly speechMovedAtMs: number | null;
 }
 
-export interface VoiceSpeechConfig {
-  /** The detector reports a start this long after speech starts, and an end this long after it ends. */
-  readonly vad: { readonly minSpeechMs: number; readonly minSilenceMs: number };
+export interface VoiceSpeechConfig extends TurnConfig {
   /** Off without echo cancellation, where the mic hears the agent's own voice. */
   readonly voiceBargeIn: boolean;
 }
@@ -530,7 +529,7 @@ function withTurn(
   event: TurnEvent,
   config: VoiceSpeechConfig,
 ): VoiceSpeechStep {
-  const step = stepTurn(state.turn, event);
+  const step = stepTurn(state.turn, event, config);
   if (step.state === state.turn && step.effects.length === 0) return stay(state);
   let result: VoiceSpeechStep = { state: { ...state, turn: step.state }, effects: [] };
   for (const effect of step.effects) {
@@ -551,6 +550,8 @@ function onTurnEffect(
     case "scoreTurn":
     case "transcribe":
       return { state, effects: [effect] };
+    case "score":
+      return { state, effects: [{ type: "log", line: scoreLine(effect) }] };
     case "decided":
       return {
         state: {
@@ -588,6 +589,13 @@ function onTurnEffect(
       };
     }
   }
+}
+
+function scoreLine(effect: Extract<TurnEffect, { type: "score" }>): string {
+  const score = `[voice] turn ${effect.turn} Smart Turn ${effect.probability.toFixed(2)}`;
+  return effect.silenceMs === null
+    ? `${score} came after the pause ended: ignore`
+    : `${score} after ${(effect.silenceMs / 1000).toFixed(1)} s silence: ${effect.decision}`;
 }
 
 function onSent(

@@ -1,9 +1,16 @@
 /** Smart Turn's score at or above which a pause ends the user's turn at once. */
-export const TURN_DONE_PROBABILITY = 0.5;
-/** How long a pause Smart Turn calls unfinished waits for more speech before the turn ends anyway. */
-export const UNFINISHED_WAIT_MS = 2_000;
+export const TURN_DONE_PROBABILITY = 0.7;
+/** An unfinished pause is scored again this often, over the silence heard since. */
+export const RESCORE_MS = 500;
 /** Audio kept from before the detector's speech start, so the user's first word is whole. */
 export const PRE_ROLL_MS = 400;
+
+export interface TurnConfig {
+  /** The detector reports a start this long after speech starts, and an end this long after it ends. */
+  readonly vad: { readonly minSpeechMs: number; readonly minSilenceMs: number };
+  /** How long a pause Smart Turn calls unfinished waits for more speech before the turn ends anyway. */
+  readonly unfinishedWaitMs: number;
+}
 
 /** What Parakeet heard in one piece of a turn. */
 export interface Heard {
@@ -33,11 +40,16 @@ type LiveTurn =
   | ({
       readonly kind: "paused";
       readonly endMs: number;
-      /** When JS heard the user's speech end; the wait counts from here. */
+      /** When JS heard the user's speech end; the wait and its scores count from here. */
       readonly endedAtMs: number;
-      /** Smart Turn's score, null until it answers. */
+      /** Smart Turn's latest score, null until it first answers. */
       readonly probability: number | null;
+      readonly scoresAsked: number;
+      /** The end of the audio Smart Turn is scoring now, which its answer must match. */
+      readonly scoringToMs: number | null;
     } & Speech);
+
+type Paused = Extract<LiveTurn, { kind: "paused" }>;
 
 interface DecidedTurn {
   readonly turn: number;
@@ -78,6 +90,14 @@ export type TurnEffect =
   | { readonly type: "scoreTurn"; readonly fromMs: number; readonly toMs: number }
   | { readonly type: "transcribe"; readonly fromMs: number; readonly toMs: number }
   | {
+      readonly type: "score";
+      readonly turn: number;
+      readonly probability: number;
+      /** Null for a score that came after he spoke again or the turn ended. */
+      readonly silenceMs: number | null;
+      readonly decision: "send" | "wait" | "ignore";
+    }
+  | {
       readonly type: "decided";
       readonly turn: number;
       readonly endedAtMs: number;
@@ -102,8 +122,11 @@ const MUTED: LiveTurn = { kind: "muted" };
 
 export const INITIAL_TURN_STATE: TurnState = { live: IDLE, decided: [], count: 0 };
 
-/** Done ends the turn; unfinished transcribes the piece so far and waits UNFINISHED_WAIT_MS. */
-export function stepTurn(state: TurnState, event: TurnEvent): TurnStep {
+/**
+ * Done ends the turn; unfinished transcribes the piece so far, then rescores every RESCORE_MS
+ * until a score is done or the wait runs out.
+ */
+export function stepTurn(state: TurnState, event: TurnEvent, config: TurnConfig): TurnStep {
   switch (event.type) {
     case "muted":
       if (event.muted) return stay({ ...state, live: MUTED });
@@ -111,13 +134,11 @@ export function stepTurn(state: TurnState, event: TurnEvent): TurnStep {
     case "vad":
       return onVad(state, event);
     case "scored":
-      return onScored(state, event);
+      return onScored(state, event, config);
     case "transcribed":
       return onTranscribed(state, event);
     case "tick":
-      return state.live.kind === "paused" && event.atMs - state.live.endedAtMs >= UNFINISHED_WAIT_MS
-        ? decide(state, state.live, true)
-        : stay(state);
+      return onTick(state, event.atMs, config);
   }
 }
 
@@ -144,28 +165,68 @@ function onVad(state: TurnState, event: Extract<TurnEvent, { type: "vad" }>): Tu
     return stay({ ...state, live: { kind: "speaking", startMs, cutMs, pieces } });
   }
   if (live.kind !== "speaking") return stay(state);
+  return score(state, {
+    ...live,
+    kind: "paused",
+    endMs: event.speechMs,
+    endedAtMs: event.atMs,
+    probability: null,
+    scoresAsked: 0,
+    scoringToMs: null,
+  });
+}
+
+/**
+ * Speech that resumes in the wait reaches JS only after the detector's onset hold, so the
+ * deadline runs that much past the wait: speech he started inside the wait still continues it.
+ */
+function onTick(state: TurnState, atMs: number, config: TurnConfig): TurnStep {
+  const { live } = state;
+  if (live.kind !== "paused") return stay(state);
+  const waitedMs = atMs - live.endedAtMs;
+  if (waitedMs >= config.unfinishedWaitMs + config.vad.minSpeechMs)
+    return decide(state, live, true);
+  if (live.scoringToMs !== null || waitedMs < live.scoresAsked * RESCORE_MS) return stay(state);
+  return score(state, live, waitedMs);
+}
+
+/** Scores the turn through the silence heard so far; the first score ends at the speech end. */
+function score(state: TurnState, live: Paused, waitedMs = 0): TurnStep {
+  const toMs = live.endMs + waitedMs;
   return {
-    state: {
-      ...state,
-      live: {
-        ...live,
-        kind: "paused",
-        endMs: event.speechMs,
-        endedAtMs: event.atMs,
-        probability: null,
-      },
-    },
-    effects: [{ type: "scoreTurn", fromMs: live.startMs, toMs: event.speechMs }],
+    state: { ...state, live: { ...live, scoresAsked: live.scoresAsked + 1, scoringToMs: toMs } },
+    effects: [{ type: "scoreTurn", fromMs: live.startMs, toMs }],
   };
 }
 
-function onScored(state: TurnState, event: Extract<TurnEvent, { type: "scored" }>): TurnStep {
+function onScored(
+  state: TurnState,
+  event: Extract<TurnEvent, { type: "scored" }>,
+  config: TurnConfig,
+): TurnStep {
   const { live } = state;
-  if (live.kind !== "paused" || live.probability !== null || live.endMs !== event.toMs) {
-    return stay(state);
+  const { probability } = event;
+  if (live.kind !== "paused" || live.scoringToMs !== event.toMs) {
+    const turn = live.kind === "speaking" || live.kind === "paused" ? state.count + 1 : state.count;
+    return {
+      state,
+      effects: [{ type: "score", turn, probability, silenceMs: null, decision: "ignore" }],
+    };
   }
-  const scored = { ...live, probability: event.probability };
-  if (event.probability >= TURN_DONE_PROBABILITY) return decide(state, scored, false);
+  const scored = { ...live, probability, scoringToMs: null };
+  const done = probability >= TURN_DONE_PROBABILITY;
+  const logged: TurnEffect = {
+    type: "score",
+    turn: state.count + 1,
+    probability,
+    silenceMs: event.atMs - live.endedAtMs + config.vad.minSilenceMs,
+    decision: done ? "send" : "wait",
+  };
+  if (done) {
+    const decided = decide(state, scored, false);
+    return { ...decided, effects: [logged, ...decided.effects] };
+  }
+  if (live.cutMs >= live.endMs) return { state: { ...state, live: scored }, effects: [logged] };
   return {
     state: {
       ...state,
@@ -175,15 +236,11 @@ function onScored(state: TurnState, event: Extract<TurnEvent, { type: "scored" }
         pieces: [...live.pieces, { fromMs: live.cutMs, heard: null }],
       },
     },
-    effects: [{ type: "transcribe", fromMs: live.cutMs, toMs: live.endMs }],
+    effects: [logged, { type: "transcribe", fromMs: live.cutMs, toMs: live.endMs }],
   };
 }
 
-function decide(
-  state: TurnState,
-  live: Extract<LiveTurn, { kind: "paused" }>,
-  waited: boolean,
-): TurnStep {
+function decide(state: TurnState, live: Paused, waited: boolean): TurnStep {
   const rest = live.cutMs < live.endMs;
   const turn = state.count + 1;
   const pieces = rest ? [...live.pieces, { fromMs: live.cutMs, heard: null }] : live.pieces;

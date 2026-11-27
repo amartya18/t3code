@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vite-plus/test";
 
 import type { VoiceEngine, VoiceEngineConfig } from "../../../modules/t3-voice-mode";
-import { voiceEngineConfig } from "./voiceEngine";
+import { DEFAULT_VOICE_TUNING, voiceEngineConfig, voiceSpeechConfig } from "./voiceEngine";
 import { createVoiceSpeechDriver } from "./voiceSpeechDriver";
 
 vi.mock("react-native", () => ({ Platform: { OS: "ios", Version: "26.0" } }));
@@ -46,16 +46,11 @@ function fakeEngine() {
 }
 
 function engineConfig(logStages: boolean): VoiceEngineConfig {
-  return {
-    vad: { threshold: 0.5, minSpeechMs: 250, minSilenceMs: 200 },
-    tts: { voiceId: "af_heart", speed: 1, vocoderFloat32: false },
-    aec: { enabled: false },
-    logStages,
-  };
+  return { ...voiceEngineConfig("af_heart", DEFAULT_VOICE_TUNING), logStages };
 }
 
 function inputs(config: VoiceEngineConfig, send: (text: string) => Promise<unknown>) {
-  return { engineConfig: config, config: { vad: config.vad, voiceBargeIn: true }, send };
+  return { engineConfig: config, config: voiceSpeechConfig(DEFAULT_VOICE_TUNING), send };
 }
 
 function open(
@@ -105,22 +100,23 @@ it("gives Parakeet the call's word list once the engine has started", async () =
   expect(fake.calls).toEqual(["start", "setVocabulary T3, laptop13"]);
 });
 
-it("feeds a new minimum speech length to the live engine without restarting it", async () => {
+it("feeds new detector holds from the sliders to the live engine without restarting it", async () => {
   const fake = fakeEngine();
-  const configured: number[] = [];
+  const configured: VoiceEngineConfig["vad"][] = [];
   const engine: VoiceEngine = {
     ...fake.engine,
     stop: async () => {},
     configure: async (config) => {
-      configured.push(config.vad.minSpeechMs);
+      configured.push(config.vad);
     },
   };
   const driver = open(engine);
   await settle();
-  driver.update(inputs(voiceEngineConfig("af_heart", 400), async () => {}));
+  const tuning = { ...DEFAULT_VOICE_TUNING, minSpeechMs: 900, minSilenceMs: 1_200 };
+  driver.update(inputs(voiceEngineConfig("af_heart", tuning), async () => {}));
   await settle();
 
-  expect(configured.at(-1)).toBe(400);
+  expect(configured.at(-1)).toMatchObject({ minSpeechMs: 900, minSilenceMs: 1_200 });
   expect(fake.calls.filter((call) => call === "start")).toHaveLength(1);
   driver.dispose();
 });

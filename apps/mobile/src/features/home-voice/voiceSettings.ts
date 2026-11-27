@@ -14,13 +14,10 @@ import { writeFileAtomically } from "../../lib/atomic-file";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { useProjects } from "../../state/entities";
 import { userHomeAtom } from "../../state/home";
+import { DEFAULT_VOICE_TUNING, type VoiceTuning } from "./voiceEngine";
 
 export const KOKORO_VOICES = ["af_heart", "am_michael", "bf_emma"] as const;
 export type KokoroVoiceId = (typeof KOKORO_VOICES)[number];
-
-export const MIN_SPEECH_MIN_MS = 100;
-export const MIN_SPEECH_MAX_MS = 500;
-export const DEFAULT_MIN_SPEECH_MS = 250;
 
 export interface VoiceModeSettings {
   readonly environmentId: EnvironmentId;
@@ -29,8 +26,8 @@ export interface VoiceModeSettings {
   readonly voiceId: KokoroVoiceId;
   /** Dev only: Claude turns run with extended thinking, to compare reply latency. */
   readonly thinking: boolean;
-  /** Dev only: how long a voice must last before the detector calls it speech. */
-  readonly minSpeechMs: number;
+  /** Dev only. */
+  readonly tuning: VoiceTuning;
 }
 
 const DEFAULT_VOICE_MODEL: ModelSelectionType = {
@@ -48,6 +45,8 @@ const StoredVoiceSettings = Schema.Struct({
   voiceId: Schema.optional(Schema.Literals(KOKORO_VOICES)),
   thinking: Schema.optional(Schema.Boolean),
   minSpeechMs: Schema.optional(Schema.Number),
+  minSilenceMs: Schema.optional(Schema.Number),
+  turnWaitMs: Schema.optional(Schema.Number),
 });
 type StoredVoiceSettings = typeof StoredVoiceSettings.Type;
 const StoredVoiceSettingsJson = Schema.fromJsonString(StoredVoiceSettings);
@@ -107,6 +106,10 @@ export function useVoiceModeSettings(): VoiceModeSettings | null {
         modelSelection: stored.modelSelection ?? DEFAULT_VOICE_MODEL,
         voiceId: stored.voiceId ?? "af_heart",
         thinking: stored.thinking ?? false,
-        minSpeechMs: stored.minSpeechMs ?? DEFAULT_MIN_SPEECH_MS,
+        tuning: {
+          minSpeechMs: stored.minSpeechMs ?? DEFAULT_VOICE_TUNING.minSpeechMs,
+          minSilenceMs: stored.minSilenceMs ?? DEFAULT_VOICE_TUNING.minSilenceMs,
+          turnWaitMs: stored.turnWaitMs ?? DEFAULT_VOICE_TUNING.turnWaitMs,
+        },
       };
 }

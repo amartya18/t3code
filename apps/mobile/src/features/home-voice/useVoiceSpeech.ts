@@ -11,9 +11,9 @@ import { environmentProjects } from "../../state/projects";
 import { environmentThreadShells } from "../../state/threads";
 import { HOME_UPDATE } from "./homeUpdates";
 import { useVoiceThread } from "./useVoiceCall";
-import { ECHO_CANCELLATION, voiceEngineConfig } from "./voiceEngine";
+import { DEFAULT_VOICE_TUNING, voiceEngineConfig, voiceSpeechConfig } from "./voiceEngine";
 import { endVoiceSession, sendVoiceMessage, type VoiceSession } from "./voiceSession";
-import { DEFAULT_MIN_SPEECH_MS, useVoiceModeSettings } from "./voiceSettings";
+import { useVoiceModeSettings } from "./voiceSettings";
 import {
   isHearing,
   type OwnLine,
@@ -78,13 +78,10 @@ export function useVoiceSpeech(session: VoiceSession) {
   const settings = useVoiceModeSettings();
   const threadState = useVoiceThread(session);
   const messages = Option.getOrNull(Option.map(threadState.data, (data) => data.messages));
-  const engineConfig = voiceEngineConfig(
-    settings?.voiceId ?? "af_heart",
-    settings?.minSpeechMs ?? DEFAULT_MIN_SPEECH_MS,
-  );
+  const tuning = settings?.tuning ?? DEFAULT_VOICE_TUNING;
   const inputs: VoiceSpeechInputs = {
-    engineConfig,
-    config: { vad: engineConfig.vad, voiceBargeIn: ECHO_CANCELLATION },
+    engineConfig: voiceEngineConfig(settings?.voiceId ?? "af_heart", tuning),
+    config: voiceSpeechConfig(tuning),
     send: (text, messageId) =>
       settings === null
         ? Promise.reject(new Error("No voice project"))

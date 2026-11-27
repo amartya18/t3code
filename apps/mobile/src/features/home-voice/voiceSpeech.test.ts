@@ -26,6 +26,7 @@ const THREE = "It has three threads running right now.";
 
 const CONFIG: VoiceSpeechConfig = {
   vad: { minSpeechMs: 250, minSilenceMs: 200 },
+  unfinishedWaitMs: 3_000,
   voiceBargeIn: true,
 };
 const { minSpeechMs, minSilenceMs } = CONFIG.vad;
@@ -59,6 +60,7 @@ function call(
   };
   const answers: Array<() => void> = [];
   const lateTranscripts: Array<() => void> = [];
+  const lateScores: Array<() => void> = [];
   let talking: { readonly fromMs: number; readonly text: string } | null = null;
   const engine = {
     muted: false,
@@ -72,8 +74,10 @@ function call(
     audio: [] as Array<{ fromMs: number; toMs: number; text: string }>,
     /** The ranges Parakeet was asked to transcribe. */
     transcribed: [] as Array<readonly [number, number]>,
-    /** Smart Turn's score for the words of the turn so far. */
-    smartTurn: (_words: string) => 0.9,
+    /** Smart Turn's score for the words of the turn so far, and the silence after them. */
+    smartTurn: (_words: string, _silenceMs: number) => 0.9,
+    /** Smart Turn answers only when the test lets its scores arrive. */
+    slowSmartTurn: false,
     /** Parakeet answers only when the test lets its transcripts arrive. */
     slowParakeet: false,
   };
@@ -108,8 +112,13 @@ function call(
         engine.muted = effect.muted;
         return;
       case "scoreTurn": {
-        const probability = engine.smartTurn(wordsBetween(effect.fromMs, effect.toMs));
-        answers.push(() => send({ type: "scored", toMs: effect.toMs, probability }));
+        const { fromMs, toMs } = effect;
+        const lastWordMs = Math.max(
+          ...engine.audio.filter((speech) => speech.fromMs < toMs).map((speech) => speech.toMs),
+        );
+        const probability = engine.smartTurn(wordsBetween(fromMs, toMs), toMs - lastWordMs);
+        const answer = () => send({ type: "scored", toMs, probability });
+        (engine.slowSmartTurn ? lateScores : answers).push(answer);
         return;
       }
       case "transcribe": {
@@ -235,6 +244,10 @@ function call(
       wait(ms - minSpeechMs);
       return { fromMs, toMs: stopTalking() };
     },
+    scoresArrive() {
+      for (const answer of lateScores.splice(0)) answer();
+      settle();
+    },
     transcriptsArrive() {
       for (const answer of lateTranscripts.splice(0)) answer();
       settle();
@@ -295,15 +308,42 @@ describe("his turn", () => {
     voice.playAll();
     expect(voice.played).toEqual(["Home is idle. No threads are running."]);
     expect(voice.logs).toEqual([
+      "[voice] turn 1 Smart Turn 0.90 after 0.2 s silence: send",
       "[voice] turn 1 from speech end: decided +200ms (Smart Turn 0.90), transcribed +200ms, sent +200ms, first text +700ms, first audio +700ms",
     ]);
   });
 
-  it("waits out a pause Smart Turn calls unfinished, then sends after 2 s", () => {
+  it("sends at once only from a score of 0.7; below it, waits", () => {
+    const voice = call();
+    voice.engine.smartTurn = (words) => (words.endsWith("?") ? 0.7 : 0.69);
+    voice.talk("What is Home doing?");
+    expect(voice.sent).toEqual(["What is Home doing?"]);
+
+    voice.talk("So the deploy");
+    expect(voice.sent).toEqual(["What is Home doing?"]);
+  });
+
+  it("scores an unfinished pause again every 0.5 s and sends once a score reaches 0.7", () => {
+    const voice = call();
+    voice.engine.smartTurn = (_words, silenceMs) => (silenceMs >= 1_000 ? 0.8 : 0.3);
+    voice.talk("Merge the fork branch");
+    voice.wait(900);
+    expect(voice.sent).toEqual([]);
+
+    voice.wait(100);
+    expect(voice.sent).toEqual(["Merge the fork branch"]);
+    expect(voice.logs).toEqual([
+      "[voice] turn 1 Smart Turn 0.30 after 0.2 s silence: wait",
+      "[voice] turn 1 Smart Turn 0.30 after 0.7 s silence: wait",
+      "[voice] turn 1 Smart Turn 0.80 after 1.2 s silence: send",
+    ]);
+  });
+
+  it("sends when the wait and the detector's onset hold run out with no score reaching 0.7", () => {
     const voice = call();
     voice.engine.smartTurn = () => 0.2;
     voice.talk("So the deploy, and");
-    voice.wait(1_900);
+    voice.wait(3_200);
     expect(voice.sent).toEqual([]);
 
     voice.wait(100);
@@ -311,7 +351,49 @@ describe("his turn", () => {
     voice.reply("r1", "Which deploy?");
     voice.playAll();
     expect(voice.logs).toEqual([
-      "[voice] turn 1 from speech end: decided +2200ms (Smart Turn 0.20, waited), transcribed +2200ms, sent +2200ms, first text +2200ms, first audio +2200ms",
+      ...[0.2, 0.7, 1.2, 1.7, 2.2, 2.7, 3.2].map(
+        (silence) => `[voice] turn 1 Smart Turn 0.20 after ${silence.toFixed(1)} s silence: wait`,
+      ),
+      "[voice] turn 1 from speech end: decided +3500ms (Smart Turn 0.20, waited), transcribed +3500ms, sent +3500ms, first text +3500ms, first audio +3500ms",
+    ]);
+  });
+
+  it("waits as long as the wait slider says", () => {
+    const voice = call({ config: { ...CONFIG, unfinishedWaitMs: 1_500 } });
+    voice.engine.smartTurn = () => 0.2;
+    voice.talk("So the deploy, and");
+    voice.wait(1_700);
+    expect(voice.sent).toEqual([]);
+
+    voice.wait(100);
+    expect(voice.sent).toEqual(["So the deploy, and"]);
+  });
+
+  it("keeps one turn when he speaks again just inside the wait, though the detector reports it after", () => {
+    const voice = call();
+    voice.engine.smartTurn = (words) => (words.endsWith("and") ? 0.2 : 0.9);
+    voice.talk("Check the deploy and");
+    voice.wait(2_900);
+    voice.talk("tell me if it passed.");
+    expect(voice.sent).toEqual(["Check the deploy and tell me if it passed."]);
+  });
+
+  it("ignores a score that comes after he spoke again, and one that comes after the turn ended", () => {
+    const voice = call();
+    voice.engine.slowSmartTurn = true;
+    voice.talk("Check the deploy");
+    voice.startTalking("and the tests.");
+    voice.scoresArrive();
+    expect(voice.sent).toEqual([]);
+
+    voice.stopTalking();
+    voice.wait(3_300);
+    expect(voice.sent).toEqual(["Check the deploy and the tests."]);
+    voice.scoresArrive();
+    expect(voice.sent).toEqual(["Check the deploy and the tests."]);
+    expect(voice.logs.filter((line) => line.includes("Smart Turn 0.90"))).toEqual([
+      "[voice] turn 1 Smart Turn 0.90 came after the pause ended: ignore",
+      "[voice] turn 1 Smart Turn 0.90 came after the pause ended: ignore",
     ]);
   });
 
@@ -357,6 +439,7 @@ describe("his turn", () => {
     expect(voice.sent).toEqual([]);
     expect(voice.state().own).toBeNull();
     expect(voice.logs).toEqual([
+      "[voice] turn 1 Smart Turn 0.90 after 0.2 s silence: send",
       "[voice] turn 1 from speech end: decided +200ms (Smart Turn 0.90), transcribed +200ms, no words",
     ]);
     voice.playAll();
@@ -414,7 +497,7 @@ describe("his turn", () => {
     voice.startTalking("now.");
     expect(isHearing(voice.state())).toBe(true);
     voice.stopTalking();
-    voice.wait(2_000);
+    voice.wait(3_300);
 
     voice.reply("r1", "A long answer that keeps going.");
     voice.send({ type: "vad", speaking: true, speechMs: 0 });
