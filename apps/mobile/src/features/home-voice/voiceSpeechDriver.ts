@@ -122,7 +122,14 @@ export function createVoiceSpeechDriver(options: {
       case "start":
         stopping
           .then(() => engine.stop())
-          .then(() => engine.start())
+          .then(() => {
+            const { vad } = inputs.engineConfig;
+            devLog(
+              `[voice] tuning: threshold ${vad.threshold}, min speech ${vad.minSpeechMs}ms, ` +
+                `silence before scoring ${vad.minSilenceMs}ms, wait when not done ${inputs.config.unfinishedWaitMs}ms`,
+            );
+            return engine.start();
+          })
           .then(
             () => {
               engine

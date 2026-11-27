@@ -246,6 +246,7 @@ it("in development, stamps each line with the time since the session opened, on 
     },
   );
   await settle();
+  logs.splice(0);
   clock = 5_250;
   driver.dispatch({
     type: "thread",
@@ -261,4 +262,21 @@ it("in development, stamps each line with the time since the session opened, on 
 
   driver.dispose();
   vi.useRealTimers();
+});
+
+it("in development, logs the tuning the engine starts with", async () => {
+  const logs: string[] = [];
+  const driver = open(
+    { ...fakeEngine().engine, stop: async () => {} },
+    () => 0,
+    (line) => {
+      logs.push(line);
+    },
+  );
+  await settle();
+
+  expect(logs).toContain(
+    "+0.000s [voice] tuning: threshold 0.5, min speech 250ms, silence before scoring 200ms, wait when not done 3000ms",
+  );
+  driver.dispose();
 });
