@@ -266,6 +266,7 @@ describe("voice speech", () => {
     voice.wait(3_000);
     voice.reply("r1", "Home is checking three threads. One is waiting on you.");
     expect(voice.engine.synthesizing).toEqual([]);
+    expect(voice.state().shown.get("r1")).toEqual({ kind: "whole" });
 
     voice.deliver();
     voice.reply("r2", "Okay, never mind.");
@@ -462,5 +463,50 @@ describe("voice speech", () => {
     second.reply("r2", "New.");
     second.playAll();
     expect(second.played).toEqual(["New."]);
+  });
+});
+
+describe("what the transcript shows of a reply", () => {
+  const OPENER = `${ONE} ${TWO} ${THREE}`;
+  const REPLY = `${OPENER} Home will report back soon.`;
+
+  it("shows each chunk as it starts playing, then the whole reply once it has played", () => {
+    const voice = call();
+    voice.reply("r1", REPLY);
+    expect(voice.state().shown.get("r1")).toBeUndefined();
+
+    const [first, second] = voice.engine.synthesizing;
+    voice.send({ type: "playback", id: first!.id, state: "started" });
+    expect(voice.state().shown.get("r1")).toEqual({ kind: "spoken", text: OPENER });
+    voice.send({ type: "playback", id: first!.id, state: "finished" });
+    voice.send({ type: "playback", id: second!.id, state: "started" });
+    expect(voice.state().shown.get("r1")).toEqual({ kind: "spoken", text: REPLY });
+    voice.send({ type: "playback", id: second!.id, state: "finished" });
+    expect(voice.state().shown.get("r1")).toEqual({ kind: "whole" });
+  });
+
+  it("keeps only what played when Amar cuts the reply off", () => {
+    const voice = call();
+    voice.reply("r1", REPLY, true);
+    const [first] = voice.engine.synthesizing;
+    voice.send({ type: "playback", id: first!.id, state: "started" });
+    voice.send({ type: "partial", text: "wait" });
+    voice.reply("r1", `${REPLY} It found two more threads.`);
+    voice.playAll();
+
+    expect(voice.state().shown.get("r1")).toEqual({ kind: "spoken", text: OPENER });
+  });
+
+  it("shows a reply whole when it is cut off before it plays a word", () => {
+    const voice = call();
+    voice.reply("r1", REPLY);
+    voice.send({ type: "partial", text: "wait" });
+    expect(voice.state().shown.get("r1")).toEqual({ kind: "whole" });
+  });
+
+  it("shows replies whole while the voice can't speak them", () => {
+    const voice = call({ models: "missing" });
+    voice.reply("r1", "Hi. Home is idle.");
+    expect(voice.state().shown.get("r1")).toEqual({ kind: "whole" });
   });
 });

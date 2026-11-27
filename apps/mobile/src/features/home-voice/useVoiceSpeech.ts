@@ -15,6 +15,7 @@ import { useVoiceModeSettings } from "./voiceSettings";
 import {
   liveWords,
   type OwnLine,
+  type ReplyShown,
   type VoiceEngineStatus,
   type VoiceSpeechConfig,
   type VoiceSpeechEvent,
@@ -25,11 +26,13 @@ import {
   type VoiceSpeechDriver,
   type VoiceSpeechInputs,
 } from "./voiceSpeechDriver";
+import type { TranscriptSpeech } from "./voiceTranscript";
 
 /** What the call screen draws of the speech session. */
 export interface VoiceSpeechView {
   readonly engine: VoiceEngineStatus;
   readonly own: OwnLine | null;
+  readonly shown: ReadonlyMap<string, ReplyShown>;
   readonly current: string | null;
   /** The pause before the current line sends; `held` while a touch or "hang on" holds it. */
   readonly pause: {
@@ -44,10 +47,15 @@ export const voiceSpeechAtom = Atom.make<VoiceSpeechView | null>(null).pipe(
   Atom.withLabel("home-voice:speech"),
 );
 
-/** Amar's own line; changes once a line, not on every word. */
-export const voiceOwnLineAtom = Atom.make((get) => get(voiceSpeechAtom)?.own ?? null).pipe(
-  Atom.withLabel("home-voice:own-line"),
-);
+/** What the transcript draws of the session; changes once a line or a chunk, not every word. */
+export const voiceTranscriptSpeechAtom = Atom.make((get): TranscriptSpeech | null => {
+  const view = get(voiceSpeechAtom);
+  if (view === null) return null;
+  const previous = Option.getOrNull(get.self<TranscriptSpeech | null>());
+  return previous?.own === view.own && previous.shown === view.shown
+    ? previous
+    : { own: view.own, shown: view.shown };
+}).pipe(Atom.withLabel("home-voice:transcript-speech"));
 
 let live: VoiceSpeechDriver | null = null;
 /** Outlives a remount of the runner, so a restarted engine never repeats a reply. */
@@ -152,6 +160,7 @@ function publish(state: VoiceSpeechState, config: VoiceSpeechConfig) {
   const next: VoiceSpeechView = {
     engine: state.engine,
     own: state.own,
+    shown: state.shown,
     current: liveWords(state),
     pause:
       turn.kind === "paused"
@@ -171,6 +180,7 @@ function sameView(left: VoiceSpeechView, right: VoiceSpeechView): boolean {
   return (
     left.engine === right.engine &&
     left.own === right.own &&
+    left.shown === right.shown &&
     left.current === right.current &&
     left.pause?.sinceMs === right.pause?.sinceMs &&
     left.pause?.pauseMs === right.pause?.pauseMs &&

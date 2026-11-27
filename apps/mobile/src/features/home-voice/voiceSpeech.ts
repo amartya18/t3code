@@ -20,6 +20,7 @@ import {
   type BargeInConfig,
   type BargeInEvent,
   type BargeInState,
+  type SpeechItem,
   type SpeechQueue,
 } from "./speechQueue";
 
@@ -46,8 +47,17 @@ export interface OwnLine {
   readonly messageId: string | null;
 }
 
+/** How much of a reply the transcript shows: the chunks that started playing, or all of it. */
+export type ReplyShown =
+  | { readonly kind: "spoken"; readonly text: string }
+  | { readonly kind: "whole" };
+
+const WHOLE: ReplyShown = { kind: "whole" };
+
 interface ReplyProgress {
   readonly spoken: number;
+  /** Chunks that played to the end; once every chunk of a finished reply has, it shows whole. */
+  readonly played: number;
   /** The queue revision when its first chunk was queued; a barge-in makes the rest stale. */
   readonly revision: number;
   /** Complete and fully queued, so later thread updates skip it. */
@@ -79,6 +89,7 @@ export interface VoiceSpeechState {
   readonly own: OwnLine | null;
   readonly replies: ReadonlyArray<AgentReply>;
   readonly progress: ReadonlyMap<string, ReplyProgress>;
+  readonly shown: ReadonlyMap<string, ReplyShown>;
   readonly turns: number;
   readonly timing: TurnTiming | null;
   /** When the speech queue last moved, or null until the next tick stamps it. */
@@ -177,6 +188,7 @@ const INITIAL: VoiceSpeechState = {
   own: null,
   replies: [],
   progress: new Map(),
+  shown: new Map(),
   turns: 0,
   timing: null,
   speechMovedAtMs: null,
@@ -208,6 +220,7 @@ export function openVoiceSpeech(previous: VoiceSpeechState | null): VoiceSpeechS
           queue: bargeIn(previous.queue).queue,
           replies: previous.replies,
           progress: previous.progress,
+          shown: new Map(previous.replies.map((reply) => [reply.id, WHOLE])),
           turns: previous.turns,
         };
   return { state, effects: [{ type: "checkModels" }] };
@@ -217,6 +230,39 @@ export function stepVoiceSpeech(
   state: VoiceSpeechState,
   event: VoiceSpeechEvent,
   config: VoiceSpeechConfig = DEFAULT_VOICE_SPEECH_CONFIG,
+): VoiceSpeechStep {
+  const step = stepWatched(state, event, config);
+  const shown = speechOff(step.state.engine) ? showAll(step.state) : showUnheard(step.state);
+  return shown === step.state ? step : { ...step, state: shown };
+}
+
+/** The engine won't voice replies now, so the transcript is the only way to get them. */
+function speechOff(engine: VoiceEngineStatus): boolean {
+  return engine.kind !== "checking" && engine.kind !== "starting" && engine.kind !== "listening";
+}
+
+/** A reply that will never play a word shows whole; one cut partway keeps what played. */
+function showUnheard(state: VoiceSpeechState): VoiceSpeechState {
+  let shown = state.shown;
+  for (const [id, progress] of state.progress) {
+    if (progress.revision < state.queue.revision && !shown.has(id)) {
+      shown = new Map(shown).set(id, WHOLE);
+    }
+  }
+  return shown === state.shown ? state : { ...state, shown };
+}
+
+function showAll(state: VoiceSpeechState): VoiceSpeechState {
+  if (state.replies.every((reply) => state.shown.get(reply.id) === WHOLE)) return state;
+  const shown = new Map(state.shown);
+  for (const reply of state.replies) shown.set(reply.id, WHOLE);
+  return { ...state, shown };
+}
+
+function stepWatched(
+  state: VoiceSpeechState,
+  event: VoiceSpeechEvent,
+  config: VoiceSpeechConfig,
 ): VoiceSpeechStep {
   if (event.type === "tick" && isSpeaking(state.queue)) {
     if (state.speechMovedAtMs === null) {
@@ -573,7 +619,9 @@ function onPlaybackEvent(
   event: Extract<VoiceSpeechEvent, { type: "playback" }>,
   config: VoiceSpeechConfig,
 ): VoiceSpeechStep {
-  const timing = state.timing;
+  const item = state.queue.sent.find((candidate) => candidate.id === event.id);
+  const revealed = item === undefined ? state : reveal(state, item, event.state);
+  const timing = revealed.timing;
   if (
     event.state === "started" &&
     timing !== null &&
@@ -581,19 +629,47 @@ function onPlaybackEvent(
     event.id.startsWith(`${timing.replyId}:`)
   ) {
     return {
-      state: { ...state, timing: null },
+      state: { ...revealed, timing: null },
       effects: [timingLog(timing, event.atMs)],
     };
   }
-  const step = onPlayback(state.queue, event);
-  if (step.queue === state.queue) return stay(state);
+  const step = onPlayback(revealed.queue, event);
+  if (step.queue === revealed.queue) return stay(revealed);
   const next: VoiceSpeechStep = {
-    state: { ...state, queue: step.queue },
+    state: { ...revealed, queue: step.queue },
     effects: step.speak.map((item) => ({ type: "speak", id: item.id, text: item.text })),
   };
   return isSpeaking(step.queue)
     ? next
     : then(next, (done) => afterSpeech(done, event.atMs, config));
+}
+
+/** A chunk that starts playing shows; a reply whose every chunk played shows whole. */
+function reveal(
+  state: VoiceSpeechState,
+  item: SpeechItem,
+  playback: "started" | "finished" | "stopped",
+): VoiceSpeechState {
+  const replyId = item.id.slice(0, item.id.lastIndexOf(":"));
+  if (playback === "stopped") return state;
+  if (playback === "started") {
+    const shown = state.shown.get(replyId);
+    if (shown?.kind === "whole") return state;
+    const text = shown === undefined ? item.text : `${shown.text} ${item.text}`;
+    return { ...state, shown: new Map(state.shown).set(replyId, { kind: "spoken", text }) };
+  }
+  const progress = state.progress.get(replyId);
+  if (progress === undefined) return state;
+  const played = { ...progress, played: progress.played + 1 };
+  return {
+    ...state,
+    progress: new Map(state.progress).set(replyId, played),
+    shown: allPlayed(played) ? new Map(state.shown).set(replyId, WHOLE) : state.shown,
+  };
+}
+
+function allPlayed(progress: ReplyProgress): boolean {
+  return progress.done && progress.played === progress.spoken;
 }
 
 /** The agent went quiet: Amar's speech over its last words is his turn, echo is dropped. */
@@ -622,6 +698,7 @@ function speakReplies(state: VoiceSpeechState): VoiceSpeechStep {
   const ahead = liveWords(state) !== null || state.own !== null;
   let queue = state.queue;
   let progress = state.progress;
+  let shown = state.shown;
   const effects: VoiceSpeechEffect[] = [];
   for (const reply of state.replies) {
     const known = progress.get(reply.id);
@@ -642,16 +719,19 @@ function speakReplies(state: VoiceSpeechState): VoiceSpeechStep {
       queue = step.queue;
       for (const item of step.speak) effects.push({ type: "speak", id: item.id, text: item.text });
     });
-    progress = new Map(progress).set(reply.id, {
+    const next = {
       spoken: spoken + chunks.length,
+      played: known?.played ?? 0,
       revision,
       done: !reply.streaming,
-    });
+    };
+    progress = new Map(progress).set(reply.id, next);
+    if (allPlayed(next)) shown = new Map(shown).set(reply.id, WHOLE);
   }
   if (progress === state.progress) return stay(state);
   const restore = effects.length > 0 && state.volume !== 1;
   return {
-    state: { ...state, queue, progress, volume: restore ? 1 : state.volume },
+    state: { ...state, queue, progress, shown, volume: restore ? 1 : state.volume },
     effects: restore ? [{ type: "duck", level: 1 }, ...effects] : effects,
   };
 }

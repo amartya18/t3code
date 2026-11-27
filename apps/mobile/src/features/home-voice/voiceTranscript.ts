@@ -1,4 +1,10 @@
-import type { OwnLine } from "./voiceSpeech";
+import type { OwnLine, ReplyShown } from "./voiceSpeech";
+
+/** What the transcript takes from the speech session; null when this build has no voice. */
+export interface TranscriptSpeech {
+  readonly own: OwnLine | null;
+  readonly shown: ReadonlyMap<string, ReplyShown>;
+}
 
 export interface TranscriptMessage {
   readonly id: string;
@@ -18,10 +24,18 @@ const CATCH_UP = "[Catch-up]";
 const HOME_UPDATE = "[Home update]";
 const HOME_REPLY = "Home replied:";
 
-function lineFor(message: TranscriptMessage): TranscriptLine | null {
+function lineFor(
+  message: TranscriptMessage,
+  speech: TranscriptSpeech | null,
+): TranscriptLine | null {
   const text = message.text.trim();
   if (text === "" || message.role === "system") return null;
-  if (message.role === "assistant") return { id: message.id, kind: "agent", text };
+  if (message.role === "assistant") {
+    const shown: ReplyShown | undefined =
+      speech === null ? { kind: "whole" } : speech.shown.get(message.id);
+    if (shown === undefined) return null;
+    return { id: message.id, kind: "agent", text: shown.kind === "whole" ? text : shown.text };
+  }
   if (text.startsWith(CATCH_UP)) return null;
   if (text.startsWith(HOME_UPDATE)) {
     const note = text.slice(HOME_UPDATE.length).trim();
@@ -34,17 +48,23 @@ function lineFor(message: TranscriptMessage): TranscriptLine | null {
 
 /**
  * The call screen's last lines: sent messages, then any still waiting in the outbox, then Amar's
- * own line, which stands in for its outbox and thread copies until the thread has it.
+ * own line, which stands in for its outbox and thread copies until the thread has it. A reply
+ * shows as far as the voice has spoken it.
  */
 export function voiceTranscript(
   sent: ReadonlyArray<TranscriptMessage>,
   queued: ReadonlyArray<TranscriptMessage>,
-  own: OwnLine | null,
+  speech: TranscriptSpeech | null,
 ): ReadonlyArray<TranscriptLine> {
+  const own = speech?.own ?? null;
   const shownIds = new Set([...sent.map((message) => message.id), own?.messageId]);
   const lines = [
-    ...sent.filter((message) => message.id !== own?.messageId).map(lineFor),
-    ...queued.filter((message) => !shownIds.has(message.id)).map(lineFor),
+    ...sent
+      .filter((message) => message.id !== own?.messageId)
+      .map((message) => lineFor(message, speech)),
+    ...queued
+      .filter((message) => !shownIds.has(message.id))
+      .map((message) => lineFor(message, speech)),
     own === null ? null : { id: own.messageId ?? "own", kind: "user" as const, text: own.text },
   ].filter((line) => line !== null);
   return lines.slice(-TRANSCRIPT_LINES);

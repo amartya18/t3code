@@ -27,8 +27,8 @@ import {
   holdVoiceStage,
   retryVoiceEngine,
   tapVoiceStage,
-  voiceOwnLineAtom,
   voiceSpeechAtom,
+  voiceTranscriptSpeechAtom,
   type VoiceSpeechView,
 } from "./useVoiceSpeech";
 import {
@@ -167,7 +167,7 @@ function VoiceTranscript(props: { readonly session: VoiceSession }) {
   const { thread } = props.session;
   const state = useEnvironmentThread(thread.environmentId, thread.threadId);
   const connection = useVoiceConnection(thread);
-  const own = useAtomValue(voiceOwnLineAtom);
+  const speech = useAtomValue(voiceTranscriptSpeechAtom);
   const sent = Option.match(state.data, {
     onNone: () => [],
     onSome: (data) =>
@@ -186,7 +186,7 @@ function VoiceTranscript(props: { readonly session: VoiceSession }) {
       role: "user" as const,
       text: message.text,
     })),
-    own,
+    speech,
   );
 
   return (

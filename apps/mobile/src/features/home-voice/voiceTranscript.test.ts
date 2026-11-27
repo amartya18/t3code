@@ -37,7 +37,10 @@ describe("voiceTranscript", () => {
   });
 
   it("shows his own line in place of its outbox and thread copies", () => {
-    const own = { text: "Merge it.", messageId: "m" };
+    const speech = {
+      own: { text: "Merge it.", messageId: "m" },
+      shown: new Map([["a", { kind: "whole" } as const]]),
+    };
     const queued = [user("m", "Merge it.")];
     const inThread = [agent("a", "Ready."), user("m", "Merge it.")];
 
@@ -46,16 +49,41 @@ describe("voiceTranscript", () => {
       [[agent("a", "Ready.")], queued],
       [inThread, []],
     ] as const) {
-      expect(voiceTranscript(sent, outbox, own)).toEqual([
+      expect(voiceTranscript(sent, outbox, speech)).toEqual([
         { id: "a", kind: "agent", text: "Ready." },
         { id: "m", kind: "user", text: "Merge it." },
       ]);
     }
     expect(
-      voiceTranscript([agent("a", "Ready.")], [], { text: "Merge it", messageId: null }),
+      voiceTranscript([agent("a", "Ready.")], [], {
+        ...speech,
+        own: { text: "Merge it", messageId: null },
+      }),
     ).toEqual([
       { id: "a", kind: "agent", text: "Ready." },
       { id: "own", kind: "user", text: "Merge it" },
+    ]);
+  });
+
+  it("shows a reply as far as the voice has spoken it, and all of it without a voice", () => {
+    const sent = [
+      agent("played", "Done. All of it."),
+      agent("playing", "First part. Second part."),
+      agent("queued", "Not yet."),
+    ];
+    const shown = new Map([
+      ["played", { kind: "whole" } as const],
+      ["playing", { kind: "spoken", text: "First part." } as const],
+    ]);
+
+    expect(voiceTranscript(sent, [], { own: null, shown })).toEqual([
+      { id: "played", kind: "agent", text: "Done. All of it." },
+      { id: "playing", kind: "agent", text: "First part." },
+    ]);
+    expect(voiceTranscript(sent, [], null).map((line) => line.id)).toEqual([
+      "played",
+      "playing",
+      "queued",
     ]);
   });
 });
