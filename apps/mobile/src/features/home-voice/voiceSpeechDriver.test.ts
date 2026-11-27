@@ -24,7 +24,9 @@ function fakeEngine() {
       });
     },
     setMuted: () => {},
-    setVocabulary: async () => {},
+    setVocabulary: async (words) => {
+      calls.push(`setVocabulary ${words.join(", ")}`);
+    },
     transcribe: async () => ({ text: "" }),
     turnScore: async () => ({ probability: 1 }),
     speak: async () => {},
@@ -61,6 +63,7 @@ function open(
     engine,
     inputs: inputs(engineConfig(log !== null), send),
     previous: null,
+    vocabulary: ["T3", "laptop13"],
     now,
     newMessageId: () => "m1",
     log: log ?? (() => {}),
@@ -87,7 +90,14 @@ it("hanging up mid-speech stops the voice, and the next call starts only after t
   await settle();
   fake.finishStop();
   await settle();
-  expect(fake.calls.slice(-2)).toEqual(["stopped", "start"]);
+  expect(fake.calls.slice(-3)).toEqual(["stopped", "start", "setVocabulary T3, laptop13"]);
+});
+
+it("gives Parakeet the call's word list once the engine has started", async () => {
+  const fake = fakeEngine();
+  open({ ...fake.engine, stop: async () => {} });
+  await settle();
+  expect(fake.calls).toEqual(["start", "setVocabulary T3, laptop13"]);
 });
 
 it("ducks the voice in steps rather than one jump, and restores it the same way", async () => {

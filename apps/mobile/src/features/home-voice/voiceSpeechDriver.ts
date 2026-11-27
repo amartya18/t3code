@@ -38,6 +38,8 @@ export function createVoiceSpeechDriver(options: {
   readonly engine: VoiceEngine;
   readonly inputs: VoiceSpeechInputs;
   readonly previous: VoiceSpeechState | null;
+  /** Names Parakeet should favour in this call. */
+  readonly vocabulary: ReadonlyArray<string>;
   readonly now: () => number;
   readonly newMessageId: () => string;
   readonly log: (line: string) => void;
@@ -123,7 +125,12 @@ export function createVoiceSpeechDriver(options: {
           .then(() => engine.stop())
           .then(() => engine.start())
           .then(
-            () => dispatch({ type: "started" }),
+            () => {
+              engine
+                .setVocabulary(options.vocabulary)
+                .catch((error) => devLog(`[voice] word list failed: ${errorCode(error)}`));
+              dispatch({ type: "started" });
+            },
             (error) => dispatch({ type: "startFailed", code: errorCode(error) }),
           );
         return;
