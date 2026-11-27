@@ -4,7 +4,15 @@ import * as Option from "effect/Option";
 import * as Haptics from "expo-haptics";
 import { useGT } from "gt-react-native";
 import { memo, useEffect, useRef, useState, type ReactNode } from "react";
-import { Linking, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import {
+  Linking,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  View,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+} from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import Animated, {
   FadeIn,
@@ -87,15 +95,9 @@ function VoiceCall(props: { readonly session: VoiceSession }) {
           <SessionSettingsButton size={44} raised />
         </View>
         <HiddenThreadNotice environmentId={thread.environmentId} />
-        {VOICE_ENGINE_SUPPORT === "available" ? (
-          <VoiceStage>
-            <VoiceTranscript session={props.session} />
-          </VoiceStage>
-        ) : (
-          <>
-            <VoiceTranscript session={props.session} />
-            <TypedMessageField session={props.session} />
-          </>
+        <VoiceTranscript session={props.session} />
+        {VOICE_ENGINE_SUPPORT === "available" ? null : (
+          <TypedMessageField session={props.session} />
         )}
         <CallControls muted={props.session.muted} paddingBottom={Math.max(insets.bottom, 16) + 8} />
       </View>
@@ -114,7 +116,9 @@ function CallControls(props: { readonly muted: boolean; readonly paddingBottom: 
       <CallGlow wave={wave} />
       <View className="flex-row items-center justify-between px-7">
         <MuteButton muted={props.muted} size={58} />
-        <MicWaveform heights={CALL_WAVE} wave={wave} dot={3} />
+        <HoldToWait>
+          <MicWaveform heights={CALL_WAVE} wave={wave} dot={3} />
+        </HoldToWait>
         <HangUpButton size={58} />
       </View>
     </View>
@@ -175,14 +179,16 @@ function HiddenThreadNotice(props: {
   );
 }
 
-function VoiceStage(props: { readonly children: ReactNode }) {
+/** Hold the wave to keep his pause from sending; off the transcript, so a scroll never holds. */
+function HoldToWait(props: { readonly children: ReactNode }) {
   const gt = useGT();
   const holding = useRef(false);
+  if (VOICE_ENGINE_SUPPORT !== "available") return props.children;
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={gt("Press and hold to keep waiting")}
-      className="flex-1"
+      hitSlop={14}
       delayLongPress={350}
       onLongPress={() => {
         holding.current = true;
@@ -205,6 +211,36 @@ const ROW_LAYOUT = LinearTransition.duration(180);
 /** How close to the end still counts as reading the newest line, so new lines scroll into view. */
 const FOLLOW_SLACK = 24;
 
+/**
+ * Keeps the transcript on its newest line. From the moment his finger touches it until it comes
+ * to rest, the scroll is his; it follows again only if it rests at the end.
+ */
+function useFollowNewest() {
+  const ref = useRef<React.ComponentRef<typeof ScrollView>>(null);
+  const following = useRef(true);
+  const laidOut = useRef(false);
+  const release = () => {
+    following.current = false;
+  };
+  const settle = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+    following.current =
+      contentSize.height - contentOffset.y - layoutMeasurement.height <= FOLLOW_SLACK;
+  };
+  return {
+    ref,
+    onScrollBeginDrag: release,
+    onMomentumScrollBegin: release,
+    onScrollEndDrag: settle,
+    onMomentumScrollEnd: settle,
+    onContentSizeChange: () => {
+      if (!following.current) return;
+      ref.current?.scrollToEnd({ animated: laidOut.current });
+      laidOut.current = true;
+    },
+  };
+}
+
 /** Every line of the call, pinned to the newest; scrolling up to read stops the pinning. */
 function VoiceTranscript(props: { readonly session: VoiceSession }) {
   const gt = useGT();
@@ -212,9 +248,7 @@ function VoiceTranscript(props: { readonly session: VoiceSession }) {
   const state = useVoiceThread(props.session);
   const connection = useVoiceConnection(thread);
   const speech = useAtomValue(voiceTranscriptSpeechAtom);
-  const scroll = useRef<React.ComponentRef<typeof ScrollView>>(null);
-  const following = useRef(true);
-  const laidOut = useRef(false);
+  const follow = useFollowNewest();
   const sent = Option.match(state.data, {
     onNone: () => [],
     onSome: (data) =>
@@ -239,21 +273,10 @@ function VoiceTranscript(props: { readonly session: VoiceSession }) {
   return (
     <>
       <ScrollView
-        ref={scroll}
+        {...follow}
         className="flex-1"
         contentContainerClassName="grow justify-end gap-3 px-6 pb-3 pt-4"
         accessibilityLiveRegion="polite"
-        scrollEventThrottle={100}
-        onScroll={(event) => {
-          const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-          following.current =
-            contentSize.height - contentOffset.y - layoutMeasurement.height <= FOLLOW_SLACK;
-        }}
-        onContentSizeChange={() => {
-          if (!following.current) return;
-          scroll.current?.scrollToEnd({ animated: laidOut.current });
-          laidOut.current = true;
-        }}
       >
         <LayoutAnimationConfig skipEntering>
           {lines.map((line, index) => (
