@@ -2540,6 +2540,7 @@
   "b55bc075ea52f67f": "Прерывание (dev)",
   "560d5a3e147d864a": "Ложная тревога (dev)",
   "705468cb2eb4025d": "Перезапуск после паузы (dev)",
+  "e6ea926d122bbdc1": "Размышления (dev)",
   "66ec4cf525d6d926": "{requests, plural, one {{requests} запрос} few {{requests} запроса} many {{requests} запросов} other {{requests} запроса}} · {minutes} мин",
   "a91b941fbd5a6c44": "Не удалось изменить исполнителей",
   "c2ed09c676ad0e9a": "Исполнители",

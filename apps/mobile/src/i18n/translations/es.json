@@ -2492,6 +2492,7 @@
   "b55bc075ea52f67f": "Interrumpir (dev)",
   "560d5a3e147d864a": "Falsa alarma (dev)",
   "705468cb2eb4025d": "Reiniciar tras una pausa de (dev)",
+  "e6ea926d122bbdc1": "Razonamiento (dev)",
   "66ec4cf525d6d926": "{requests, plural, one {{requests} solicitud} other {{requests} solicitudes}} · {minutes} min",
   "a91b941fbd5a6c44": "No se pudieron cambiar los asignados",
   "c2ed09c676ad0e9a": "Asignados",

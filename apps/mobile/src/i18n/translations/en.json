@@ -2492,6 +2492,7 @@
   "b55bc075ea52f67f": "Interrupt (dev)",
   "560d5a3e147d864a": "False alarm (dev)",
   "705468cb2eb4025d": "Restart after a pause of (dev)",
+  "e6ea926d122bbdc1": "Thinking (dev)",
   "66ec4cf525d6d926": "{requests, plural, one {{requests} request} other {{requests} requests}} · {minutes} min",
   "a91b941fbd5a6c44": "Couldn't change assignees",
   "c2ed09c676ad0e9a": "Assignees",

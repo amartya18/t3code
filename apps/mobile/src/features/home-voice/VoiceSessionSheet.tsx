@@ -191,6 +191,14 @@ export function VoiceSessionSheet() {
                 />
               </View>
             ) : null}
+            <View className="border-t border-border-subtle">
+              <ListToggleRow
+                icon="brain"
+                label={gt("Thinking (dev)")}
+                value={settings.thinking}
+                onValueChange={(thinking) => void saveVoiceSettings({ thinking })}
+              />
+            </View>
           </ListSection>
         ) : null}
       </ScrollView>
