@@ -179,7 +179,7 @@ function HiddenThreadNotice(props: {
   );
 }
 
-/** Hold the wave to keep his pause from sending; off the transcript, so a scroll never holds. */
+/** On the wave, not the transcript, so a long press there can't hijack a scroll. */
 function HoldToWait(props: { readonly children: ReactNode }) {
   const gt = useGT();
   const holding = useRef(false);
@@ -211,10 +211,6 @@ const ROW_LAYOUT = LinearTransition.duration(180);
 /** How close to the end still counts as reading the newest line, so new lines scroll into view. */
 const FOLLOW_SLACK = 24;
 
-/**
- * Keeps the transcript on its newest line. From the moment his finger touches it until it comes
- * to rest, the scroll is his; it follows again only if it rests at the end.
- */
 function useFollowNewest() {
   const ref = useRef<React.ComponentRef<typeof ScrollView>>(null);
   const following = useRef(true);
