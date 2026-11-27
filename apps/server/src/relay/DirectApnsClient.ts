@@ -93,6 +93,13 @@ const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const reasonFromBody = (body: string): string | undefined =>
   Option.getOrUndefined(decodeErrorBody(body))?.reason;
 
+const describeTransportCause = (cause: unknown): string => {
+  if (!(cause instanceof Error)) return String(cause);
+  return "code" in cause && typeof cause.code === "string"
+    ? `${cause.code}: ${cause.message}`
+    : cause.message;
+};
+
 export const makeNodeHttp2Transport = Effect.gen(function* () {
   const sessions = new Map<string, NodeHttp2.ClientHttp2Session>();
   yield* Effect.addFinalizer(() =>
@@ -242,33 +249,42 @@ const make = Effect.gen(function* () {
       yield* Effect.logWarning("direct APNs provider token could not be signed; check the .p8 key");
       return { outcome: "error", removeToken: false } as const;
     }
-    const response = yield* transport
-      .post({
-        // The token's own environment decides the host: a dev build and a
-        // store build can both be registered with one server.
-        origin:
-          device.apsEnvironment === "production" ? APNS_PRODUCTION_ORIGIN : APNS_SANDBOX_ORIGIN,
-        path: `/3/device/${request.token}`,
-        headers: {
-          authorization: `bearer ${jwt.value}`,
-          "apns-push-type": request.pushType,
-          "apns-topic":
-            request.pushType === "liveactivity"
-              ? `${device.bundleId}.push-type.liveactivity`
-              : device.bundleId,
-          "apns-priority": request.priority,
-          "content-type": "application/json",
-        },
-        body: encodeJson(request.payload),
-      })
-      .pipe(Effect.option);
-    if (Option.isNone(response)) {
-      yield* Effect.logWarning("direct APNs push failed in transport", {
-        deviceId: device.deviceId,
-        pushType: request.pushType,
-      });
-      return { outcome: "error", removeToken: false } as const;
-    }
+    const post = transport.post({
+      // The token's own environment decides the host: a dev build and a
+      // store build can both be registered with one server.
+      origin: device.apsEnvironment === "production" ? APNS_PRODUCTION_ORIGIN : APNS_SANDBOX_ORIGIN,
+      path: `/3/device/${request.token}`,
+      headers: {
+        authorization: `bearer ${jwt.value}`,
+        "apns-push-type": request.pushType,
+        "apns-topic":
+          request.pushType === "liveactivity"
+            ? `${device.bundleId}.push-type.liveactivity`
+            : device.bundleId,
+        "apns-priority": request.priority,
+        "content-type": "application/json",
+      },
+      body: encodeJson(request.payload),
+    });
+    const response = yield* post.pipe(
+      Effect.catchTags({
+        DirectApnsTransportError: (error) =>
+          Effect.logWarning("direct APNs push failed in transport; retrying on a new connection", {
+            deviceId: device.deviceId,
+            pushType: request.pushType,
+            cause: describeTransportCause(error.cause),
+          }).pipe(Effect.andThen(post)),
+      }),
+      Effect.tapError((error) =>
+        Effect.logWarning("direct APNs push failed in transport", {
+          deviceId: device.deviceId,
+          pushType: request.pushType,
+          cause: describeTransportCause(error.cause),
+        }),
+      ),
+      Effect.option,
+    );
+    if (Option.isNone(response)) return { outcome: "error", removeToken: false } as const;
     const { status, body } = response.value;
     if (status >= 200 && status < 300) return { outcome: "sent" } as const;
     const reason = reasonFromBody(body);
