@@ -340,15 +340,18 @@ describe("voice speech", () => {
 
   it("speaks a streaming reply chunk by chunk, as each chunk completes", () => {
     const voice = call();
-    voice.reply("r1", `${ONE} ${TWO}`, true);
+    voice.reply("r1", ONE, true);
     expect(voice.engine.synthesizing).toEqual([]);
 
+    voice.reply("r1", `${ONE} Home`, true);
+    expect(voice.engine.synthesizing.map((item) => item.text)).toEqual([ONE]);
+
     voice.reply("r1", `${ONE} ${TWO} ${THREE} PR 43`, true);
-    expect(voice.engine.synthesizing.map((item) => item.text)).toEqual([`${ONE} ${TWO} ${THREE}`]);
+    expect(voice.engine.synthesizing.map((item) => item.text)).toEqual([ONE]);
 
     voice.reply("r1", `${ONE} ${TWO} ${THREE} PR 43 merged an hour ago.`);
     voice.playAll();
-    expect(voice.played).toEqual([`${ONE} ${TWO} ${THREE}`, "PR 43 merged an hour ago."]);
+    expect(voice.played).toEqual([ONE, `${TWO} ${THREE} PR 43 merged an hour ago.`]);
   });
 
   it("stops the voice when Amar talks over it, and stale sentences never play", () => {
@@ -617,7 +620,7 @@ describe("what the transcript shows of a reply", () => {
 
     const [first, second] = voice.engine.synthesizing;
     voice.send({ type: "playback", id: first!.id, state: "started" });
-    expect(voice.state().shown.get("r1")).toEqual({ kind: "spoken", text: OPENER });
+    expect(voice.state().shown.get("r1")).toEqual({ kind: "spoken", text: ONE });
     voice.send({ type: "playback", id: first!.id, state: "finished" });
     voice.send({ type: "playback", id: second!.id, state: "started" });
     expect(voice.state().shown.get("r1")).toEqual({ kind: "spoken", text: REPLY });
@@ -634,7 +637,7 @@ describe("what the transcript shows of a reply", () => {
     voice.reply("r1", `${REPLY} It found two more threads.`);
     voice.playAll();
 
-    expect(voice.state().shown.get("r1")).toEqual({ kind: "spoken", text: OPENER });
+    expect(voice.state().shown.get("r1")).toEqual({ kind: "spoken", text: ONE });
   });
 
   it("shows a reply whole when it is cut off before it plays a word", () => {

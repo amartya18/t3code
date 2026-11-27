@@ -24,18 +24,14 @@ const REPLY = [
 describe("speechChunks", () => {
   it("turns a markdown reply into sentences without markup, links, hashes or paths", () => {
     expect(speechChunks(REPLY)).toEqual([
+      "Status. Relayed to Home: merge PR 43 once checks pass.",
       [
-        "Status.",
-        "Relayed to Home: merge PR 43 once checks pass.",
         "The fix is in at commit.",
         "CI is green on the run.",
-      ].join(" "),
-      [
         "The relay pairing fix in waits for one approval.",
         "Thread, State.",
-        "fork sync, merged.",
-        "That's everything for now.",
       ].join(" "),
+      "fork sync, merged. That's everything for now.",
     ]);
   });
 
@@ -44,12 +40,13 @@ describe("speechChunks", () => {
       speechChunks(
         "Ship it and/or revert over TCP/IP on 11/26/2026. Then read ~/notes.md and ./run.sh too.",
       ),
-    ).toEqual(["Ship it and/or revert over TCP/IP on 11/26/2026. Then read and too."]);
+    ).toEqual(["Ship it and/or revert over TCP/IP on 11/26/2026.", "Then read and too."]);
   });
 
   it("does not split on decimals, versions or e.g.", () => {
     expect(speechChunks("Fork sync v0.1.11 took 2.5 s, e.g. the usual. Done")).toEqual([
-      "Fork sync v0.1.11 took 2.5 s, e.g. the usual. Done.",
+      "Fork sync v0.1.11 took 2.5 s, e.g. the usual.",
+      "Done.",
     ]);
   });
 
@@ -59,7 +56,20 @@ describe("speechChunks", () => {
     ]);
   });
 
-  it("groups sentences into chunks of 100 to 150 characters", () => {
+  it("speaks a first sentence of four or more words alone", () => {
+    expect(speechChunks("Sure, I can check that. Home says PR 43 merged an hour ago.")).toEqual([
+      "Sure, I can check that.",
+      "Home says PR 43 merged an hour ago.",
+    ]);
+  });
+
+  it("joins short openers to what follows until the first chunk has four words", () => {
+    expect(speechChunks("Sure. Okay, yes. Home merged it. The checks passed an hour ago.")).toEqual(
+      ["Sure. Okay, yes. Home merged it.", "The checks passed an hour ago."],
+    );
+  });
+
+  it("groups sentences after the first into chunks of 100 to 150 characters", () => {
     const sentence = (index: number) =>
       `Sentence ${index} has some words to fill out about sixty characters.`;
     const reply = ["Sure.", ...Array.from({ length: 12 }, (_, index) => sentence(index + 1))].join(
@@ -68,9 +78,10 @@ describe("speechChunks", () => {
 
     const chunks = speechChunks(reply);
 
-    expect(chunks[0]).toBe(`Sure. ${sentence(1)} ${sentence(2)}`);
+    expect(chunks[0]).toBe(`Sure. ${sentence(1)}`);
+    expect(chunks[1]).toBe(`${sentence(2)} ${sentence(3)}`);
     expect(chunks.join(" ")).toBe(reply);
-    for (const chunk of chunks.slice(0, -1)) {
+    for (const chunk of chunks.slice(1, -1)) {
       expect(chunk.length).toBeGreaterThanOrEqual(100);
       expect(chunk.length).toBeLessThanOrEqual(150);
     }
@@ -93,15 +104,34 @@ describe("speechChunks", () => {
 });
 
 describe("nextSpeechChunks", () => {
-  it("starts speaking before the reply finishes, once a chunk has 100 characters", () => {
-    const opener =
-      "Sure, I asked Home about it. Home says PR 43 merged an hour ago and the checks passed.";
-    expect(nextSpeechChunks("Sure, I asked Home about it. Home says", 0)).toEqual([]);
-    expect(nextSpeechChunks(`${opener} It will`, 0)).toEqual([]);
-    expect(nextSpeechChunks(`${opener} It will deploy tonight. Then`, 0)).toEqual([
-      `${opener} It will deploy tonight.`,
-    ]);
-    expect(nextSpeechChunks(`${opener} It will deploy tonight. Then`, 1)).toEqual([]);
+  it("speaks the first sentence as soon as the text after it begins, then waits for 100 characters", () => {
+    const first = "Sure, I asked Home about it.";
+    const rest = "Home says PR 43 merged an hour ago and the checks passed.";
+    expect(nextSpeechChunks("Sure, I asked Home about", 0)).toEqual([]);
+    expect(nextSpeechChunks(`${first} H`, 0)).toEqual([first]);
+    expect(nextSpeechChunks(`${first} ${rest} It will`, 1)).toEqual([]);
+    expect(
+      nextSpeechChunks(`${first} ${rest} It will deploy tonight, after a final review. Then`, 1),
+    ).toEqual([`${rest} It will deploy tonight, after a final review.`]);
+  });
+
+  it("streams the first sentence once the space after its end punctuation arrives", () => {
+    const reply =
+      "Okay. I asked Home about it. Home says PR 43 merged an hour ago, and the checks passed.";
+    const firstEnds = reply.indexOf("it.") + "it.".length;
+
+    let firstAt: number | null = null;
+    const spoken: string[] = [];
+    for (let length = 1; length <= reply.length; length += 1) {
+      const next = nextSpeechChunks(reply.slice(0, length), spoken.length);
+      if (next.length > 0 && firstAt === null) firstAt = length;
+      spoken.push(...next);
+    }
+    spoken.push(...speechChunks(reply).slice(spoken.length));
+
+    expect(firstAt).toBe(firstEnds + 1);
+    expect(spoken[0]).toBe("Okay. I asked Home about it.");
+    expect(spoken).toEqual(speechChunks(reply));
   });
 
   it("never speaks text inside a code fence that is still open", () => {

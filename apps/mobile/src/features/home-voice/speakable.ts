@@ -1,3 +1,4 @@
+const FIRST_CHUNK_WORDS = 4;
 const CHUNK_MIN = 100;
 const CHUNK_MAX = 150;
 
@@ -28,8 +29,9 @@ interface Unit {
 }
 
 /**
- * A finished reply as speech: sentences grouped until a chunk reaches 100 characters, so a short
- * opener like "Sure." plays with what follows while Kokoro voices the next chunk.
+ * A finished reply as speech. The first chunk is the first sentence, with a short opener like
+ * "Sure." joined to what follows until it has four words, so the voice starts soon; later chunks
+ * group sentences until they reach 100 characters, so Kokoro voices each while the last plays.
  */
 export function speechChunks(reply: string): ReadonlyArray<string> {
   return chunk(sentences(reply, true), true);
@@ -45,8 +47,10 @@ export function nextSpeechChunks(partialReply: string, emitted: number): Readonl
 }
 
 function sentences(markdown: string, complete: boolean): ReadonlyArray<string> {
+  // Streaming text that stops on a space after a period has finished that sentence.
+  const endsInSpace = /\s$/.test(markdown);
   return units(markdown, complete).flatMap((unit) => {
-    const text = speakable(unit.text);
+    const text = speakable(unit.text) + (!unit.closed && endsInSpace ? " " : "");
     const found: string[] = [];
     let start = 0;
     for (const match of text.matchAll(SENTENCE_END)) {
@@ -129,13 +133,17 @@ function chunk(found: ReadonlyArray<string>, complete: boolean): ReadonlyArray<s
   let open = "";
   for (const sentence of found.flatMap(splitLong)) {
     open = open === "" ? sentence : `${open} ${sentence}`;
-    if (open.length >= CHUNK_MIN) {
+    if (chunks.length === 0 ? wordCount(open) >= FIRST_CHUNK_WORDS : open.length >= CHUNK_MIN) {
       chunks.push(open);
       open = "";
     }
   }
   if (complete && open !== "") chunks.push(open);
   return chunks;
+}
+
+function wordCount(text: string): number {
+  return text.split(" ").filter((word) => /\w/.test(word)).length;
 }
 
 function splitLong(sentence: string): ReadonlyArray<string> {
