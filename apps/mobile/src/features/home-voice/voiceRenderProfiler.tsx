@@ -1,6 +1,7 @@
 import { Profiler, type ReactNode } from "react";
 
 import { appAtomRegistry } from "../../state/atom-registry";
+import { voiceDevLog } from "./voiceLogUpload";
 import { describeSlowCommit, type ProfiledRender } from "./voiceRenderLog";
 import { voiceSessionAtom } from "./voiceSession";
 
@@ -35,6 +36,6 @@ function recordRender(
   queueMicrotask(() => {
     const line = describeSlowCommit(commits.get(commitTime) ?? []);
     commits.delete(commitTime);
-    if (line !== null) console.log(line);
+    if (line !== null) voiceDevLog(line);
   });
 }

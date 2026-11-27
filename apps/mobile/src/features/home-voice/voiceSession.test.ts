@@ -13,6 +13,7 @@ const outbox = vi.hoisted(() => ({
 }));
 
 vi.stubGlobal("__DEV__", false);
+vi.mock("./voiceLogUpload", () => ({ voiceDevLog: () => {} }));
 const voiceServerConfig = Atom.make({
   providers: [
     { instanceId: "claudeAgent", enabled: true },

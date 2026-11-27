@@ -25,6 +25,7 @@ import {
 } from "./homeUpdates";
 import type { HomeView } from "./homeView";
 import { voiceInstanceEnabled, voiceTurnSelection } from "./voiceInstances";
+import { voiceDevLog } from "./voiceLogUpload";
 import type { VoiceModeSettings } from "./voiceSettings";
 
 export const VOICE_THREAD_TAG = "voice";
@@ -97,7 +98,7 @@ export async function sendVoiceMessage(
     ),
     settings.thinking,
   );
-  if (__DEV__) console.log(`[voice] turn on ${modelSelection.instanceId}/${modelSelection.model}`);
+  voiceDevLog(`[voice] turn on ${modelSelection.instanceId}/${modelSelection.model}`);
   try {
     await enqueueThreadOutboxMessage({
       ...thread,
