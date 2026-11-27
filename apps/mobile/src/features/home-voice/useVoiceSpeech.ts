@@ -7,16 +7,15 @@ import { useEffect, useRef } from "react";
 import { voiceEngine } from "../../../modules/t3-voice-mode";
 import { uuidv4 } from "../../lib/uuid";
 import { appAtomRegistry } from "../../state/atom-registry";
-import { DEFAULT_END_OF_TURN_CONFIG } from "./endOfTurn";
+import { environmentProjects } from "../../state/projects";
+import { environmentThreadShells } from "../../state/threads";
 import { HOME_UPDATE } from "./homeUpdates";
-import { DEFAULT_BARGE_IN_CONFIG } from "./speechQueue";
 import { useVoiceThread } from "./useVoiceCall";
 import { ECHO_CANCELLATION, voiceEngineConfig } from "./voiceEngine";
 import { endVoiceSession, sendVoiceMessage, type VoiceSession } from "./voiceSession";
-import { useVoiceModeSettings } from "./voiceSettings";
+import { DEFAULT_MIN_SPEECH_MS, useVoiceModeSettings } from "./voiceSettings";
 import {
   isHearing,
-  liveWords,
   type OwnLine,
   type ReplyShown,
   type VoiceEngineStatus,
@@ -29,13 +28,13 @@ import {
   type VoiceSpeechInputs,
 } from "./voiceSpeechDriver";
 import type { TranscriptSpeech } from "./voiceTranscript";
+import { voiceVocabulary } from "./voiceVocabulary";
 
 /** What the call screen draws of the speech session. */
 export interface VoiceSpeechView {
   readonly engine: VoiceEngineStatus;
   readonly own: OwnLine | null;
   readonly shown: ReadonlyMap<string, ReplyShown>;
-  readonly current: string | null;
   readonly hearing: boolean;
 }
 
@@ -69,10 +68,6 @@ let live: VoiceSpeechDriver | null = null;
 /** Outlives a remount of the runner, so a restarted engine never repeats a reply. */
 let remembered: { readonly key: string; readonly state: VoiceSpeechState } | null = null;
 
-export function holdVoiceStage(holding: boolean) {
-  live?.dispatch({ type: holding ? "holdStart" : "holdEnd", atMs: Date.now() });
-}
-
 export function retryVoiceEngine() {
   live?.dispatch({ type: "retry" });
 }
@@ -83,24 +78,13 @@ export function useVoiceSpeech(session: VoiceSession) {
   const settings = useVoiceModeSettings();
   const threadState = useVoiceThread(session);
   const messages = Option.getOrNull(Option.map(threadState.data, (data) => data.messages));
-  const engineConfig = voiceEngineConfig(settings?.voiceId ?? "af_heart");
+  const engineConfig = voiceEngineConfig(
+    settings?.voiceId ?? "af_heart",
+    settings?.minSpeechMs ?? DEFAULT_MIN_SPEECH_MS,
+  );
   const inputs: VoiceSpeechInputs = {
     engineConfig,
-    config: {
-      endOfTurn: {
-        ...DEFAULT_END_OF_TURN_CONFIG,
-        pauseMs: settings?.pauseMs ?? DEFAULT_END_OF_TURN_CONFIG.pauseMs,
-        earlySend: settings?.earlySend ?? DEFAULT_END_OF_TURN_CONFIG.earlySend,
-        vadEndLagMs: (settings?.pauseFromSpeechEnd ?? true) ? engineConfig.vad.minSilenceMs : 0,
-      },
-      bargeIn: {
-        ...DEFAULT_BARGE_IN_CONFIG,
-        mode: settings?.interruptMode ?? DEFAULT_BARGE_IN_CONFIG.mode,
-        recovery: settings?.recovery ?? DEFAULT_BARGE_IN_CONFIG.recovery,
-        smartCutoffMs: settings?.smartCutoffMs ?? DEFAULT_BARGE_IN_CONFIG.smartCutoffMs,
-      },
-      voiceBargeIn: ECHO_CANCELLATION,
-    },
+    config: { vad: engineConfig.vad, voiceBargeIn: ECHO_CANCELLATION },
     send: (text, messageId) =>
       settings === null
         ? Promise.reject(new Error("No voice project"))
@@ -122,6 +106,11 @@ export function useVoiceSpeech(session: VoiceSession) {
       engine: voiceEngine,
       inputs: latest.current,
       previous: remembered?.key === key ? remembered.state : null,
+      vocabulary: voiceVocabulary({
+        environmentId: thread.environmentId,
+        projects: appAtomRegistry.get(environmentProjects.projectsAtom),
+        threads: appAtomRegistry.get(environmentThreadShells.threadShellsAtom),
+      }),
       now: Date.now,
       newMessageId: uuidv4,
       log: (line) => console.log(line),
@@ -138,7 +127,7 @@ export function useVoiceSpeech(session: VoiceSession) {
       if (live === driver) live = null;
       appAtomRegistry.set(voiceSpeechAtom, null);
     };
-  }, [key]);
+  }, [key, thread.environmentId]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mute silences the native mic
   useEffect(() => {
@@ -179,7 +168,6 @@ function publish(state: VoiceSpeechState) {
     engine: state.engine,
     own: state.own,
     shown: state.shown,
-    current: liveWords(state),
     hearing: isHearing(state),
   };
   const shown = appAtomRegistry.get(voiceSpeechAtom);
@@ -192,7 +180,6 @@ function sameView(left: VoiceSpeechView, right: VoiceSpeechView): boolean {
     left.engine === right.engine &&
     left.own === right.own &&
     left.shown === right.shown &&
-    left.current === right.current &&
     left.hearing === right.hearing
   );
 }

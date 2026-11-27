@@ -18,7 +18,7 @@ import { voiceEngineConfig } from "./voiceEngine";
 import { splitOlderModels, useVoiceModelOptions, withLowEffort } from "./voiceModels";
 import { VoiceMenuRow, VoiceReasoningRow } from "./VoiceMenuRow";
 import { voiceSessionAtom } from "./voiceSession";
-import { saveVoiceSettings, useVoiceModeSettings } from "./voiceSettings";
+import { DEFAULT_MIN_SPEECH_MS, saveVoiceSettings, useVoiceModeSettings } from "./voiceSettings";
 
 /** Fork: the project and model a voice session starts with, on this device. */
 export function HomeVoiceSettingsSection() {
@@ -87,13 +87,18 @@ export function HomeVoiceSettingsSection() {
       {settings === null ? null : (
         <VoiceReasoningRow model={model} selection={settings.modelSelection} />
       )}
-      {voiceEngine === null ? null : <VoiceDownloadRow voiceId={settings?.voiceId ?? "af_heart"} />}
+      {voiceEngine === null ? null : (
+        <VoiceDownloadRow
+          voiceId={settings?.voiceId ?? "af_heart"}
+          minSpeechMs={settings?.minSpeechMs ?? DEFAULT_MIN_SPEECH_MS}
+        />
+      )}
     </SettingsSection>
   );
 }
 
 /** The on-device speech models: their size on disk, and a way to free it. */
-function VoiceDownloadRow(props: { readonly voiceId: string }) {
+function VoiceDownloadRow(props: { readonly voiceId: string; readonly minSpeechMs: number }) {
   const gt = useGT();
   const sessionLive = useAtomValue(voiceSessionAtom) !== null;
   const [bytes, setBytes] = useState<number | null>(null);
@@ -104,7 +109,7 @@ function VoiceDownloadRow(props: { readonly voiceId: string }) {
     const engine = voiceEngine;
     let current = true;
     void engine
-      .configure(voiceEngineConfig(props.voiceId))
+      .configure(voiceEngineConfig(props.voiceId, props.minSpeechMs))
       .then(() => engine.modelStatus())
       .then((status) => {
         if (current) setBytes(status.bytesOnDisk);
@@ -113,7 +118,7 @@ function VoiceDownloadRow(props: { readonly voiceId: string }) {
     return () => {
       current = false;
     };
-  }, [props.voiceId]);
+  }, [props.voiceId, props.minSpeechMs]);
 
   const label = gt("Voice download");
   const size = bytes === null ? "" : bytes === 0 ? gt("None") : formatBytes(bytes);

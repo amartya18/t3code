@@ -1,29 +1,21 @@
+import type { VoiceModelPart } from "../../../modules/t3-voice-mode";
 import { goodbyeReply, withoutEndCall } from "./endCall";
 import {
-  DEFAULT_END_OF_TURN_CONFIG,
-  INITIAL_END_OF_TURN_STATE,
-  stepEndOfTurn,
-  type EndOfTurnConfig,
-  type EndOfTurnEvent,
-  type EndOfTurnState,
-  type FinalizeReason,
+  dropLiveTurn,
+  INITIAL_TURN_STATE,
+  isTurnOpen,
+  stepTurn,
+  type TurnEffect,
+  type TurnEvent,
+  type TurnState,
 } from "./endOfTurn";
 import { nextSpeechChunks, speechChunks } from "./speakable";
 import {
   bargeIn,
-  DEFAULT_BARGE_IN_CONFIG,
   EMPTY_SPEECH_QUEUE,
   enqueue,
-  INITIAL_BARGE_IN_STATE,
   isSpeaking,
   onPlayback,
-  recoveryAction,
-  recoveryLog,
-  stepBargeIn,
-  wordsTooLate,
-  type BargeInConfig,
-  type BargeInEvent,
-  type BargeInState,
   type SpeechItem,
   type SpeechQueue,
 } from "./speechQueue";
@@ -44,11 +36,11 @@ export interface AgentReply {
   readonly streaming: boolean;
 }
 
-/** Amar's line from the moment his turn ends until the thread has it. */
+/** Amar's line from the moment his turn's words are known until the thread has it. */
 export interface OwnLine {
   readonly text: string;
-  /** Set once his words are final; the outbox, then the thread, hold the line under this id. */
-  readonly messageId: string | null;
+  /** The outbox, then the thread, hold the line under this id. */
+  readonly messageId: string;
 }
 
 /** How much of a reply the transcript shows: the chunks that started playing, or all of it. */
@@ -62,7 +54,7 @@ interface ReplyProgress {
   readonly spoken: number;
   /** Chunks that played to the end; once every chunk of a finished reply has, it shows whole. */
   readonly played: number;
-  /** The queue revision when its first chunk was queued; a barge-in makes the rest stale. */
+  /** The queue revision when its first chunk was queued; an interrupt makes the rest stale. */
   readonly revision: number;
   /** Complete and fully queued, so later thread updates skip it. */
   readonly done: boolean;
@@ -76,39 +68,39 @@ type CallEnding =
 
 const OPEN: CallEnding = { kind: "open" };
 
-/** Speech a sound stopped before any words; it plays again if none come. */
-interface HeldSpeech {
-  readonly items: ReadonlyArray<SpeechItem>;
-  readonly stoppedMs: number;
+/** A voice that started over the agent: the agent ducks, and stops if the voice lasts. */
+interface Interrupt {
+  /** When JS heard it start; the confirm counts from here. */
+  readonly heardAtMs: number;
+  /** Engine time it really started, where his turn begins if it stops the agent. */
+  readonly speechMs: number;
 }
 
+/** One turn's latency, on the JS clock, from when his speech really ended. */
 interface TurnTiming {
   readonly turn: number;
-  readonly reason: FinalizeReason;
   readonly speechEndMs: number;
-  readonly speechEnd: "real" | "vad";
-  readonly finalizedMs: number | null;
+  readonly decidedMs: number;
+  readonly probability: number | null;
+  readonly waited: boolean;
+  readonly transcribedMs: number | null;
   readonly sentMs: number | null;
   /** Replies already in the thread when the message was sent; the next new one answers it. */
   readonly repliesBefore: ReadonlySet<string> | null;
   readonly replyId: string | null;
   readonly firstTextMs: number | null;
-  readonly firstSpeakMs: number | null;
 }
 
 export interface VoiceSpeechState {
   readonly engine: VoiceEngineStatus;
-  readonly turn: EndOfTurnState;
-  readonly bargeIn: BargeInState;
+  readonly turn: TurnState;
+  readonly interrupt: Interrupt | null;
   readonly queue: SpeechQueue;
-  readonly held: HeldSpeech | null;
   readonly volume: number;
-  readonly overheard: string;
   readonly own: OwnLine | null;
   readonly replies: ReadonlyArray<AgentReply>;
   readonly progress: ReadonlyMap<string, ReplyProgress>;
   readonly shown: ReadonlyMap<string, ReplyShown>;
-  readonly turns: number;
   readonly ending: CallEnding;
   readonly timing: TurnTiming | null;
   /** When the speech queue last moved, or null until the next tick stamps it. */
@@ -116,25 +108,18 @@ export interface VoiceSpeechState {
 }
 
 export interface VoiceSpeechConfig {
-  readonly endOfTurn: EndOfTurnConfig;
-  readonly bargeIn: BargeInConfig;
+  /** The detector reports a start this long after speech starts, and an end this long after it ends. */
+  readonly vad: { readonly minSpeechMs: number; readonly minSilenceMs: number };
+  /** Off without echo cancellation, where the mic hears the agent's own voice. */
   readonly voiceBargeIn: boolean;
 }
-
-export const DEFAULT_VOICE_SPEECH_CONFIG: VoiceSpeechConfig = {
-  endOfTurn: DEFAULT_END_OF_TURN_CONFIG,
-  bargeIn: DEFAULT_BARGE_IN_CONFIG,
-  voiceBargeIn: true,
-};
-
-type ModelPart = "vad" | "asr" | "tts";
 
 export type VoiceSpeechEvent =
   | { readonly type: "modelStatus"; readonly ready: boolean }
   | {
       readonly type: "models";
       readonly state: "downloading" | "ready" | "failed";
-      readonly part: ModelPart | null;
+      readonly part: VoiceModelPart | null;
       readonly fraction: number;
     }
   | { readonly type: "started" }
@@ -143,23 +128,11 @@ export type VoiceSpeechEvent =
   | { readonly type: "interruption"; readonly phase: "began" | "ended" }
   | { readonly type: "route"; readonly output: string }
   | { readonly type: "error"; readonly code: string; readonly message: string }
-  | { readonly type: "vad"; readonly speaking: boolean; readonly atMs: number }
-  | { readonly type: "partial"; readonly text: string; readonly atMs: number }
-  | { readonly type: "eou"; readonly text: string; readonly atMs: number }
+  | TurnEvent
   | {
       readonly type: "playback";
       readonly id: string;
       readonly state: "started" | "finished" | "stopped";
-      readonly atMs: number;
-    }
-  | { readonly type: "tick"; readonly atMs: number }
-  | { readonly type: "holdStart"; readonly atMs: number }
-  | { readonly type: "holdEnd"; readonly atMs: number }
-  | { readonly type: "muted"; readonly muted: boolean; readonly atMs: number }
-  | {
-      readonly type: "finalized";
-      readonly text: string;
-      readonly messageId: string;
       readonly atMs: number;
     }
   | {
@@ -182,9 +155,7 @@ export type VoiceSpeechEffect =
   | { readonly type: "download" }
   | { readonly type: "start" }
   | { readonly type: "setMuted"; readonly muted: boolean }
-  | { readonly type: "finalize" }
-  /** Ends the engine's utterance without sending it: echo, or words Amar muted. */
-  | { readonly type: "discardTranscript" }
+  | Extract<TurnEffect, { type: "scoreTurn" | "transcribe" }>
   | { readonly type: "send"; readonly text: string; readonly messageId: string }
   | { readonly type: "speak"; readonly id: string; readonly text: string }
   | { readonly type: "stopSpeech"; readonly fadeMs: number }
@@ -201,17 +172,14 @@ export interface VoiceSpeechStep {
 
 const INITIAL: VoiceSpeechState = {
   engine: { kind: "checking" },
-  turn: INITIAL_END_OF_TURN_STATE,
-  bargeIn: INITIAL_BARGE_IN_STATE,
+  turn: INITIAL_TURN_STATE,
+  interrupt: null,
   queue: EMPTY_SPEECH_QUEUE,
-  held: null,
   volume: 1,
-  overheard: "",
   own: null,
   replies: [],
   progress: new Map(),
   shown: new Map(),
-  turns: 0,
   ending: OPEN,
   timing: null,
   speechMovedAtMs: null,
@@ -223,11 +191,17 @@ const STALE_REVISION = -1;
 /** Longer than any one chunk takes to synthesize and play, so only a lost playback event trips it. */
 const SPEECH_STALL_MS = 30_000;
 
+const DUCK_LEVEL = 0.25;
+const STOP_FADE_MS = 80;
+/** A voice still on this long after the detector reported it stops the agent. */
+const INTERRUPT_CONFIRM_MS = 250;
+
 /** Share of the whole download each model takes, downloaded in this order. */
-const DOWNLOAD_SHARE: Record<ModelPart, readonly [number, number]> = {
+const DOWNLOAD_SHARE: Record<VoiceModelPart, readonly [number, number]> = {
   vad: [0, 0.01],
-  asr: [0.01, 0.47],
-  tts: [0.47, 1],
+  asr: [0.01, 0.55],
+  turn: [0.55, 0.57],
+  tts: [0.57, 1],
 };
 
 /**
@@ -240,11 +214,11 @@ export function openVoiceSpeech(previous: VoiceSpeechState | null): VoiceSpeechS
       ? INITIAL
       : {
           ...INITIAL,
+          turn: { ...INITIAL_TURN_STATE, count: previous.turn.count },
           queue: bargeIn(previous.queue).queue,
           replies: previous.replies,
           progress: previous.progress,
           shown: new Map(previous.replies.map((reply) => [reply.id, WHOLE])),
-          turns: previous.turns,
         };
   return { state, effects: [{ type: "checkModels" }] };
 }
@@ -252,22 +226,11 @@ export function openVoiceSpeech(previous: VoiceSpeechState | null): VoiceSpeechS
 export function stepVoiceSpeech(
   state: VoiceSpeechState,
   event: VoiceSpeechEvent,
-  config: VoiceSpeechConfig = DEFAULT_VOICE_SPEECH_CONFIG,
+  config: VoiceSpeechConfig,
 ): VoiceSpeechStep {
-  const step = noteFirstSpeak(stepWatched(state, event, config), event);
+  const step = stepWatched(state, event, config);
   const shown = speechOff(step.state.engine) ? showAll(step.state) : showUnheard(step.state);
   return hangUpAfterGoodbye(shown === step.state ? step : { ...step, state: shown });
-}
-
-function noteFirstSpeak(step: VoiceSpeechStep, event: VoiceSpeechEvent): VoiceSpeechStep {
-  const timing = step.state.timing;
-  if (timing?.replyId == null || timing.firstSpeakMs !== null || !("atMs" in event)) return step;
-  const replyId = timing.replyId;
-  const spoke = step.effects.some(
-    (effect) => effect.type === "speak" && effect.id.startsWith(`${replyId}:`),
-  );
-  if (!spoke) return step;
-  return { ...step, state: { ...step.state, timing: { ...timing, firstSpeakMs: event.atMs } } };
 }
 
 /** Hangs up once the goodbye has played, or at once when the voice can't play it. Amar talking keeps the call. */
@@ -285,7 +248,7 @@ function hangUpAfterGoodbye(step: VoiceSpeechStep): VoiceSpeechStep {
 
 /** Amar is talking, or said something the thread doesn't have yet. */
 function amarAhead(state: VoiceSpeechState): boolean {
-  return liveWords(state) !== null || state.own !== null;
+  return isTurnOpen(state.turn) || state.own !== null;
 }
 
 /** The engine won't voice replies now, so the transcript is the only way to get them. */
@@ -321,7 +284,7 @@ function stepWatched(
       return stepSpeech({ ...state, speechMovedAtMs: event.atMs }, event, config);
     }
     if (event.atMs - state.speechMovedAtMs > SPEECH_STALL_MS) {
-      return then(interrupt(state, 0, false), (next) => ({
+      return then(stopSpeaking(state, 0), (next) => ({
         state: next,
         effects: [
           { type: "log", line: "[voice] speech stalled with no playback event; dropped it" },
@@ -372,27 +335,19 @@ function stepSpeech(
       return onError(state, event);
     case "muted":
       return onMuted(state, event, config);
-    case "holdStart":
-    case "holdEnd":
-      return stepTurn(state, event, config);
     case "tick":
-      if (state.held !== null) {
-        return then(stepTurn(state, event, config), (next) =>
-          recoverHeld(next, event.atMs, config),
-        );
-      }
-      return isSpeaking(state.queue)
-        ? then(stepHeard(state, event, config), (next) => stepTurn(next, event, config))
-        : stepTurn(state, event, config);
+      return then(confirmInterrupt(state, event.atMs, config), (next) =>
+        withTurn(next, event, config),
+      );
     case "vad":
-    case "partial":
-    case "eou":
-      if (!isSpeaking(state.queue)) return stepTurn(state, event, config);
-      return event.type === "eou" ? stay(state) : stepHeard(state, event, config);
+      return isSpeaking(state.queue)
+        ? onVoiceOverAgent(state, event, config)
+        : withTurn(state, event, config);
+    case "scored":
+    case "transcribed":
+      return withTurn(state, event, config);
     case "playback":
       return onPlaybackEvent(state, event, config);
-    case "finalized":
-      return onFinalized(state, event);
     case "sent":
       return onSent(state, event);
     case "thread":
@@ -403,7 +358,7 @@ function stepSpeech(
               ...state,
               replies: event.replies,
               own:
-                state.own?.messageId != null && event.userMessageIds.has(state.own.messageId)
+                state.own !== null && event.userMessageIds.has(state.own.messageId)
                   ? null
                   : state.own,
             },
@@ -415,25 +370,14 @@ function stepSpeech(
   }
 }
 
-/** Whether the session needs clock ticks: a pause counting down, or speech to watch. */
+/** Whether the session needs clock ticks: a pause waiting out, or speech to watch. */
 export function needsTicks(state: VoiceSpeechState): boolean {
-  return state.turn.kind === "paused" || isSpeaking(state.queue) || state.held !== null;
+  return state.turn.live.kind === "paused" || isSpeaking(state.queue);
 }
 
 /** Whether the mic hears Amar's voice in his turn; sound over the agent may be its own echo. */
 export function isHearing(state: VoiceSpeechState): boolean {
-  return (
-    state.turn.kind === "speaking" ||
-    (state.turn.kind === "paused" && state.turn.voice.kind === "voiced")
-  );
-}
-
-/** What Amar is saying now, before his turn ends. */
-export function liveWords(state: VoiceSpeechState): string | null {
-  return (state.turn.kind === "speaking" || state.turn.kind === "paused") &&
-    state.turn.transcript.trim() !== ""
-    ? state.turn.transcript.trim()
-    : null;
+  return state.turn.live.kind === "speaking";
 }
 
 function onModels(
@@ -457,14 +401,14 @@ function onInterruption(state: VoiceSpeechState, phase: "began" | "ended"): Voic
       : stay(state);
   }
   if (state.engine.kind !== "listening") return stay(state);
-  return then(silence(state, 0), (next) => stay(withEngine(next, { kind: "interrupted" })));
+  return then(silence(state), (next) => stay(withEngine(next, { kind: "interrupted" })));
 }
 
 function onRoute(state: VoiceSpeechState, output: string): VoiceSpeechStep {
   const log: VoiceSpeechEffect = { type: "log", line: `[voice] route: ${output}` };
-  if (state.bargeIn.duckedMs === null) return { state, effects: [log] };
+  if (state.interrupt === null) return { state, effects: [log] };
   return {
-    state: { ...state, bargeIn: INITIAL_BARGE_IN_STATE, volume: 1 },
+    state: { ...state, interrupt: null, volume: 1 },
     effects: [log, { type: "duck", level: 1 }],
   };
 }
@@ -479,249 +423,173 @@ function onError(
   };
   const live = state.engine.kind === "listening" || state.engine.kind === "interrupted";
   if (event.code !== "engine_restart_failed" || !live) return { state, effects: [log] };
-  return then(silence(state, 0), (next) => ({
+  return then(silence(state), (next) => ({
     state: withEngine(next, { kind: "failed" }),
     effects: [log],
   }));
 }
 
+/** A muted mic sends no end to a voice it was hearing, so a duck it started is undone here. */
 function onMuted(
   state: VoiceSpeechState,
   event: Extract<VoiceSpeechEvent, { type: "muted" }>,
   config: VoiceSpeechConfig,
 ): VoiceSpeechStep {
-  const hadWords = liveWords(state) !== null;
-  return then(stepTurn(state, event, config), (next) => ({
+  const ducked = state.interrupt !== null;
+  const settled = ducked ? { ...state, interrupt: null, volume: 1 } : state;
+  return then(withTurn(settled, event, config), (next) => ({
     state: next,
     effects: [
       { type: "setMuted", muted: event.muted },
-      ...(event.muted && hadWords ? [{ type: "discardTranscript" } as const] : []),
+      ...(ducked ? [{ type: "duck", level: 1 } as const] : []),
     ],
   }));
 }
 
-/** Mic events while the agent speaks go to the barge-in policy, never to the end of turn. */
-function stepHeard(
+function onVoiceOverAgent(
   state: VoiceSpeechState,
-  event: BargeInEvent,
+  event: Extract<VoiceSpeechEvent, { type: "vad" }>,
   config: VoiceSpeechConfig,
 ): VoiceSpeechStep {
-  const overheard =
-    event.type === "partial" && event.text.trim() !== "" ? event.text : state.overheard;
-  const step = config.voiceBargeIn
-    ? stepBargeIn(state.bargeIn, event, config.bargeIn)
-    : { state: state.bargeIn, effects: [] };
-  if (step.state === state.bargeIn && step.effects.length === 0 && overheard === state.overheard) {
-    return stay(state);
+  if (!config.voiceBargeIn) return stay(state);
+  const { interrupt } = state;
+  if (event.speaking) {
+    if (interrupt !== null) return stay(state);
+    return {
+      state: {
+        ...state,
+        interrupt: { heardAtMs: event.atMs, speechMs: event.speechMs },
+        volume: DUCK_LEVEL,
+      },
+      effects: [{ type: "duck", level: DUCK_LEVEL }],
+    };
   }
-  let result: VoiceSpeechStep = {
-    state: { ...state, bargeIn: step.state, overheard },
-    effects: [],
-  };
-  for (const effect of step.effects) {
-    if (effect.type === "log") {
-      result = then(result, (next) => ({ state: next, effects: [effect] }));
-    } else if (effect.type === "duck") {
-      result = then(result, (next) => ({
-        state: { ...next, volume: effect.level },
-        effects: [{ type: "duck", level: effect.level }],
-      }));
-    } else if (effect.type === "replay") {
-      result = then(result, (next) => {
-        const cut = [...next.queue.sent, ...next.queue.waiting];
-        return then(interrupt(next, effect.fadeMs, false), (stopped) => replay(stopped, cut));
-      });
-    } else {
-      result = then(result, (next) => {
-        const held = effect.awaitWords
-          ? { items: [...next.queue.sent, ...next.queue.waiting], stoppedMs: event.atMs }
-          : null;
-        return then(interrupt(next, effect.fadeMs, true), (stopped) =>
-          handOver({ ...stopped, held }, event.atMs, config),
-        );
-      });
-    }
-  }
-  return result;
-}
-
-/** A sound stopped the voice and no words followed: the cut chunk plays again from its start. */
-function recoverHeld(state: VoiceSpeechState, atMs: number, config: VoiceSpeechConfig) {
-  const { held } = state;
-  if (held === null) return stay(state);
-  if (amarAhead(state)) return stay({ ...state, held: null });
-  if (!wordsTooLate(held.stoppedMs, quietSince(state.turn, config), atMs, config.bargeIn)) {
-    return stay(state);
-  }
-  const pausedMs = atMs - held.stoppedMs;
-  const action = recoveryAction(config.bargeIn, pausedMs, true);
-  const quiet = {
-    ...state,
-    held: null,
-    turn: state.turn.kind === "muted" ? state.turn : INITIAL_END_OF_TURN_STATE,
-  };
-  return then({ state: quiet, effects: [recoveryLog(config.bargeIn, pausedMs, action)] }, (next) =>
-    replay(next, held.items),
-  );
-}
-
-/** When the VAD reported quiet: words lag its report, not the real end of speech. */
-function quietSince(turn: EndOfTurnState, config: VoiceSpeechConfig): number | null {
-  if (turn.kind === "speaking") return null;
-  if (turn.kind !== "paused") return Number.NEGATIVE_INFINITY;
-  if (turn.voice.kind === "voiced") return null;
-  return turn.voice.kind === "ended" ? turn.voice.atMs : turn.since + config.endOfTurn.vadEndLagMs;
-}
-
-/** Queues cut chunks again under the current revision: each reply from its first cut chunk on. */
-function replay(state: VoiceSpeechState, cut: ReadonlyArray<SpeechItem>): VoiceSpeechStep {
-  let progress = state.progress;
-  let shown = state.shown;
-  const replayed = new Set<string>();
-  cut.forEach((item, index) => {
-    const { replyId, chunk } = chunkOf(item.id);
-    const known = progress.get(replyId);
-    if (known === undefined || replayed.has(replyId)) return;
-    replayed.add(replyId);
-    progress = new Map(progress).set(replyId, {
-      ...known,
-      spoken: chunk,
-      revision: state.queue.revision,
-      done: false,
-    });
-    shown = unreveal(shown, replyId, index === 0 ? item.text : null);
-  });
-  return speakReplies({ ...state, progress, shown });
-}
-
-/** Takes back what a cut reply showed of the chunk that plays again; one that never played shows nothing. */
-function unreveal(
-  shown: ReadonlyMap<string, ReplyShown>,
-  replyId: string,
-  playing: string | null,
-): ReadonlyMap<string, ReplyShown> {
-  const current = shown.get(replyId);
-  if (current === undefined) return shown;
-  let kept = "";
-  if (current.kind === "spoken") {
-    if (playing === null || !current.text.endsWith(playing)) return shown;
-    kept = current.text.slice(0, -playing.length).trim();
-  }
-  const next = new Map(shown);
-  if (kept === "") next.delete(replyId);
-  else next.set(replyId, { kind: "spoken", text: kept });
-  return next;
-}
-
-/** Drops every queued and playing sentence; later chunks of those replies are stale. */
-function interrupt(
-  state: VoiceSpeechState,
-  fadeMs: number,
-  amarSpeaking: boolean,
-): VoiceSpeechStep {
-  const discard = !amarSpeaking && state.overheard !== "";
+  if (interrupt === null) return stay(state);
   return {
-    state: {
-      ...state,
-      queue: bargeIn(state.queue).queue,
-      held: null,
-      bargeIn: INITIAL_BARGE_IN_STATE,
-      overheard: amarSpeaking ? state.overheard : "",
-    },
-    effects: [
-      { type: "stopSpeech", fadeMs },
-      ...(discard ? [{ type: "discardTranscript" } as const] : []),
-    ],
+    state: { ...state, interrupt: null, volume: 1 },
+    effects: [{ type: "duck", level: 1 }, interruptLog(interrupt, "restore", event.atMs, config)],
   };
 }
 
-/** Amar talked over the agent: what the mic heard becomes his turn. */
-function handOver(
+function confirmInterrupt(
   state: VoiceSpeechState,
   atMs: number,
   config: VoiceSpeechConfig,
 ): VoiceSpeechStep {
-  const spoken = stepTurn(state, { type: "vad", speaking: true, atMs }, config);
-  return then(spoken, (next) =>
-    then(
-      next.overheard.trim() === ""
-        ? stay(next)
-        : stepTurn(next, { type: "partial", text: next.overheard, atMs }, config),
-      (heard) => stay({ ...heard, overheard: "" }),
-    ),
+  const { interrupt } = state;
+  if (interrupt === null || atMs - interrupt.heardAtMs < INTERRUPT_CONFIRM_MS) return stay(state);
+  const stopped = stopSpeaking(state, STOP_FADE_MS);
+  return then(
+    { ...stopped, effects: [...stopped.effects, interruptLog(interrupt, "stop", atMs, config)] },
+    (next) => handOver(next, interrupt, atMs, config),
   );
 }
 
-/** Stops speech and drops the utterance in progress, for an interruption or a failed engine. */
-function silence(state: VoiceSpeechState, fadeMs: number): VoiceSpeechStep {
-  const speaking = isSpeaking(state.queue);
-  const hadWords = liveWords(state) !== null || state.overheard !== "";
-  return {
-    state: {
-      ...state,
-      queue: bargeIn(state.queue).queue,
-      held: null,
-      bargeIn: INITIAL_BARGE_IN_STATE,
-      overheard: "",
-      turn: state.turn.kind === "muted" ? state.turn : INITIAL_END_OF_TURN_STATE,
-    },
-    effects: [
-      ...(speaking ? [{ type: "stopSpeech", fadeMs } as const] : []),
-      ...(hadWords ? [{ type: "discardTranscript" } as const] : []),
-    ],
-  };
-}
-
-function stepTurn(
+function handOver(
   state: VoiceSpeechState,
-  event: EndOfTurnEvent,
+  interrupt: Interrupt,
+  atMs: number,
   config: VoiceSpeechConfig,
 ): VoiceSpeechStep {
-  const before = state.turn;
-  const step = stepEndOfTurn(before, event, config.endOfTurn);
-  if (step.state === before && step.effects.length === 0) return stay(state);
-  let result: VoiceSpeechStep = { state: { ...state, turn: step.state }, effects: [] };
-  for (const effect of step.effects) {
-    const words = before.kind === "speaking" || before.kind === "paused" ? before.transcript : "";
-    const speechEndMs = before.kind === "paused" ? before.since : event.atMs;
-    result = then(result, (next) => ({
-      state: {
-        ...next,
-        own: { text: words.trim(), messageId: null },
-        turns: next.turns + 1,
-        timing: {
-          turn: next.turns + 1,
-          reason: effect.reason,
-          speechEndMs,
-          speechEnd: config.endOfTurn.vadEndLagMs > 0 ? "real" : "vad",
-          finalizedMs: null,
-          sentMs: null,
-          repliesBefore: null,
-          replyId: null,
-          firstTextMs: null,
-          firstSpeakMs: null,
-        },
-      },
-      effects: [
-        ...(next.timing === null ? [] : [timingLog(next.timing, null)]),
-        { type: "finalize" },
-      ],
-    }));
-  }
-  return result;
+  return withTurn(
+    state,
+    { type: "vad", speaking: true, speechMs: interrupt.speechMs, atMs },
+    config,
+  );
 }
 
-function onFinalized(
-  state: VoiceSpeechState,
-  event: Extract<VoiceSpeechEvent, { type: "finalized" }>,
-): VoiceSpeechStep {
-  const text = event.text.trim() !== "" ? event.text.trim() : (state.own?.text ?? "");
-  const timing = state.timing === null ? null : { ...state.timing, finalizedMs: event.atMs };
-  if (text === "") return stay({ ...state, own: null, timing });
+function interruptLog(
+  interrupt: Interrupt,
+  outcome: "stop" | "restore" | "end",
+  atMs: number,
+  config: VoiceSpeechConfig,
+): VoiceSpeechEffect {
+  const onsetMs = interrupt.heardAtMs - config.vad.minSpeechMs;
+  const after = (ms: number) => `+${Math.round(ms - onsetMs)}ms`;
   return {
-    state: { ...state, own: { text, messageId: event.messageId }, timing },
-    effects: [{ type: "send", text, messageId: event.messageId }],
+    type: "log",
+    line: `[voice] interrupt from speech onset: duck ${after(interrupt.heardAtMs)}, ${outcome} ${after(atMs)}`,
   };
+}
+
+/** Drops every queued and playing sentence; later chunks of those replies are stale. */
+function stopSpeaking(state: VoiceSpeechState, fadeMs: number): VoiceSpeechStep {
+  return {
+    state: { ...state, queue: bargeIn(state.queue).queue, interrupt: null },
+    effects: [{ type: "stopSpeech", fadeMs }],
+  };
+}
+
+/** Stops speech and drops the turn in progress, for an audio interruption or a failed engine. */
+function silence(state: VoiceSpeechState): VoiceSpeechStep {
+  const quiet = { ...state, turn: dropLiveTurn(state.turn) };
+  return isSpeaking(state.queue) ? stopSpeaking(quiet, 0) : stay(quiet);
+}
+
+/** Amar's turn steps; once it no longer holds them, replies that waited for it may play. */
+function withTurn(
+  state: VoiceSpeechState,
+  event: TurnEvent,
+  config: VoiceSpeechConfig,
+): VoiceSpeechStep {
+  const step = stepTurn(state.turn, event);
+  if (step.state === state.turn && step.effects.length === 0) return stay(state);
+  let result: VoiceSpeechStep = { state: { ...state, turn: step.state }, effects: [] };
+  for (const effect of step.effects) {
+    result = then(result, (next) => onTurnEffect(next, effect, event.atMs, config));
+  }
+  return isTurnOpen(state.turn) && !isTurnOpen(result.state.turn)
+    ? then(result, speakReplies)
+    : result;
+}
+
+function onTurnEffect(
+  state: VoiceSpeechState,
+  effect: TurnEffect,
+  atMs: number,
+  config: VoiceSpeechConfig,
+): VoiceSpeechStep {
+  switch (effect.type) {
+    case "scoreTurn":
+    case "transcribe":
+      return { state, effects: [effect] };
+    case "decided":
+      return {
+        state: {
+          ...state,
+          timing: {
+            turn: effect.turn,
+            speechEndMs: effect.endedAtMs - config.vad.minSilenceMs,
+            decidedMs: atMs,
+            probability: effect.probability,
+            waited: effect.waited,
+            transcribedMs: null,
+            sentMs: null,
+            repliesBefore: null,
+            replyId: null,
+            firstTextMs: null,
+          },
+        },
+        effects: state.timing === null ? [] : [timingLog(state.timing, null)],
+      };
+    case "heard": {
+      const timing =
+        state.timing?.turn === effect.turn
+          ? { ...state.timing, transcribedMs: atMs }
+          : state.timing;
+      if (effect.text === "") {
+        const unheard = timing !== null && timing.turn === effect.turn;
+        return {
+          state: { ...state, timing: unheard ? null : timing },
+          effects: unheard ? [timingLog(timing, "no words")] : [],
+        };
+      }
+      return {
+        state: { ...state, own: { text: effect.text, messageId: effect.messageId }, timing },
+        effects: [{ type: "send", text: effect.text, messageId: effect.messageId }],
+      };
+    }
+  }
 }
 
 function onSent(
@@ -801,7 +669,7 @@ function reveal(
   item: SpeechItem,
   playback: "started" | "finished" | "stopped",
 ): VoiceSpeechState {
-  const { replyId } = chunkOf(item.id);
+  const replyId = replyOf(item.id);
   if (playback === "stopped") return state;
   if (playback === "started") {
     const shown = state.shown.get(replyId);
@@ -823,30 +691,31 @@ function allPlayed(progress: ReplyProgress): boolean {
   return progress.done && progress.played === progress.spoken;
 }
 
-/** The agent went quiet: Amar's speech over its last words is his turn, echo is dropped. */
+/** The agent went quiet under a voice it ducked for: that voice is Amar's turn. */
 function afterSpeech(
   state: VoiceSpeechState,
   atMs: number,
   config: VoiceSpeechConfig,
 ): VoiceSpeechStep {
-  const voiced = state.bargeIn.quietSinceMs === null;
-  const settled = { ...state, bargeIn: INITIAL_BARGE_IN_STATE };
-  if (voiced) return handOver(settled, atMs, config);
-  if (state.overheard === "") return stay(settled);
-  const amarTalking = state.turn.kind === "speaking" || state.turn.kind === "paused";
-  return {
-    state: { ...settled, overheard: "" },
-    effects: amarTalking ? [] : [{ type: "discardTranscript" }],
-  };
+  const { interrupt } = state;
+  if (interrupt === null) return stay(state);
+  return then(
+    {
+      state: { ...state, interrupt: null },
+      effects: [interruptLog(interrupt, "end", atMs, config)],
+    },
+    (next) => handOver(next, interrupt, atMs, config),
+  );
 }
 
 /**
- * Queues each reply's newly safe chunks; only once the engine listens, so nothing is lost. A reply
- * Amar has talked past, by speaking a line the thread doesn't have yet, never plays.
+ * Queues each reply's newly safe chunks; only once the engine listens, so nothing is lost, and
+ * not while Amar's turn is open. A reply Amar has talked past, by speaking a line the thread
+ * doesn't have yet, never plays.
  */
 function speakReplies(state: VoiceSpeechState): VoiceSpeechStep {
-  if (state.engine.kind !== "listening" || state.held !== null) return stay(state);
-  const ahead = amarAhead(state);
+  if (state.engine.kind !== "listening" || isTurnOpen(state.turn)) return stay(state);
+  const ahead = state.own !== null;
   let queue = state.queue;
   let progress = state.progress;
   let shown = state.shown;
@@ -863,7 +732,7 @@ function speakReplies(state: VoiceSpeechState): VoiceSpeechStep {
     const revision = ahead ? STALE_REVISION : (known?.revision ?? queue.revision);
     chunks.forEach((text, index) => {
       const step = enqueue(queue, {
-        id: chunkId(reply.id, spoken + index, revision),
+        id: chunkId(reply.id, spoken + index),
         text,
         source: "front",
         revision,
@@ -881,34 +750,41 @@ function speakReplies(state: VoiceSpeechState): VoiceSpeechStep {
     if (allPlayed(next)) shown = new Map(shown).set(reply.id, WHOLE);
   }
   if (progress === state.progress) return stay(state);
-  const restore = effects.length > 0 && state.volume !== 1;
+  const restore = effects.length > 0 && state.volume !== 1 && state.interrupt === null;
   return {
     state: { ...state, queue, progress, shown, volume: restore ? 1 : state.volume },
     effects: restore ? [{ type: "duck", level: 1 }, ...effects] : effects,
   };
 }
 
-function timingLog(timing: TurnTiming, firstAudioMs: number | null): VoiceSpeechEffect {
+/** `firstAudioMs` is null when the reply never played, and "no words" when the turn had none. */
+function timingLog(
+  timing: TurnTiming,
+  firstAudioMs: number | null | "no words",
+): VoiceSpeechEffect {
   const after = (atMs: number | null) =>
     atMs === null ? "-" : `+${Math.round(atMs - timing.speechEndMs)}ms`;
+  const score = timing.probability === null ? "no score" : timing.probability.toFixed(2);
+  const smartTurn = `Smart Turn ${score}${timing.waited ? ", waited" : ""}`;
+  const replied =
+    firstAudioMs === "no words"
+      ? firstAudioMs
+      : `sent ${after(timing.sentMs)}, first text ${after(timing.firstTextMs)}, ` +
+        `first audio ${after(firstAudioMs)}`;
   return {
     type: "log",
     line:
-      `[voice] turn ${timing.turn} (${timing.reason}) from ${timing.speechEnd} speech end: ` +
-      `finalized ${after(timing.finalizedMs)}, sent ${after(timing.sentMs)}, ` +
-      `first text ${after(timing.firstTextMs)}, first speak ${after(timing.firstSpeakMs)}, ` +
-      `first audio ${after(firstAudioMs)}`,
+      `[voice] turn ${timing.turn} from speech end: decided ${after(timing.decidedMs)} ` +
+      `(${smartTurn}), transcribed ${after(timing.transcribedMs)}, ${replied}`,
   };
 }
 
-/** Unique per revision, since a cut chunk can play again under the same reply and index. */
-function chunkId(replyId: string, chunk: number, revision: number): string {
-  return `${replyId}:${chunk}.${revision}`;
+function chunkId(replyId: string, chunk: number): string {
+  return `${replyId}:${chunk}`;
 }
 
-function chunkOf(id: string): { readonly replyId: string; readonly chunk: number } {
-  const colon = id.lastIndexOf(":");
-  return { replyId: id.slice(0, colon), chunk: Number.parseInt(id.slice(colon + 1), 10) };
+function replyOf(id: string): string {
+  return id.slice(0, id.lastIndexOf(":"));
 }
 
 function check(state: VoiceSpeechState): VoiceSpeechStep {

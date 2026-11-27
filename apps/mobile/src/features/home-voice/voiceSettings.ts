@@ -14,39 +14,23 @@ import { writeFileAtomically } from "../../lib/atomic-file";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { useProjects } from "../../state/entities";
 import { userHomeAtom } from "../../state/home";
-import {
-  DEFAULT_BARGE_IN_CONFIG,
-  INTERRUPT_MODES,
-  RECOVERY_MODES,
-  type InterruptMode,
-  type RecoveryMode,
-} from "./speechQueue";
 
 export const KOKORO_VOICES = ["af_heart", "am_michael", "bf_emma"] as const;
 export type KokoroVoiceId = (typeof KOKORO_VOICES)[number];
 
-export const PAUSE_MIN_MS = 500;
-export const PAUSE_MAX_MS = 5_000;
-export const SMART_CUTOFF_MIN_MS = 250;
-export const SMART_CUTOFF_MAX_MS = 3_000;
+export const MIN_SPEECH_MIN_MS = 100;
+export const MIN_SPEECH_MAX_MS = 500;
+export const DEFAULT_MIN_SPEECH_MS = 250;
 
 export interface VoiceModeSettings {
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
   readonly modelSelection: ModelSelectionType;
   readonly voiceId: KokoroVoiceId;
-  /** Silence before a spoken message sends. */
-  readonly pauseMs: number;
-  /** Send before the pause ends when the speech sounds finished. */
-  readonly earlySend: boolean;
-  /** Dev only: what stops the voice when Amar talks over it, and what a false alarm does. */
-  readonly interruptMode: InterruptMode;
-  readonly recovery: RecoveryMode;
-  readonly smartCutoffMs: number;
   /** Dev only: Claude turns run with extended thinking, to compare reply latency. */
   readonly thinking: boolean;
-  /** Dev only: the pause counts from when Amar stopped talking, not from the VAD's later report. */
-  readonly pauseFromSpeechEnd: boolean;
+  /** Dev only: how long a voice must last before the detector calls it speech. */
+  readonly minSpeechMs: number;
 }
 
 const DEFAULT_VOICE_MODEL: ModelSelectionType = {
@@ -62,13 +46,8 @@ const StoredVoiceSettings = Schema.Struct({
   projectId: Schema.optional(ProjectId),
   modelSelection: Schema.optional(ModelSelection),
   voiceId: Schema.optional(Schema.Literals(KOKORO_VOICES)),
-  pauseMs: Schema.optional(Schema.Number),
-  earlySend: Schema.optional(Schema.Boolean),
-  interruptMode: Schema.optional(Schema.Literals(INTERRUPT_MODES)),
-  recovery: Schema.optional(Schema.Literals(RECOVERY_MODES)),
-  smartCutoffMs: Schema.optional(Schema.Number),
   thinking: Schema.optional(Schema.Boolean),
-  pauseFromSpeechEnd: Schema.optional(Schema.Boolean),
+  minSpeechMs: Schema.optional(Schema.Number),
 });
 type StoredVoiceSettings = typeof StoredVoiceSettings.Type;
 const StoredVoiceSettingsJson = Schema.fromJsonString(StoredVoiceSettings);
@@ -127,18 +106,7 @@ export function useVoiceModeSettings(): VoiceModeSettings | null {
         projectId: project.id,
         modelSelection: stored.modelSelection ?? DEFAULT_VOICE_MODEL,
         voiceId: stored.voiceId ?? "af_heart",
-        pauseMs: Math.min(PAUSE_MAX_MS, Math.max(PAUSE_MIN_MS, stored.pauseMs ?? 3_000)),
-        earlySend: stored.earlySend ?? true,
-        interruptMode: stored.interruptMode ?? DEFAULT_BARGE_IN_CONFIG.mode,
-        recovery: stored.recovery ?? DEFAULT_BARGE_IN_CONFIG.recovery,
-        smartCutoffMs: Math.min(
-          SMART_CUTOFF_MAX_MS,
-          Math.max(
-            SMART_CUTOFF_MIN_MS,
-            stored.smartCutoffMs ?? DEFAULT_BARGE_IN_CONFIG.smartCutoffMs,
-          ),
-        ),
         thinking: stored.thinking ?? false,
-        pauseFromSpeechEnd: stored.pauseFromSpeechEnd ?? true,
+        minSpeechMs: stored.minSpeechMs ?? DEFAULT_MIN_SPEECH_MS,
       };
 }

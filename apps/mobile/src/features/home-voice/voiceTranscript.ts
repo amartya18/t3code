@@ -62,7 +62,7 @@ export function voiceTranscript(
     ...queued
       .filter((message) => !shownIds.has(message.id))
       .map((message) => lineFor(message, speech)),
-    own === null ? null : { id: own.messageId ?? "own", kind: "user" as const, text: own.text },
+    own === null ? null : { id: own.messageId, kind: "user" as const, text: own.text },
   ].filter((line) => line !== null);
   return lines;
 }

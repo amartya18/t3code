@@ -17,10 +17,9 @@ export function isVoiceEngineAvailable(): boolean {
 export const ECHO_CANCELLATION = true;
 
 /** Tuning for the native engine; it holds no policy, so all of this ships over the air. */
-export function voiceEngineConfig(voiceId: string): VoiceEngineConfig {
+export function voiceEngineConfig(voiceId: string, minSpeechMs: number): VoiceEngineConfig {
   return {
-    asr: { chunkMs: 320, eouDebounceMs: 640 },
-    vad: { threshold: 0.5, minSpeechMs: 150, minSilenceMs: 300 },
+    vad: { threshold: 0.5, minSpeechMs, minSilenceMs: 200 },
     tts: { voiceId, speed: 1, vocoderFloat32: false },
     aec: { enabled: ECHO_CANCELLATION },
     logStages: __DEV__,

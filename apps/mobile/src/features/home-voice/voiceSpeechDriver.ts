@@ -38,6 +38,8 @@ export function createVoiceSpeechDriver(options: {
   readonly engine: VoiceEngine;
   readonly inputs: VoiceSpeechInputs;
   readonly previous: VoiceSpeechState | null;
+  /** Names Parakeet should favour in this call. */
+  readonly vocabulary: ReadonlyArray<string>;
   readonly now: () => number;
   readonly newMessageId: () => string;
   readonly log: (line: string) => void;
@@ -123,24 +125,48 @@ export function createVoiceSpeechDriver(options: {
           .then(() => engine.stop())
           .then(() => engine.start())
           .then(
-            () => dispatch({ type: "started" }),
+            () => {
+              engine
+                .setVocabulary(options.vocabulary)
+                .catch((error) => devLog(`[voice] word list failed: ${errorCode(error)}`));
+              dispatch({ type: "started" });
+            },
             (error) => dispatch({ type: "startFailed", code: errorCode(error) }),
           );
         return;
       case "setMuted":
         engine.setMuted(effect.muted);
         return;
-      case "finalize": {
-        const messageId = options.newMessageId();
-        engine.finalize().then(
-          (result) => dispatch({ type: "finalized", text: result.text, messageId, atMs: now() }),
-          () => dispatch({ type: "finalized", text: "", messageId, atMs: now() }),
+      case "scoreTurn":
+        engine.turnScore(effect.fromMs, effect.toMs).then(
+          (result) =>
+            dispatch({
+              type: "scored",
+              toMs: effect.toMs,
+              probability: result.probability,
+              atMs: now(),
+            }),
+          (error) => devLog(`[voice] turn score failed: ${errorCode(error)}`),
+        );
+        return;
+      case "transcribe": {
+        const heard = (text: string) =>
+          dispatch({
+            type: "transcribed",
+            fromMs: effect.fromMs,
+            text,
+            messageId: options.newMessageId(),
+            atMs: now(),
+          });
+        engine.transcribe(effect.fromMs, effect.toMs).then(
+          (result) => heard(result.text),
+          (error) => {
+            devLog(`[voice] transcribe failed: ${errorCode(error)}`);
+            heard("");
+          },
         );
         return;
       }
-      case "discardTranscript":
-        engine.finalize().catch(() => {});
-        return;
       case "send": {
         const { messageId } = effect;
         const startedAt = now();
@@ -180,12 +206,8 @@ export function createVoiceSpeechDriver(options: {
 
   const subscriptions = [
     engine.addListener("vad", (event) =>
-      dispatch({ type: "vad", speaking: event.speaking, atMs: event.atMs }),
+      dispatch({ type: "vad", speaking: event.speaking, speechMs: event.atMs, atMs: now() }),
     ),
-    engine.addListener("partial", (event) =>
-      dispatch({ type: "partial", text: event.text, atMs: now() }),
-    ),
-    engine.addListener("eou", (event) => dispatch({ type: "eou", text: event.text, atMs: now() })),
     engine.addListener("playback", (event) =>
       dispatch({ type: "playback", id: event.id, state: event.state, atMs: now() }),
     ),
