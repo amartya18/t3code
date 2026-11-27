@@ -36,7 +36,7 @@ export interface AgentReply {
   readonly streaming: boolean;
 }
 
-/** Amar's line from the moment his turn's words are known until the thread has it. */
+/** Kept until the thread has it. */
 export interface OwnLine {
   readonly text: string;
   /** The outbox, then the thread, hold the line under this id. */
@@ -72,11 +72,10 @@ const OPEN: CallEnding = { kind: "open" };
 interface Interrupt {
   /** When JS heard it start; the confirm counts from here. */
   readonly heardAtMs: number;
-  /** Engine time it really started, where his turn begins if it stops the agent. */
+  /** Engine time it really started, where the user's turn begins if it stops the agent. */
   readonly speechMs: number;
 }
 
-/** One turn's latency, on the JS clock, from when his speech really ended. */
 interface TurnTiming {
   readonly turn: number;
   readonly speechEndMs: number;
@@ -370,7 +369,6 @@ function stepSpeech(
   }
 }
 
-/** Whether the session needs clock ticks: a pause waiting out, or speech to watch. */
 export function needsTicks(state: VoiceSpeechState): boolean {
   return state.turn.live.kind === "paused" || isSpeaking(state.queue);
 }
@@ -526,7 +524,7 @@ function silence(state: VoiceSpeechState): VoiceSpeechStep {
   return isSpeaking(state.queue) ? stopSpeaking(quiet, 0) : stay(quiet);
 }
 
-/** Amar's turn steps; once it no longer holds them, replies that waited for it may play. */
+/** The user's turn steps; once it no longer holds them, replies that waited for it may play. */
 function withTurn(
   state: VoiceSpeechState,
   event: TurnEvent,
@@ -691,7 +689,7 @@ function allPlayed(progress: ReplyProgress): boolean {
   return progress.done && progress.played === progress.spoken;
 }
 
-/** The agent went quiet under a voice it ducked for: that voice is Amar's turn. */
+/** The agent went quiet under a voice it ducked for: that voice is the user's turn. */
 function afterSpeech(
   state: VoiceSpeechState,
   atMs: number,
@@ -708,11 +706,7 @@ function afterSpeech(
   );
 }
 
-/**
- * Queues each reply's newly safe chunks; only once the engine listens, so nothing is lost, and
- * not while Amar's turn is open. A reply Amar has talked past, by speaking a line the thread
- * doesn't have yet, never plays.
- */
+/** A reply the user has talked past, by speaking a line the thread doesn't have yet, never plays. */
 function speakReplies(state: VoiceSpeechState): VoiceSpeechStep {
   if (state.engine.kind !== "listening" || isTurnOpen(state.turn)) return stay(state);
   const ahead = state.own !== null;

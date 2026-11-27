@@ -38,7 +38,6 @@ export function createVoiceSpeechDriver(options: {
   readonly engine: VoiceEngine;
   readonly inputs: VoiceSpeechInputs;
   readonly previous: VoiceSpeechState | null;
-  /** Names Parakeet should favour in this call. */
   readonly vocabulary: ReadonlyArray<string>;
   readonly now: () => number;
   readonly newMessageId: () => string;

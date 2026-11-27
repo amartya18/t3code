@@ -1,8 +1,8 @@
-/** Smart Turn's score at or above which a pause ends Amar's turn at once. */
+/** Smart Turn's score at or above which a pause ends the user's turn at once. */
 export const TURN_DONE_PROBABILITY = 0.5;
 /** How long a pause Smart Turn calls unfinished waits for more speech before the turn ends anyway. */
 export const UNFINISHED_WAIT_MS = 2_000;
-/** Audio kept from before the detector's speech start, so his first word is whole. */
+/** Audio kept from before the detector's speech start, so the user's first word is whole. */
 export const PRE_ROLL_MS = 400;
 
 /** What Parakeet heard in one piece of a turn. */
@@ -21,7 +21,7 @@ interface Piece {
 /** Engine times, which go back to `turnScore` and `transcribe` as they came. */
 interface Speech {
   readonly startMs: number;
-  /** Where the next piece starts: the pre-roll before his first word, then each cut. */
+  /** Where the next piece starts: the pre-roll before the user's first word, then each cut. */
   readonly cutMs: number;
   readonly pieces: ReadonlyArray<Piece>;
 }
@@ -33,9 +33,9 @@ type LiveTurn =
   | ({
       readonly kind: "paused";
       readonly endMs: number;
-      /** When JS heard his speech end; the wait counts from here. */
+      /** When JS heard the user's speech end; the wait counts from here. */
       readonly endedAtMs: number;
-      /** Smart Turn's score, null until it answers; a pause still open scored below done. */
+      /** Smart Turn's score, null until it answers. */
       readonly probability: number | null;
     } & Speech);
 
@@ -46,9 +46,7 @@ interface DecidedTurn {
 
 export interface TurnState {
   readonly live: LiveTurn;
-  /** Ended turns, oldest first, until all their pieces are transcribed. */
   readonly decided: ReadonlyArray<DecidedTurn>;
-  /** Turns decided this session. */
   readonly count: number;
 }
 
@@ -56,7 +54,7 @@ export type TurnEvent =
   | {
       readonly type: "vad";
       readonly speaking: boolean;
-      /** Engine time his speech really started or ended. */
+      /** Engine time the user's speech really started or ended. */
       readonly speechMs: number;
       readonly atMs: number;
     }
@@ -104,10 +102,7 @@ const MUTED: LiveTurn = { kind: "muted" };
 
 export const INITIAL_TURN_STATE: TurnState = { live: IDLE, decided: [], count: 0 };
 
-/**
- * Silero starts a turn; at each end of speech Smart Turn judges it. Done ends the turn; unfinished
- * transcribes the piece so far and waits for more speech, ending the turn anyway after the wait.
- */
+/** Done ends the turn; unfinished transcribes the piece so far and waits UNFINISHED_WAIT_MS. */
 export function stepTurn(state: TurnState, event: TurnEvent): TurnStep {
   switch (event.type) {
     case "muted":
@@ -126,7 +121,6 @@ export function stepTurn(state: TurnState, event: TurnEvent): TurnStep {
   }
 }
 
-/** Amar's turn is on, or ended without its words known yet. */
 export function isTurnOpen(state: TurnState): boolean {
   return state.live.kind === "speaking" || state.live.kind === "paused" || state.decided.length > 0;
 }

@@ -2,12 +2,9 @@ import { requireOptionalNativeModule, type EventSubscription } from "expo";
 
 /** `aec` and `tts.vocoderFloat32` apply on the next `start()`; the rest at once. */
 export interface VoiceEngineConfig {
-  /** Silero v6 on 32 ms frames. */
   readonly vad: {
     readonly threshold: number;
-    /** Voiced frames must run this long before speech starts. */
     readonly minSpeechMs: number;
-    /** Unvoiced frames must run this long before speech ends. */
     readonly minSilenceMs: number;
   };
   readonly tts: {

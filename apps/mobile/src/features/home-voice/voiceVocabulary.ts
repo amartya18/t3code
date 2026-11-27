@@ -44,7 +44,6 @@ const VOICE_WORDS = [
 
 const MAX_WORDS = 200;
 
-/** Names Parakeet should favour in a call: fixed words, then the environment's projects and newest live threads. */
 export function voiceVocabulary(input: {
   readonly environmentId: EnvironmentId;
   readonly projects: ReadonlyArray<Pick<EnvironmentProject, "environmentId" | "title">>;

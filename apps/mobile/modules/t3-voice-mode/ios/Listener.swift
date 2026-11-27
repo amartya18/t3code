@@ -1,9 +1,7 @@
 import Accelerate
 import Foundation
 
-/// Silero on every 32 ms frame of the mic, in arrival order, with the hold rule deciding when
-/// speech starts and ends. The mic tap stores the audio in the ring first, so a `vad` event's
-/// range is always readable by the time JS hears about it.
+/// The ring is written before the vad event fires, so its range is always readable from JS.
 actor Listener {
   enum Command {
     case audio([Float], start: Int)

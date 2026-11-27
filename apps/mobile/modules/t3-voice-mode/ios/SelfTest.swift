@@ -3,9 +3,7 @@ import AVFoundation
 import Foundation
 
 extension VoiceEngine {
-  /// Loads every model and runs each on audio made here, with no bundled audio and no mic: Kokoro
-  /// speaks a sentence full of list words, Silero and Smart Turn hear it, and Parakeet transcribes
-  /// it without and with the word list. `dumpTo` keeps the 16 kHz audio for an off-device comparison.
+  /// `dumpTo` keeps the 16 kHz audio for off-device comparison.
   func selfTest(dumpTo folder: URL? = nil) async throws -> String {
     let config = try requireConfig()
     let sentence = "Ask Kokoro to check the Tailscale link before FluidAudio downloads Parakeet."

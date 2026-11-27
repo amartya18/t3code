@@ -2,9 +2,7 @@ import ExpoModulesCore
 import Foundation
 import UIKit
 
-/// CI's only check of the model I/O before a device build: on a simulator launched with
-/// T3_VOICE_SELF_TEST=1 the app downloads the models, prints one self-test line, keeps the test
-/// audio in Caches/T3VoiceSelfTest and exits. Device builds never run it.
+/// Runs only on a simulator launched with T3_VOICE_SELF_TEST=1 (fork-ios-compile.yml).
 public class VoiceSelfTestLauncher: ExpoAppDelegateSubscriber {
   public func application(
     _ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil

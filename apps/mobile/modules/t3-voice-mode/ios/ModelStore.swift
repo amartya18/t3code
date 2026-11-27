@@ -88,8 +88,7 @@ enum ModelStore {
     progress("tts", 1)
   }
 
-  /// Smart Turn isn't a FluidAudio model, so it comes straight from its pinned Hugging Face commit,
-  /// checked file by file, and only appears under its final name once every file has passed.
+  /// Smart Turn isn't a FluidAudio model: fetched from a pinned HF commit, renamed into place only after every file verifies.
   private static func downloadTurnModel(progress: @escaping @Sendable (Double) -> Void) async throws {
     guard !FileManager.default.fileExists(atPath: turnModel.path) else { return progress(1) }
     let staging = turnModel.deletingLastPathComponent().appendingPathComponent("staging", isDirectory: true)

@@ -68,7 +68,7 @@ function call(
     hangUps: 0,
     stops: [] as number[],
     synthesizing: [] as Array<{ id: string; text: string }>,
-    /** What the mic heard of Amar, on the engine's clock. */
+    /** What the mic heard of the user, on the engine's clock. */
     audio: [] as Array<{ fromMs: number; toMs: number; text: string }>,
     /** The ranges Parakeet was asked to transcribe. */
     transcribed: [] as Array<readonly [number, number]>,

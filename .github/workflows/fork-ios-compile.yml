@@ -112,7 +112,6 @@ jobs:
           path: ${{ runner.temp }}/voice-models
           key: voice-models-${{ hashFiles('apps/mobile/modules/t3-voice-mode/ios/ModelStore.swift') }}
 
-      # The app sees T3_VOICE_SELF_TEST=1, downloads any missing models, prints one JSON line and exits.
       - name: Self-test on a simulator
         timeout-minutes: 45
         run: |

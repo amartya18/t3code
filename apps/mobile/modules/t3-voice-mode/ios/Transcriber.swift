@@ -1,8 +1,7 @@
 @_implementationOnly import FluidAudio
 import Foundation
 
-/// Parakeet TDT 0.6B v3 on finished turns, then FluidAudio's CTC keyword spotter (Parakeet CTC 110M)
-/// rescoring the transcript towards the word list. Every call runs after the one before it.
+/// Calls are serialized.
 actor Transcriber {
   private var asr: AsrManager?
   private var ctc: CtcModels?
