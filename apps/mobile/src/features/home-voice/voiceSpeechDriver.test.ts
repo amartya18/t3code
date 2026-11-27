@@ -100,7 +100,8 @@ it("ducks the voice in steps rather than one jump, and restores it the same way"
       return { remove: () => {} };
     },
   };
-  const driver = open(engine);
+  let clock = 0;
+  const driver = open(engine, () => clock);
   await settle();
   driver.dispatch({
     type: "thread",
@@ -117,7 +118,9 @@ it("ducks the voice in steps rather than one jump, and restores it the same way"
   expect(ducked.at(-1)).toBe(DEFAULT_VOICE_SPEECH_CONFIG.bargeIn.duckLevel);
   expect(ducked).toEqual([...ducked].sort((left, right) => right - left));
 
-  listeners.get("vad")!({ speaking: false, probability: 0, atMs: 0 });
+  clock = 200;
+  listeners.get("vad")!({ speaking: false, probability: 0, atMs: clock });
+  clock = 1_200;
   vi.advanceTimersByTime(200);
   expect(levels.length).toBeGreaterThan(2);
   expect(levels.at(-1)).toBe(1);

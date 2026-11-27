@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import { speechChunks } from "./speakable";
+import type { BargeInConfig } from "./speechQueue";
 import {
   DEFAULT_VOICE_SPEECH_CONFIG,
   isHearing,
@@ -253,7 +255,7 @@ describe("voice speech", () => {
     voice.playAll();
     expect(voice.played).toEqual(["Home is idle. No threads are running."]);
     expect(voice.logs).toEqual([
-      "[voice] turn 1 (pause) from speech end: finalized +3000ms, sent +3000ms, first text +3000ms, first audio +3000ms",
+      "[voice] turn 1 (pause) from speech end: finalized +3000ms, sent +3000ms, first text +3000ms, first speak +3000ms, first audio +3000ms",
     ]);
   });
 
@@ -369,20 +371,6 @@ describe("voice speech", () => {
     voice.playAll();
     expect(voice.played).toEqual(["A long answer that keeps going."]);
     expect(voice.sent).toEqual([]);
-  });
-
-  it("on headphones, stops the voice at the first sound of Amar's voice", () => {
-    const voice = call();
-    voice.send({ type: "route", output: "Headphones" });
-    voice.reply("r1", "A long answer that keeps going.");
-    voice.send({ type: "vad", speaking: true });
-    expect(voice.engine.stops).toEqual([DEFAULT_VOICE_SPEECH_CONFIG.bargeIn.fadeMs]);
-
-    voice.send({ type: "route", output: "Speaker" });
-    voice.reply("r2", "Another answer.");
-    voice.send({ type: "vad", speaking: false });
-    voice.send({ type: "vad", speaking: true });
-    expect(voice.engine.stops).toHaveLength(1);
   });
 
   it("without echo cancellation, only a tap stops the voice", () => {
@@ -637,5 +625,182 @@ describe("what the transcript shows of a reply", () => {
     const voice = call({ models: "missing" });
     voice.reply("r1", "Hi. Home is idle.");
     expect(voice.state().shown.get("r1")).toEqual({ kind: "whole" });
+  });
+});
+
+describe("interrupting the voice", () => {
+  const LONG = `${ONE} ${TWO} ${THREE} PR 43 merged an hour ago, and its checks are all green now.`;
+  const CHUNKS = speechChunks(LONG);
+
+  function playing(bargeIn: Partial<BargeInConfig>) {
+    const voice = call({
+      config: { ...TIMER_ONLY, bargeIn: { ...TIMER_ONLY.bargeIn, ...bargeIn } },
+    });
+    voice.reply("r1", LONG);
+    return voice;
+  }
+
+  function startNext(voice: ReturnType<typeof call>) {
+    voice.send({ type: "playback", id: voice.engine.synthesizing[0]!.id, state: "started" });
+  }
+
+  /** A sound with no words: the detector hears it for `ms`, then nothing. */
+  function cough(voice: ReturnType<typeof call>, ms: number) {
+    voice.send({ type: "vad", speaking: true });
+    voice.wait(ms);
+    voice.stopTalking();
+  }
+
+  const { duckLevel, fadeMs } = TIMER_ONLY.bargeIn;
+
+  it("reads a long reply as more than one chunk", () => {
+    expect(CHUNKS.length).toBeGreaterThan(1);
+  });
+
+  it("anySound stops the voice the moment the detector fires", () => {
+    const voice = playing({ mode: "anySound" });
+    startNext(voice);
+    voice.send({ type: "vad", speaking: true });
+    expect(voice.engine.stops).toEqual([fadeMs]);
+    expect(voice.logs).toEqual([
+      "[voice] interrupt anySound: onset +0ms, word none, duck none, stop +0ms",
+    ]);
+  });
+
+  it("words ignores the detector, and stops at the first word with its delay logged", () => {
+    const voice = playing({ mode: "words" });
+    startNext(voice);
+    voice.send({ type: "vad", speaking: true });
+    voice.wait(300);
+    expect(voice.engine.volume).toBe(1);
+    expect(voice.engine.stops).toEqual([]);
+
+    voice.engine.transcript = "wait";
+    voice.send({ type: "partial", text: "wait" });
+    expect(voice.engine.stops).toEqual([fadeMs]);
+    expect(liveWords(voice.state())).toBe("wait");
+    expect(voice.logs).toEqual([
+      "[voice] interrupt words: onset +0ms, word +300ms, duck none, stop +300ms",
+    ]);
+  });
+
+  it("words never stops for a sound that brings no words", () => {
+    const voice = playing({ mode: "words" });
+    startNext(voice);
+    cough(voice, 200);
+    voice.wait(3_000);
+    expect(voice.engine.stops).toEqual([]);
+    voice.playAll();
+    expect(voice.played).toEqual(CHUNKS);
+  });
+
+  it("hybrid ducks at the detector and stops at the first word", () => {
+    const voice = playing({ mode: "hybrid" });
+    startNext(voice);
+    voice.send({ type: "vad", speaking: true });
+    expect(voice.engine.volume).toBe(duckLevel);
+    voice.wait(400);
+    voice.engine.transcript = "hold on";
+    voice.send({ type: "partial", text: "hold on" });
+    expect(voice.engine.stops).toEqual([fadeMs]);
+    expect(voice.logs).toEqual([
+      "[voice] interrupt hybrid: onset +0ms, word +400ms, duck +0ms, stop +400ms",
+    ]);
+  });
+
+  it("hybrid restores the volume after a cough, and resume plays on", () => {
+    const voice = playing({ mode: "hybrid", recovery: "resume" });
+    startNext(voice);
+    cough(voice, 100);
+    voice.wait(400);
+    expect(voice.engine.volume).toBe(duckLevel);
+    voice.wait(200);
+    expect(voice.engine.volume).toBe(1);
+    expect(voice.engine.stops).toEqual([]);
+    expect(voice.logs).toEqual([
+      "[voice] interrupt hybrid: onset +0ms, word none, duck +0ms, restore +600ms",
+      "[voice] recover hybrid resume: paused 600ms, restored volume",
+    ]);
+    voice.playAll();
+    expect(voice.played).toEqual(CHUNKS);
+    expect(voice.sent).toEqual([]);
+  });
+
+  it("hybrid keeps the duck while the sound goes on, until it has been quiet for words", () => {
+    const voice = playing({ mode: "hybrid", recovery: "resume" });
+    startNext(voice);
+    cough(voice, 1_500);
+    expect(voice.engine.volume).toBe(duckLevel);
+    voice.wait(400);
+    expect(voice.engine.volume).toBe(1);
+    expect(voice.logs.at(-1)).toBe("[voice] recover hybrid resume: paused 1900ms, restored volume");
+  });
+
+  it("restart plays the cut chunk again from its start, then the rest", () => {
+    const voice = playing({ mode: "hybrid", recovery: "restart" });
+    voice.playNext();
+    startNext(voice);
+    cough(voice, 100);
+    voice.wait(600);
+    expect(voice.engine.stops).toEqual([fadeMs]);
+    expect(voice.engine.volume).toBe(1);
+    expect(voice.logs.at(-1)).toBe(
+      "[voice] recover hybrid restart: paused 600ms, replayed the chunk",
+    );
+    expect(voice.state().shown.get("r1")).toEqual({ kind: "spoken", text: CHUNKS[0] });
+
+    voice.playAll();
+    expect(voice.played).toEqual(CHUNKS);
+    expect(voice.state().shown.get("r1")).toEqual({ kind: "whole" });
+  });
+
+  it("smart plays on after a short pause", () => {
+    const voice = playing({ mode: "hybrid", recovery: "smart", smartCutoffMs: 1_000 });
+    startNext(voice);
+    cough(voice, 100);
+    voice.wait(600);
+    expect(voice.engine.stops).toEqual([]);
+    expect(voice.logs.at(-1)).toBe("[voice] recover hybrid smart: paused 600ms, restored volume");
+  });
+
+  it("smart restarts the chunk after a long pause", () => {
+    const voice = playing({ mode: "hybrid", recovery: "smart", smartCutoffMs: 1_000 });
+    startNext(voice);
+    cough(voice, 800);
+    voice.wait(400);
+    expect(voice.engine.stops).toEqual([fadeMs]);
+    expect(voice.logs.at(-1)).toBe(
+      "[voice] recover hybrid smart: paused 1200ms, replayed the chunk",
+    );
+    voice.playAll();
+    expect(voice.played).toEqual(CHUNKS);
+  });
+
+  it("after anySound stops for a cough, even resume replays the chunk, and no turn is sent", () => {
+    const voice = playing({ mode: "anySound", recovery: "resume" });
+    startNext(voice);
+    cough(voice, 100);
+    expect(voice.engine.stops).toEqual([fadeMs]);
+    expect(voice.engine.synthesizing).toEqual([]);
+    voice.wait(600);
+    expect(voice.logs.at(-1)).toBe(
+      "[voice] recover anySound resume: paused 600ms, replayed the chunk",
+    );
+    expect(voice.state().turn.kind).toBe("idle");
+
+    voice.playAll();
+    expect(voice.played).toEqual(CHUNKS);
+    voice.wait(5_000);
+    expect(voice.sent).toEqual([]);
+  });
+
+  it("after anySound stops for real words, nothing replays and the words are sent", () => {
+    const voice = playing({ mode: "anySound" });
+    startNext(voice);
+    voice.say("stop, ask Home instead");
+    voice.stopTalking();
+    voice.wait(3_500);
+    expect(voice.engine.synthesizing).toEqual([]);
+    expect(voice.sent).toEqual(["stop, ask Home instead"]);
   });
 });

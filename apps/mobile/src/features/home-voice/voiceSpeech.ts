@@ -17,7 +17,10 @@ import {
   INITIAL_BARGE_IN_STATE,
   isSpeaking,
   onPlayback,
+  recoveryAction,
+  recoveryLog,
   stepBargeIn,
+  wordsTooLate,
   type BargeInConfig,
   type BargeInEvent,
   type BargeInState,
@@ -73,6 +76,12 @@ type CallEnding =
 
 const OPEN: CallEnding = { kind: "open" };
 
+/** Speech a sound stopped before any words; it plays again if none come. */
+interface HeldSpeech {
+  readonly items: ReadonlyArray<SpeechItem>;
+  readonly stoppedMs: number;
+}
+
 interface TurnTiming {
   readonly turn: number;
   readonly reason: FinalizeReason;
@@ -83,6 +92,7 @@ interface TurnTiming {
   readonly repliesBefore: ReadonlySet<string> | null;
   readonly replyId: string | null;
   readonly firstTextMs: number | null;
+  readonly firstSpeakMs: number | null;
 }
 
 export interface VoiceSpeechState {
@@ -90,9 +100,8 @@ export interface VoiceSpeechState {
   readonly turn: EndOfTurnState;
   readonly bargeIn: BargeInState;
   readonly queue: SpeechQueue;
+  readonly held: HeldSpeech | null;
   readonly volume: number;
-  /** Where the voice plays; on headphones the mic can't hear it, so Amar's voice alone stops it. */
-  readonly route: "speaker" | "headphones";
   /** The mic's transcript while the agent speaks: echo until Amar interrupts. */
   readonly overheard: string;
   readonly own: OwnLine | null;
@@ -197,8 +206,8 @@ const INITIAL: VoiceSpeechState = {
   turn: INITIAL_END_OF_TURN_STATE,
   bargeIn: INITIAL_BARGE_IN_STATE,
   queue: EMPTY_SPEECH_QUEUE,
+  held: null,
   volume: 1,
-  route: "speaker",
   overheard: "",
   own: null,
   replies: [],
@@ -247,9 +256,20 @@ export function stepVoiceSpeech(
   event: VoiceSpeechEvent,
   config: VoiceSpeechConfig = DEFAULT_VOICE_SPEECH_CONFIG,
 ): VoiceSpeechStep {
-  const step = stepWatched(state, event, config);
+  const step = noteFirstSpeak(stepWatched(state, event, config), event);
   const shown = speechOff(step.state.engine) ? showAll(step.state) : showUnheard(step.state);
   return hangUpAfterGoodbye(shown === step.state ? step : { ...step, state: shown });
+}
+
+function noteFirstSpeak(step: VoiceSpeechStep, event: VoiceSpeechEvent): VoiceSpeechStep {
+  const timing = step.state.timing;
+  if (timing?.replyId == null || timing.firstSpeakMs !== null || !("atMs" in event)) return step;
+  const replyId = timing.replyId;
+  const spoke = step.effects.some(
+    (effect) => effect.type === "speak" && effect.id.startsWith(`${replyId}:`),
+  );
+  if (!spoke) return step;
+  return { ...step, state: { ...step.state, timing: { ...timing, firstSpeakMs: event.atMs } } };
 }
 
 /** Hangs up once the goodbye has played, or at once when the voice can't play it. Amar talking keeps the call. */
@@ -365,7 +385,14 @@ function stepSpeech(
     case "holdEnd":
       return stepTurn(state, event, config);
     case "tick":
-      return stepTurn(state, event, config);
+      if (state.held !== null) {
+        return then(stepTurn(state, event, config), (next) =>
+          recoverHeld(next, event.atMs, config),
+        );
+      }
+      return isSpeaking(state.queue)
+        ? then(stepHeard(state, event, config), (next) => stepTurn(next, event, config))
+        : stepTurn(state, event, config);
     case "vad":
     case "partial":
     case "eou":
@@ -399,7 +426,7 @@ function stepSpeech(
 
 /** Whether the session needs clock ticks: a pause counting down, or speech to watch. */
 export function needsTicks(state: VoiceSpeechState): boolean {
-  return state.turn.kind === "paused" || isSpeaking(state.queue);
+  return state.turn.kind === "paused" || isSpeaking(state.queue) || state.held !== null;
 }
 
 /** Whether the mic hears Amar's voice in his turn; sound over the agent may be its own echo. */
@@ -444,10 +471,9 @@ function onInterruption(state: VoiceSpeechState, phase: "began" | "ended"): Voic
 
 function onRoute(state: VoiceSpeechState, output: string): VoiceSpeechStep {
   const log: VoiceSpeechEffect = { type: "log", line: `[voice] route: ${output}` };
-  const routed = { ...state, route: output === "Speaker" ? "speaker" : "headphones" } as const;
-  if (state.bargeIn.kind !== "ducked") return { state: routed, effects: [log] };
+  if (state.bargeIn.duckedMs === null) return { state, effects: [log] };
   return {
-    state: { ...routed, bargeIn: INITIAL_BARGE_IN_STATE, volume: 1 },
+    state: { ...state, bargeIn: INITIAL_BARGE_IN_STATE, volume: 1 },
     effects: [log, { type: "duck", level: 1 }],
   };
 }
@@ -492,12 +518,7 @@ function stepHeard(
   const overheard =
     event.type === "partial" && event.text.trim() !== "" ? event.text : state.overheard;
   const step = config.voiceBargeIn
-    ? stepBargeIn(
-        state.bargeIn,
-        event,
-        { speaking: isSpeaking(state.queue), headphones: state.route === "headphones" },
-        config.bargeIn,
-      )
+    ? stepBargeIn(state.bargeIn, event, config.bargeIn)
     : { state: state.bargeIn, effects: [] };
   if (step.state === state.bargeIn && step.effects.length === 0 && overheard === state.overheard) {
     return stay(state);
@@ -507,19 +528,97 @@ function stepHeard(
     effects: [],
   };
   for (const effect of step.effects) {
-    result =
-      effect.type === "duck"
-        ? then(result, (next) => ({
-            state: { ...next, volume: effect.level },
-            effects: [{ type: "duck", level: effect.level }],
-          }))
-        : then(result, (next) =>
-            then(interrupt(next, effect.fadeMs, true), (stopped) =>
-              handOver(stopped, event.atMs, config),
-            ),
-          );
+    if (effect.type === "log") {
+      result = then(result, (next) => ({ state: next, effects: [effect] }));
+    } else if (effect.type === "duck") {
+      result = then(result, (next) => ({
+        state: { ...next, volume: effect.level },
+        effects: [{ type: "duck", level: effect.level }],
+      }));
+    } else if (effect.type === "replay") {
+      result = then(result, (next) => {
+        const cut = [...next.queue.sent, ...next.queue.waiting];
+        return then(interrupt(next, effect.fadeMs, false), (stopped) => replay(stopped, cut));
+      });
+    } else {
+      result = then(result, (next) => {
+        const held = effect.awaitWords
+          ? { items: [...next.queue.sent, ...next.queue.waiting], stoppedMs: event.atMs }
+          : null;
+        return then(interrupt(next, effect.fadeMs, true), (stopped) =>
+          handOver({ ...stopped, held }, event.atMs, config),
+        );
+      });
+    }
   }
   return result;
+}
+
+/** A sound stopped the voice and no words followed: the cut chunk plays again from its start. */
+function recoverHeld(state: VoiceSpeechState, atMs: number, config: VoiceSpeechConfig) {
+  const { held } = state;
+  if (held === null) return stay(state);
+  if (amarAhead(state)) return stay({ ...state, held: null });
+  if (!wordsTooLate(held.stoppedMs, quietSince(state.turn), atMs, config.bargeIn)) {
+    return stay(state);
+  }
+  const pausedMs = atMs - held.stoppedMs;
+  const action = recoveryAction(config.bargeIn, pausedMs, true);
+  const quiet = {
+    ...state,
+    held: null,
+    turn: state.turn.kind === "muted" ? state.turn : INITIAL_END_OF_TURN_STATE,
+  };
+  return then({ state: quiet, effects: [recoveryLog(config.bargeIn, pausedMs, action)] }, (next) =>
+    replay(next, held.items),
+  );
+}
+
+function quietSince(turn: EndOfTurnState): number | null {
+  if (turn.kind === "speaking") return null;
+  if (turn.kind !== "paused") return Number.NEGATIVE_INFINITY;
+  if (turn.voice.kind === "voiced") return null;
+  return turn.voice.kind === "ended" ? turn.voice.atMs : turn.since;
+}
+
+/** Queues cut chunks again under the current revision: each reply from its first cut chunk on. */
+function replay(state: VoiceSpeechState, cut: ReadonlyArray<SpeechItem>): VoiceSpeechStep {
+  let progress = state.progress;
+  let shown = state.shown;
+  const replayed = new Set<string>();
+  cut.forEach((item, index) => {
+    const { replyId, chunk } = chunkOf(item.id);
+    const known = progress.get(replyId);
+    if (known === undefined || replayed.has(replyId)) return;
+    replayed.add(replyId);
+    progress = new Map(progress).set(replyId, {
+      ...known,
+      spoken: chunk,
+      revision: state.queue.revision,
+      done: false,
+    });
+    shown = unreveal(shown, replyId, index === 0 ? item.text : null);
+  });
+  return speakReplies({ ...state, progress, shown });
+}
+
+/** Takes back what a cut reply showed of the chunk that plays again; one that never played shows nothing. */
+function unreveal(
+  shown: ReadonlyMap<string, ReplyShown>,
+  replyId: string,
+  playing: string | null,
+): ReadonlyMap<string, ReplyShown> {
+  const current = shown.get(replyId);
+  if (current === undefined) return shown;
+  let kept = "";
+  if (current.kind === "spoken") {
+    if (playing === null || !current.text.endsWith(playing)) return shown;
+    kept = current.text.slice(0, -playing.length).trim();
+  }
+  const next = new Map(shown);
+  if (kept === "") next.delete(replyId);
+  else next.set(replyId, { kind: "spoken", text: kept });
+  return next;
 }
 
 /** Drops every queued and playing sentence; later chunks of those replies are stale. */
@@ -533,6 +632,7 @@ function interrupt(
     state: {
       ...state,
       queue: bargeIn(state.queue).queue,
+      held: null,
       bargeIn: INITIAL_BARGE_IN_STATE,
       overheard: amarSpeaking ? state.overheard : "",
     },
@@ -568,6 +668,7 @@ function silence(state: VoiceSpeechState, fadeMs: number): VoiceSpeechStep {
     state: {
       ...state,
       queue: bargeIn(state.queue).queue,
+      held: null,
       bargeIn: INITIAL_BARGE_IN_STATE,
       overheard: "",
       turn: state.turn.kind === "muted" ? state.turn : INITIAL_END_OF_TURN_STATE,
@@ -605,6 +706,7 @@ function stepTurn(
           repliesBefore: null,
           replyId: null,
           firstTextMs: null,
+          firstSpeakMs: null,
         },
       },
       effects: [
@@ -706,7 +808,7 @@ function reveal(
   item: SpeechItem,
   playback: "started" | "finished" | "stopped",
 ): VoiceSpeechState {
-  const replyId = item.id.slice(0, item.id.lastIndexOf(":"));
+  const { replyId } = chunkOf(item.id);
   if (playback === "stopped") return state;
   if (playback === "started") {
     const shown = state.shown.get(replyId);
@@ -734,13 +836,13 @@ function afterSpeech(
   atMs: number,
   config: VoiceSpeechConfig,
 ): VoiceSpeechStep {
-  if (state.bargeIn.kind === "ducked") {
-    return handOver({ ...state, bargeIn: INITIAL_BARGE_IN_STATE }, atMs, config);
-  }
-  if (state.overheard === "") return stay(state);
+  const voiced = state.bargeIn.quietSinceMs === null;
+  const settled = { ...state, bargeIn: INITIAL_BARGE_IN_STATE };
+  if (voiced) return handOver(settled, atMs, config);
+  if (state.overheard === "") return stay(settled);
   const amarTalking = state.turn.kind === "speaking" || state.turn.kind === "paused";
   return {
-    state: { ...state, overheard: "" },
+    state: { ...settled, overheard: "" },
     effects: amarTalking ? [] : [{ type: "discardTranscript" }],
   };
 }
@@ -750,7 +852,7 @@ function afterSpeech(
  * Amar has talked past, by speaking a line the thread doesn't have yet, never plays.
  */
 function speakReplies(state: VoiceSpeechState): VoiceSpeechStep {
-  if (state.engine.kind !== "listening") return stay(state);
+  if (state.engine.kind !== "listening" || state.held !== null) return stay(state);
   const ahead = amarAhead(state);
   let queue = state.queue;
   let progress = state.progress;
@@ -768,7 +870,7 @@ function speakReplies(state: VoiceSpeechState): VoiceSpeechStep {
     const revision = ahead ? STALE_REVISION : (known?.revision ?? queue.revision);
     chunks.forEach((text, index) => {
       const step = enqueue(queue, {
-        id: `${reply.id}:${spoken + index}`,
+        id: chunkId(reply.id, spoken + index, revision),
         text,
         source: "front",
         revision,
@@ -801,8 +903,19 @@ function timingLog(timing: TurnTiming, firstAudioMs: number | null): VoiceSpeech
     line:
       `[voice] turn ${timing.turn} (${timing.reason}) from speech end: ` +
       `finalized ${after(timing.finalizedMs)}, sent ${after(timing.sentMs)}, ` +
-      `first text ${after(timing.firstTextMs)}, first audio ${after(firstAudioMs)}`,
+      `first text ${after(timing.firstTextMs)}, first speak ${after(timing.firstSpeakMs)}, ` +
+      `first audio ${after(firstAudioMs)}`,
   };
+}
+
+/** Unique per revision, since a cut chunk can play again under the same reply and index. */
+function chunkId(replyId: string, chunk: number, revision: number): string {
+  return `${replyId}:${chunk}.${revision}`;
+}
+
+function chunkOf(id: string): { readonly replyId: string; readonly chunk: number } {
+  const colon = id.lastIndexOf(":");
+  return { replyId: id.slice(0, colon), chunk: Number.parseInt(id.slice(colon + 1), 10) };
 }
 
 function check(state: VoiceSpeechState): VoiceSpeechStep {

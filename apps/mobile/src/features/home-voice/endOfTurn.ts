@@ -59,7 +59,7 @@ type PauseVoice =
   | { readonly kind: "voiced" }
   | { readonly kind: "ended"; readonly atMs: number };
 
-const WORDS_LAG_MS = 400;
+export const WORDS_LAG_MS = 400;
 
 export const INITIAL_END_OF_TURN_STATE: EndOfTurnState = { kind: "idle" };
 

@@ -2,16 +2,10 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   bargeIn,
-  DEFAULT_BARGE_IN_CONFIG,
   EMPTY_SPEECH_QUEUE,
   enqueue,
-  INITIAL_BARGE_IN_STATE,
   isSpeaking,
   onPlayback,
-  stepBargeIn,
-  type BargeInEffect,
-  type BargeInEvent,
-  type BargeInState,
   type SpeechItem,
   type SpeechQueue,
 } from "./speechQueue";
@@ -111,86 +105,5 @@ describe("speech queue", () => {
     const step = onPlayback(voice.queue(), { id: stopped ?? "", state: "stopped" });
     expect(step.queue).toEqual(voice.queue());
     expect(step.speak).toEqual([]);
-  });
-});
-
-describe("stepBargeIn", () => {
-  function barge(headphones = false) {
-    let state: BargeInState = INITIAL_BARGE_IN_STATE;
-    let speaking = true;
-    const effects: BargeInEffect[] = [];
-    const send = (event: Omit<BargeInEvent, "atMs"> & Partial<BargeInEvent>) => {
-      const step = stepBargeIn(state, { ...event, atMs: 0 } as BargeInEvent, {
-        speaking,
-        headphones,
-      });
-      state = step.state;
-      effects.push(...step.effects);
-    };
-    return {
-      effects,
-      send,
-      finishReply: () => {
-        speaking = false;
-      },
-    };
-  }
-  const { duckLevel, fadeMs } = DEFAULT_BARGE_IN_CONFIG;
-
-  it("ducks on his voice, then stops at his first word", () => {
-    const voice = barge();
-    voice.send({ type: "vad", speaking: true });
-    expect(voice.effects).toEqual([{ type: "duck", level: duckLevel }]);
-
-    voice.send({ type: "partial", text: "yes" });
-    expect(voice.effects.slice(1)).toEqual([{ type: "interrupt", fadeMs }]);
-  });
-
-  it("stops at a word heard before the voice detector fires", () => {
-    const voice = barge();
-    voice.send({ type: "partial", text: "wait" });
-    expect(voice.effects).toEqual([{ type: "interrupt", fadeMs }]);
-  });
-
-  it("keeps ducking through a partial with no words", () => {
-    const voice = barge();
-    voice.send({ type: "vad", speaking: true });
-    voice.send({ type: "partial", text: " " });
-    expect(voice.effects).toEqual([{ type: "duck", level: duckLevel }]);
-  });
-
-  it("unducks when his voice ends without a word", () => {
-    const voice = barge();
-    voice.send({ type: "vad", speaking: true });
-    voice.send({ type: "vad", speaking: false });
-    expect(voice.effects).toEqual([
-      { type: "duck", level: duckLevel },
-      { type: "duck", level: 1 },
-    ]);
-  });
-
-  it("on headphones, stops at his voice alone", () => {
-    const voice = barge(true);
-    voice.send({ type: "vad", speaking: true });
-    expect(voice.effects).toEqual([{ type: "interrupt", fadeMs }]);
-  });
-
-  it("unducks when the reply ends on its own", () => {
-    const voice = barge();
-    voice.send({ type: "vad", speaking: true });
-    voice.finishReply();
-    voice.send({ type: "partial", text: "thanks" });
-    expect(voice.effects).toEqual([
-      { type: "duck", level: duckLevel },
-      { type: "duck", level: 1 },
-    ]);
-  });
-
-  it("does nothing when the voice is silent", () => {
-    const voice = barge(true);
-    voice.finishReply();
-    voice.send({ type: "vad", speaking: true });
-    voice.send({ type: "partial", text: "next question" });
-    expect(voice.effects).toEqual([]);
   });
 });
