@@ -1,14 +1,15 @@
 import type { OrchestrationV2ConversationMessage } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
+import * as Haptics from "expo-haptics";
 import { useEffect, useRef } from "react";
 
 import { voiceEngine } from "../../../modules/t3-voice-mode";
 import { uuidv4 } from "../../lib/uuid";
 import { appAtomRegistry } from "../../state/atom-registry";
-import { useEnvironmentThread } from "../../state/threads";
 import { DEFAULT_END_OF_TURN_CONFIG, sendCountdown } from "./endOfTurn";
 import { DEFAULT_BARGE_IN_CONFIG } from "./speechQueue";
+import { useVoiceThread } from "./useVoiceCall";
 import { ECHO_CANCELLATION, voiceEngineConfig } from "./voiceEngine";
 import { sendVoiceMessage, type VoiceSession } from "./voiceSession";
 import { useVoiceModeSettings } from "./voiceSettings";
@@ -78,7 +79,7 @@ export function retryVoiceEngine() {
 export function useVoiceSpeech(session: VoiceSession) {
   const { thread, muted } = session;
   const settings = useVoiceModeSettings();
-  const threadState = useEnvironmentThread(thread.environmentId, thread.threadId);
+  const threadState = useVoiceThread(session);
   const messages = Option.getOrNull(Option.map(threadState.data, (data) => data.messages));
   const inputs: VoiceSpeechInputs = {
     engineConfig: voiceEngineConfig(settings?.voiceId ?? "af_heart"),
@@ -115,6 +116,7 @@ export function useVoiceSpeech(session: VoiceSession) {
       now: Date.now,
       newMessageId: uuidv4,
       log: (line) => console.log(line),
+      onReady: () => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light),
       onChange: (state, config) => {
         remembered = { key, state };
         publish(state, config);

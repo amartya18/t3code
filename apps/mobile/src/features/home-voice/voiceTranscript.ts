@@ -18,7 +18,6 @@ export type TranscriptLine =
   | { readonly id: string; readonly kind: "homeReply" }
   | { readonly id: string; readonly kind: "homeNote"; readonly text: string };
 
-const CATCH_UP = "[Catch-up]";
 const HOME_UPDATE = "[Home update]";
 const HOME_REPLY = "Home replied:";
 
@@ -34,7 +33,6 @@ function lineFor(
     if (shown === undefined) return null;
     return { id: message.id, kind: "agent", text: shown.kind === "whole" ? text : shown.text };
   }
-  if (text.startsWith(CATCH_UP)) return null;
   if (text.startsWith(HOME_UPDATE)) {
     const note = text.slice(HOME_UPDATE.length).trim();
     return note.startsWith(HOME_REPLY)

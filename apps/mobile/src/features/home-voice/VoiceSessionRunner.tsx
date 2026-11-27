@@ -38,7 +38,7 @@ function SpokenVoiceSession(props: { readonly session: VoiceSession }) {
 
 /** Tags the voice thread and relays what changes at Home. */
 function LiveVoiceSession(props: { readonly session: VoiceSession }) {
-  const { thread, home } = props.session;
+  const { thread, home, threadCreated } = props.session;
   const voiceShell = useThreadShell(thread);
   const homeShell = useThreadShell(home);
   const homeState = useEnvironmentThread(home.environmentId, home.threadId);
@@ -56,8 +56,8 @@ function LiveVoiceSession(props: { readonly session: VoiceSession }) {
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Home's changes go out through the outbox
   useEffect(() => {
-    pushHomeUpdates(thread, view);
-  }, [thread, view]);
+    if (threadCreated) pushHomeUpdates(thread, view);
+  }, [thread, view, threadCreated]);
 
   return null;
 }

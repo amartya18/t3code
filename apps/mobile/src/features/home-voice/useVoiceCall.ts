@@ -4,8 +4,10 @@ import { useEffect, useState } from "react";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { useRetryEnvironment } from "../connection/useRetryEnvironment";
 import { useRemoteEnvironmentRuntime } from "../../state/use-remote-environment-registry";
+import { useEnvironmentThread } from "../../state/threads";
 import { useQueuedThreadMessages } from "../../state/use-thread-outbox";
 import { formatVoiceClock } from "./voiceClock";
+import type { VoiceSession } from "./voiceSession";
 
 /** The session's running time, updated once a second while shown. */
 export function useVoiceClock(startedAtMs: number): string {
@@ -28,4 +30,16 @@ export function useVoiceConnection(thread: ScopedThreadRef) {
     queued,
     retry: () => void retryEnvironment(thread.environmentId),
   };
+}
+
+/**
+ * The voice thread, empty until Amar's first line creates it. A thread read before it exists
+ * retries with a backoff of up to 30 s, which would hold up the first reply.
+ */
+export function useVoiceThread(session: VoiceSession) {
+  const { thread, threadCreated } = session;
+  return useEnvironmentThread(
+    threadCreated ? thread.environmentId : null,
+    threadCreated ? thread.threadId : null,
+  );
 }

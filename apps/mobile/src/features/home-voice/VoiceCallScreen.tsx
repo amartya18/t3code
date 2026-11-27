@@ -23,8 +23,7 @@ import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/
 import * as Dialog from "../../components/ui/Dialog";
 import { cn } from "../../lib/cn";
 import { serverEnvironment } from "../../state/server";
-import { useEnvironmentThread } from "../../state/threads";
-import { useVoiceConnection } from "./useVoiceCall";
+import { useVoiceConnection, useVoiceThread } from "./useVoiceCall";
 import {
   holdVoiceStage,
   retryVoiceEngine,
@@ -177,7 +176,7 @@ const FOLLOW_SLACK = 24;
 function VoiceTranscript(props: { readonly session: VoiceSession }) {
   const gt = useGT();
   const { thread } = props.session;
-  const state = useEnvironmentThread(thread.environmentId, thread.threadId);
+  const state = useVoiceThread(props.session);
   const connection = useVoiceConnection(thread);
   const speech = useAtomValue(voiceTranscriptSpeechAtom);
   const scroll = useRef<React.ComponentRef<typeof ScrollView>>(null);

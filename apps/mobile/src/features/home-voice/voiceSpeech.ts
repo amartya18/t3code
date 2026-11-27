@@ -170,6 +170,8 @@ export type VoiceSpeechEffect =
   | { readonly type: "speak"; readonly id: string; readonly text: string }
   | { readonly type: "stopSpeech"; readonly fadeMs: number }
   | { readonly type: "duck"; readonly level: number }
+  /** The mic just started hearing Amar: the call's only cue, since it opens silent. */
+  | { readonly type: "ready" }
   | { readonly type: "log"; readonly line: string };
 
 export interface VoiceSpeechStep {
@@ -296,7 +298,10 @@ function stepSpeech(
       return onModels(state, event);
     case "started":
       if (state.engine.kind !== "starting") return stay(state);
-      return speakReplies({ ...state, engine: { kind: "listening" } });
+      return then(
+        { state: { ...state, engine: { kind: "listening" } }, effects: [{ type: "ready" }] },
+        speakReplies,
+      );
     case "startFailed":
       if (state.engine.kind !== "starting" && state.engine.kind !== "checking") return stay(state);
       if (event.code === "permission_denied") return stay(withEngine(state, { kind: "micDenied" }));

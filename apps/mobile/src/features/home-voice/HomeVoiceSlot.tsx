@@ -5,7 +5,7 @@ import { useNavigation } from "@react-navigation/native";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import { useGT } from "gt-react-native";
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { Pressable, View } from "react-native";
 
 import * as Dialog from "../../components/ui/Dialog";
@@ -36,12 +36,11 @@ function HomeVoiceButton(props: {
   const gt = useGT();
   const navigation = useNavigation();
   const settings = useVoiceModeSettings();
-  const [starting, setStarting] = useState(false);
   const { scale } = useAndroidControlSizing();
   const circleSize = Math.round((props.large ? 44 : 30) * scale);
   const unavailable = settings === null;
 
-  const start = async () => {
+  const start = () => {
     if (settings === null) {
       Dialog.alert(
         gt("No Voice project"),
@@ -51,39 +50,24 @@ function HomeVoiceButton(props: {
       );
       return;
     }
-    if (starting) return;
-    if (appAtomRegistry.get(voiceSessionAtom) !== null) {
-      navigation.navigate("VoiceCall");
-      return;
-    }
-    setStarting(true);
-    const home = { environmentId: props.home.environmentId, threadId: props.home.id };
-    const homeState = AsyncResult.getOrElse(
-      appAtomRegistry.get(environmentThreads.stateAtom(home.environmentId, home.threadId)),
-      () => EMPTY_ENVIRONMENT_THREAD_STATE,
-    );
-    const started = await startVoiceSession({
-      settings,
-      home,
-      view: readHomeView({
-        homeShell: props.home,
-        homeMessages: Option.getOrNull(Option.map(homeState.data, (data) => data.messages)),
-        shells: appAtomRegistry.get(environmentThreadShells.threadShellsAtom),
-      }),
-      nowMs: Date.now(),
-    }).then(
-      (thread) => ({ thread }),
-      (error: unknown) => ({ error }),
-    );
-    setStarting(false);
-    if ("thread" in started) {
-      navigation.navigate("VoiceCall");
-    } else {
-      Dialog.alert(
-        gt("Could not start voice mode"),
-        started.error instanceof Error ? started.error.message : undefined,
+    if (appAtomRegistry.get(voiceSessionAtom) === null) {
+      const home = { environmentId: props.home.environmentId, threadId: props.home.id };
+      const homeState = AsyncResult.getOrElse(
+        appAtomRegistry.get(environmentThreads.stateAtom(home.environmentId, home.threadId)),
+        () => EMPTY_ENVIRONMENT_THREAD_STATE,
       );
+      startVoiceSession({
+        settings,
+        home,
+        view: readHomeView({
+          homeShell: props.home,
+          homeMessages: Option.getOrNull(Option.map(homeState.data, (data) => data.messages)),
+          shells: appAtomRegistry.get(environmentThreadShells.threadShellsAtom),
+        }),
+        nowMs: Date.now(),
+      });
     }
+    navigation.navigate("VoiceCall");
   };
 
   return (
@@ -92,11 +76,10 @@ function HomeVoiceButton(props: {
       accessibilityLabel={
         unavailable ? gt("Voice mode, no Voice project found") : gt("Start voice mode")
       }
-      accessibilityState={{ disabled: unavailable || starting }}
+      accessibilityState={{ disabled: unavailable }}
       className="size-[44px] shrink-0 items-center justify-center active:opacity-70"
       style={props.large ? { width: 62 } : undefined}
-      disabled={starting}
-      onPress={() => void start()}
+      onPress={start}
     >
       <View
         style={{ width: circleSize, height: circleSize }}

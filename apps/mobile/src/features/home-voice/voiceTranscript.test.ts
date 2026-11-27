@@ -6,13 +6,12 @@ const user = (id: string, text: string): TranscriptMessage => ({ id, role: "user
 const agent = (id: string, text: string): TranscriptMessage => ({ id, role: "assistant", text });
 
 describe("voiceTranscript", () => {
-  it("hides the catch-up and turns Home updates into notes", () => {
+  it("turns Home updates into notes", () => {
     expect(
       voiceTranscript(
         [
-          user("c", "[Catch-up] Home is idle."),
-          agent("g", "Hi. Home is idle."),
           user("u", "Ask Home about PR 43."),
+          agent("g", "I've asked Home."),
           user("h", "[Home update] Home replied: PR 43 merged."),
           user("f", '[Home update] "Fix relay" finished: done'),
           agent("s", "Home says PR 43 merged."),
@@ -21,8 +20,8 @@ describe("voiceTranscript", () => {
         null,
       ),
     ).toEqual([
-      { id: "g", kind: "agent", text: "Hi. Home is idle." },
       { id: "u", kind: "user", text: "Ask Home about PR 43." },
+      { id: "g", kind: "agent", text: "I've asked Home." },
       { id: "h", kind: "homeReply" },
       { id: "f", kind: "homeNote", text: '"Fix relay" finished: done' },
       { id: "s", kind: "agent", text: "Home says PR 43 merged." },

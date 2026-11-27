@@ -41,6 +41,7 @@ export function createVoiceSpeechDriver(options: {
   readonly now: () => number;
   readonly newMessageId: () => string;
   readonly log: (line: string) => void;
+  readonly onReady: () => void;
   readonly onChange: (state: VoiceSpeechState, config: VoiceSpeechConfig) => void;
 }): VoiceSpeechDriver {
   const { engine, now } = options;
@@ -161,6 +162,9 @@ export function createVoiceSpeechDriver(options: {
         return;
       case "duck":
         duck(effect.level);
+        return;
+      case "ready":
+        options.onReady();
         return;
       case "log":
         devLog(effect.line);

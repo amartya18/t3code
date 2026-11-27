@@ -59,6 +59,7 @@ function open(
     now,
     newMessageId: () => "m1",
     log: log ?? (() => {}),
+    onReady: () => {},
     onChange: () => {},
   });
 }

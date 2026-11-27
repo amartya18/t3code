@@ -54,6 +54,7 @@ function call(
     volume: 1,
     downloading: false,
     discarded: 0,
+    readyCues: 0,
     stops: [] as number[],
     synthesizing: [] as Array<{ id: string; text: string }>,
   };
@@ -115,6 +116,9 @@ function call(
         return;
       case "log":
         logs.push(effect.line);
+        return;
+      case "ready":
+        engine.readyCues += 1;
         return;
     }
   };
@@ -433,6 +437,17 @@ describe("voice speech", () => {
     expect(voice.state().engine.kind).toBe("listening");
     voice.playAll();
     expect(voice.played).toEqual(["Hi. Home is idle."]);
+  });
+
+  it("cues once when it starts listening, and not again after an interruption", () => {
+    const voice = call({ models: "missing" });
+    expect(voice.engine.readyCues).toBe(0);
+
+    voice.send({ type: "models", state: "ready", part: null, fraction: 1 });
+    expect(voice.engine.readyCues).toBe(1);
+    voice.send({ type: "interruption", phase: "began" });
+    voice.send({ type: "interruption", phase: "ended" });
+    expect(voice.engine.readyCues).toBe(1);
   });
 
   it("waits for microphone access", () => {
