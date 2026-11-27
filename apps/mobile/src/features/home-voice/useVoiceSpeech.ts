@@ -11,6 +11,7 @@ import { environmentProjects } from "../../state/projects";
 import { environmentThreadShells } from "../../state/threads";
 import { HOME_UPDATE } from "./homeUpdates";
 import { useVoiceThread } from "./useVoiceCall";
+import { playVoiceChime } from "./voiceChime";
 import { DEFAULT_VOICE_TUNING, voiceEngineConfig, voiceSpeechConfig } from "./voiceEngine";
 import { voiceDevLog } from "./voiceLogUpload";
 import { endVoiceSession, sendVoiceMessage, type VoiceSession } from "./voiceSession";
@@ -112,6 +113,7 @@ export function useVoiceSpeech(session: VoiceSession) {
       now: Date.now,
       newMessageId: uuidv4,
       log: voiceDevLog,
+      chime: playVoiceChime,
       onReady: () => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light),
       onHangUp: endVoiceSession,
       onChange: (state) => {

@@ -58,6 +58,7 @@ function open(
   now: () => number = () => 0,
   log: ((line: string) => void) | null = null,
   send: (text: string) => Promise<unknown> = async () => {},
+  overrides: Partial<Parameters<typeof createVoiceSpeechDriver>[0]> = {},
 ) {
   return createVoiceSpeechDriver({
     engine,
@@ -67,14 +68,16 @@ function open(
     now,
     newMessageId: () => "m1",
     log: log ?? (() => {}),
+    chime: async () => {},
     onReady: () => {},
     onHangUp: () => {},
     onChange: () => {},
+    ...overrides,
   });
 }
 
 const settle = async () => {
-  for (let turn = 0; turn < 10; turn++) await Promise.resolve();
+  for (let turn = 0; turn < 20; turn++) await Promise.resolve();
 };
 
 it("hanging up mid-speech stops the voice, and the next call starts only after the stop finishes", async () => {
@@ -279,4 +282,155 @@ it("in development, logs the tuning the engine starts with", async () => {
     "+0.000s [voice] tuning: threshold 0.5, min speech 250ms, silence before scoring 200ms, wait when not done 3000ms",
   );
   driver.dispose();
+});
+
+function listening(fake: ReturnType<typeof fakeEngine>) {
+  const listeners = new Map<string, (event: unknown) => void>();
+  const engine: VoiceEngine = {
+    ...fake.engine,
+    stop: async () => {
+      fake.calls.push("stop");
+    },
+    speak: async ({ id }) => {
+      fake.calls.push(`speak ${id}`);
+    },
+    addListener: (name, listener) => {
+      listeners.set(name, listener as (event: unknown) => void);
+      return { remove: () => {} };
+    },
+  };
+  const chime = async (sound: "start" | "end") => {
+    fake.calls.push(`chime ${sound}`);
+  };
+  return { engine, listeners, chime };
+}
+
+it("plays the start chime with the mic still off, then starts the engine", async () => {
+  const fake = fakeEngine();
+  const { engine, chime } = listening(fake);
+  const driver = open(
+    engine,
+    () => 0,
+    null,
+    async () => {},
+    { chime },
+  );
+  await settle();
+
+  expect(fake.calls.slice(0, 3)).toEqual(["stop", "chime start", "start"]);
+  driver.dispose();
+  await settle();
+});
+
+it("still starts the engine when the start chime fails", async () => {
+  const fake = fakeEngine();
+  const { engine } = listening(fake);
+  const driver = open(
+    engine,
+    () => 0,
+    null,
+    async () => {},
+    {
+      chime: () => Promise.reject(new Error("no audio")),
+    },
+  );
+  await settle();
+
+  expect(fake.calls).toContain("start");
+  driver.dispose();
+  await settle();
+});
+
+it("hanging up a live call plays the end chime once, after the engine has stopped", async () => {
+  const fake = fakeEngine();
+  const { engine, chime } = listening(fake);
+  const driver = open(
+    engine,
+    () => 0,
+    null,
+    async () => {},
+    { chime },
+  );
+  await settle();
+  fake.calls.splice(0);
+
+  driver.dispose();
+  await settle();
+  expect(fake.calls).toEqual(["stopSpeech", "stop", "chime end"]);
+});
+
+it("ending the call with [end call] plays the end chime once, after the goodbye has played", async () => {
+  const fake = fakeEngine();
+  const { engine, listeners, chime } = listening(fake);
+  let driver: ReturnType<typeof open> | null = null;
+  driver = open(
+    engine,
+    () => 0,
+    null,
+    async () => {},
+    {
+      chime,
+      onHangUp: () => driver?.dispose(),
+    },
+  );
+  await settle();
+  fake.calls.splice(0);
+
+  driver.dispatch({
+    type: "thread",
+    replies: [{ id: "r1", text: "Bye for now. [end call]", streaming: false }],
+    userMessageIds: new Set(),
+    lastLine: "bye",
+    atMs: 0,
+  });
+  await settle();
+  listeners.get("playback")!({ id: "r1:0", state: "started" });
+  listeners.get("playback")!({ id: "r1:0", state: "finished" });
+  await settle();
+
+  expect(fake.calls).toEqual(["speak r1:0", "stopSpeech", "stop", "chime end"]);
+});
+
+it("hanging up before the call is live plays no end chime", async () => {
+  const fake = fakeEngine();
+  const { engine, chime } = listening(fake);
+  open(
+    engine,
+    () => 0,
+    null,
+    async () => {},
+    { chime },
+  ).dispose();
+  await settle();
+
+  expect(fake.calls).not.toContain("chime end");
+  expect(fake.calls).not.toContain("start");
+});
+
+it("a failed end chime doesn't hold up hanging up or the next call", async () => {
+  const fake = fakeEngine();
+  const { engine } = listening(fake);
+  const failing = () => Promise.reject(new Error("no audio"));
+  const hungUp = open(
+    engine,
+    () => 0,
+    null,
+    async () => {},
+    { chime: failing },
+  );
+  await settle();
+  hungUp.dispose();
+  fake.calls.splice(0);
+
+  const next = open(
+    engine,
+    () => 0,
+    null,
+    async () => {},
+    { chime: failing },
+  );
+  await settle();
+  expect(fake.calls).toContain("start");
+  next.dispose();
+  await settle();
 });

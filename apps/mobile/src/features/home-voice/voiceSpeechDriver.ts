@@ -42,6 +42,8 @@ export function createVoiceSpeechDriver(options: {
   readonly now: () => number;
   readonly newMessageId: () => string;
   readonly log: (line: string) => void;
+  /** Plays a call chime while the engine holds no audio session. */
+  readonly chime: (sound: "start" | "end") => Promise<void>;
   readonly onReady: () => void;
   readonly onHangUp: () => void;
   readonly onChange: (state: VoiceSpeechState, config: VoiceSpeechConfig) => void;
@@ -58,6 +60,11 @@ export function createVoiceSpeechDriver(options: {
   let volume = 1;
   let ramp: ReturnType<typeof setInterval> | null = null;
   let disposed = false;
+  let wentLive = false;
+  const chime = (sound: "start" | "end") =>
+    options
+      .chime(sound)
+      .catch((error) => devLog(`[voice] ${sound} chime failed: ${String(error)}`));
 
   const duck = (level: number) => {
     if (ramp !== null) clearInterval(ramp);
@@ -122,7 +129,9 @@ export function createVoiceSpeechDriver(options: {
       case "start":
         stopping
           .then(() => engine.stop())
+          .then(() => chime("start"))
           .then(() => {
+            if (disposed) return;
             const { vad } = inputs.engineConfig;
             devLog(
               `[voice] tuning: threshold ${vad.threshold}, min speech ${vad.minSpeechMs}ms, ` +
@@ -132,6 +141,7 @@ export function createVoiceSpeechDriver(options: {
           })
           .then(
             () => {
+              if (disposed) return;
               engine
                 .setVocabulary(options.vocabulary)
                 .catch((error) => devLog(`[voice] word list failed: ${errorCode(error)}`));
@@ -199,6 +209,7 @@ export function createVoiceSpeechDriver(options: {
         duck(effect.level);
         return;
       case "ready":
+        wentLive = true;
         options.onReady();
         return;
       case "hangUp":
@@ -266,7 +277,8 @@ export function createVoiceSpeechDriver(options: {
       if (watchdog !== null) clearInterval(watchdog);
       for (const subscription of subscriptions) subscription.remove();
       engine.stopSpeech(0);
-      stopping = engine.stop().catch(() => {});
+      const stopped = engine.stop().catch(() => {});
+      stopping = wentLive ? stopped.then(() => chime("end")) : stopped;
     },
   };
 }
