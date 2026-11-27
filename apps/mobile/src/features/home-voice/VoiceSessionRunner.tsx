@@ -6,6 +6,7 @@ import { useThreadShell, useThreadShells } from "../../state/entities";
 import { useEnvironmentThread } from "../../state/threads";
 import { readHomeView } from "./homeView";
 import { useVoiceSpeech } from "./useVoiceSpeech";
+import { VoiceRenderProfiler } from "./voiceRenderProfiler";
 import { isVoiceEngineAvailable } from "./voiceEngine";
 import {
   ensureVoiceTag,
@@ -20,12 +21,12 @@ export function VoiceSessionRunner() {
   if (session === null) return null;
   const key = `${session.thread.environmentId}:${session.thread.threadId}`;
   return (
-    <>
+    <VoiceRenderProfiler id="voice-session">
       <LiveVoiceSession key={key} session={session} />
       {isVoiceEngineAvailable() ? (
         <SpokenVoiceSession key={`speech:${key}`} session={session} />
       ) : null}
-    </>
+    </VoiceRenderProfiler>
   );
 }
 

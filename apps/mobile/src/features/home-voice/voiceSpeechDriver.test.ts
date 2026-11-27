@@ -37,7 +37,11 @@ function fakeEngine() {
   return { engine, calls, finishStop: () => finishStop() };
 }
 
-function open(engine: VoiceEngine, now: () => number = () => 0) {
+function open(
+  engine: VoiceEngine,
+  now: () => number = () => 0,
+  log: ((line: string) => void) | null = null,
+) {
   return createVoiceSpeechDriver({
     engine,
     inputs: {
@@ -46,7 +50,7 @@ function open(engine: VoiceEngine, now: () => number = () => 0) {
         vad: { threshold: 0.5, minSpeechMs: 150, minSilenceMs: 300 },
         tts: { voiceId: "af_heart", speed: 1, vocoderFloat32: false },
         aec: { enabled: false },
-        logStages: false,
+        logStages: log !== null,
       },
       config: DEFAULT_VOICE_SPEECH_CONFIG,
       send: async () => {},
@@ -54,7 +58,7 @@ function open(engine: VoiceEngine, now: () => number = () => 0) {
     previous: null,
     now,
     newMessageId: () => "m1",
-    log: () => {},
+    log: log ?? (() => {}),
     onChange: () => {},
   });
 }
@@ -146,4 +150,25 @@ it("counts the pause from when the engine heard his voice end, not when JS got t
   expect(finalized).toBe(1);
 
   driver.dispose();
+});
+
+it("in development, logs a blocked JS thread with the voice step just before it", () => {
+  vi.useFakeTimers();
+  let clock = 0;
+  const logs: string[] = [];
+  const driver = open(
+    { ...fakeEngine().engine, stop: async () => {} },
+    () => clock,
+    (line) => {
+      logs.push(line);
+    },
+  );
+  driver.dispatch({ type: "tap", atMs: clock });
+
+  clock = 1_600;
+  vi.advanceTimersByTime(100);
+  expect(logs).toContain("[voice] js blocked 1500ms, 100ms after tap");
+
+  driver.dispose();
+  vi.useRealTimers();
 });

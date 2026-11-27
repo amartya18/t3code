@@ -13,6 +13,9 @@ const TICK_MS = 100;
 /** The engine only sets a volume, so a duck steps there instead of jumping. */
 const DUCK_STEPS = 4;
 const DUCK_STEP_MS = 20;
+/** Dev logs: a JS block this long is logged with the voice step that came just before it. */
+const STALL_CHECK_MS = 100;
+const STALL_LOG_MS = 250;
 
 // A hung-up session's stop must finish before the next session starts: native start does not wait for it.
 let stopping: Promise<unknown> = Promise.resolve();
@@ -42,6 +45,10 @@ export function createVoiceSpeechDriver(options: {
 }): VoiceSpeechDriver {
   const { engine, now } = options;
   let inputs = options.inputs;
+  const devLog = (line: string) => {
+    if (inputs.engineConfig.logStages) options.log(line);
+  };
+  let lastStep = { name: "open", atMs: now() };
   let state: VoiceSpeechState;
   let ticker: ReturnType<typeof setInterval> | null = null;
   let volume = 1;
@@ -67,6 +74,7 @@ export function createVoiceSpeechDriver(options: {
 
   const dispatch = (event: VoiceSpeechEvent) => {
     if (disposed) return;
+    if (event.type !== "tick") lastStep = { name: event.type, atMs: now() };
     apply(stepVoiceSpeech(state, event, inputs.config));
   };
 
@@ -85,6 +93,7 @@ export function createVoiceSpeechDriver(options: {
   };
 
   const run = (effect: VoiceSpeechEffect) => {
+    if (effect.type !== "log") lastStep = { name: effect.type, atMs: now() };
     switch (effect.type) {
       case "checkModels":
         void engine
@@ -131,10 +140,12 @@ export function createVoiceSpeechDriver(options: {
         return;
       case "send": {
         const { messageId } = effect;
+        const startedAt = now();
         inputs.send(effect.text, messageId).then(
           () => dispatch({ type: "sent", ok: true, messageId, atMs: now() }),
           () => dispatch({ type: "sent", ok: false, messageId, atMs: now() }),
         );
+        devLog(`[voice] send ran ${Math.round(now() - startedAt)}ms before returning`);
         return;
       }
       case "speak":
@@ -152,7 +163,7 @@ export function createVoiceSpeechDriver(options: {
         duck(effect.level);
         return;
       case "log":
-        if (inputs.engineConfig.logStages) options.log(effect.line);
+        devLog(effect.line);
         return;
     }
   };
@@ -175,13 +186,24 @@ export function createVoiceSpeechDriver(options: {
     engine.addListener("interruption", (event) =>
       dispatch({ type: "interruption", phase: event.phase }),
     ),
-    engine.addListener("stage", (event) => {
-      if (inputs.engineConfig.logStages) options.log(`[voice] stage ${event.name}`);
-    }),
+    engine.addListener("stage", (event) => devLog(`[voice] stage ${event.name}`)),
     engine.addListener("error", (event) =>
       dispatch({ type: "error", code: event.code, message: event.message }),
     ),
   ];
+
+  let due = now() + STALL_CHECK_MS;
+  const watchdog = inputs.engineConfig.logStages
+    ? setInterval(() => {
+        const at = now();
+        const late = at - due;
+        if (late > STALL_LOG_MS) {
+          const after = Math.max(0, Math.round(due - lastStep.atMs));
+          devLog(`[voice] js blocked ${Math.round(late)}ms, ${after}ms after ${lastStep.name}`);
+        }
+        due = at + STALL_CHECK_MS;
+      }, STALL_CHECK_MS)
+    : null;
 
   const opened = openVoiceSpeech(options.previous);
   state = opened.state;
@@ -203,6 +225,7 @@ export function createVoiceSpeechDriver(options: {
       disposed = true;
       if (ticker !== null) clearInterval(ticker);
       if (ramp !== null) clearInterval(ramp);
+      if (watchdog !== null) clearInterval(watchdog);
       for (const subscription of subscriptions) subscription.remove();
       engine.stopSpeech(0);
       stopping = engine.stop().catch(() => {});
