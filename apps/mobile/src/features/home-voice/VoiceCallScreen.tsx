@@ -1,9 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
 import * as Option from "effect/Option";
-import * as Haptics from "expo-haptics";
 import { useGT } from "gt-react-native";
-import { memo, useEffect, useRef, useState, type ReactNode } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import {
   Linking,
   Pressable,
@@ -31,7 +30,6 @@ import { serverEnvironment } from "../../state/server";
 import { callGlow, callWaveHeights } from "./callWave";
 import { useVoiceConnection, useVoiceThread } from "./useVoiceCall";
 import {
-  holdVoiceStage,
   retryVoiceEngine,
   voiceSpeechAtom,
   voiceTranscriptSpeechAtom,
@@ -116,9 +114,7 @@ function CallControls(props: { readonly muted: boolean; readonly paddingBottom: 
       <CallGlow wave={wave} />
       <View className="flex-row items-center justify-between px-7">
         <MuteButton muted={props.muted} size={58} />
-        <HoldToWait>
-          <MicWaveform heights={CALL_WAVE} wave={wave} dot={3} />
-        </HoldToWait>
+        <MicWaveform heights={CALL_WAVE} wave={wave} dot={3} />
         <HangUpButton size={58} />
       </View>
     </View>
@@ -175,33 +171,6 @@ function HiddenThreadNotice(props: {
         type="monochrome"
       />
       <Text className="text-xs text-warning-foreground">{gt("Voice thread not hidden")}</Text>
-    </Pressable>
-  );
-}
-
-/** On the wave, not the transcript, so a long press there can't hijack a scroll. */
-function HoldToWait(props: { readonly children: ReactNode }) {
-  const gt = useGT();
-  const holding = useRef(false);
-  if (VOICE_ENGINE_SUPPORT !== "available") return props.children;
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={gt("Press and hold to keep waiting")}
-      hitSlop={14}
-      delayLongPress={350}
-      onLongPress={() => {
-        holding.current = true;
-        void Haptics.selectionAsync();
-        holdVoiceStage(true);
-      }}
-      onPressOut={() => {
-        if (!holding.current) return;
-        holding.current = false;
-        holdVoiceStage(false);
-      }}
-    >
-      {props.children}
     </Pressable>
   );
 }
@@ -283,7 +252,6 @@ function VoiceTranscript(props: { readonly session: VoiceSession }) {
               newest={index === lines.length - 1}
             />
           ))}
-          <LiveWords />
         </LayoutAnimationConfig>
       </ScrollView>
       <View className="gap-1 px-6">
@@ -306,22 +274,6 @@ function VoiceTranscript(props: { readonly session: VoiceSession }) {
         ) : null}
       </View>
     </>
-  );
-}
-
-/** Amar's words while he talks; the only part that changes on every partial. */
-function LiveWords() {
-  const words = useAtomValue(voiceSpeechAtom)?.current ?? null;
-  if (words === null) return null;
-  return (
-    <Animated.View
-      entering={ROW_ENTERING}
-      layout={ROW_LAYOUT}
-      className="self-end"
-      style={{ maxWidth: "80%" }}
-    >
-      <Text className="text-base text-right text-foreground-muted">{words}</Text>
-    </Animated.View>
   );
 }
 
@@ -399,9 +351,8 @@ const TranscriptRow = memo(function TranscriptRow(props: {
   readonly text: string;
   readonly newest: boolean;
 }) {
-  // His lines take over from his live words in place, so only the others fade in.
   return (
-    <Animated.View entering={props.kind === "user" ? undefined : ROW_ENTERING} layout={ROW_LAYOUT}>
+    <Animated.View entering={ROW_ENTERING} layout={ROW_LAYOUT}>
       <TranscriptLineText {...props} />
     </Animated.View>
   );

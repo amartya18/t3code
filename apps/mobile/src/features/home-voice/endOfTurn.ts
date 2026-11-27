@@ -1,204 +1,258 @@
-export interface EndOfTurnConfig {
-  readonly pauseMs: number;
-  readonly floorMs: number;
-  /** The longest a held pause waits before it sends anyway. */
-  readonly ceilingMs: number;
-  readonly earlySend: boolean;
-  /** How late the VAD reports that speech ended; pauses count from the real end. */
-  readonly vadEndLagMs: number;
+/** Smart Turn's score at or above which a pause ends Amar's turn at once. */
+export const TURN_DONE_PROBABILITY = 0.5;
+/** How long a pause Smart Turn calls unfinished waits for more speech before the turn ends anyway. */
+export const UNFINISHED_WAIT_MS = 2_000;
+/** Audio kept from before the detector's speech start, so his first word is whole. */
+export const PRE_ROLL_MS = 400;
+
+/** What Parakeet heard in one piece of a turn. */
+export interface Heard {
+  readonly text: string;
+  /** A fresh id; a turn is sent under its last piece's. */
+  readonly messageId: string;
 }
 
-export const DEFAULT_END_OF_TURN_CONFIG: EndOfTurnConfig = {
-  pauseMs: 3_000,
-  floorMs: 500,
-  ceilingMs: 10_000,
-  earlySend: true,
-  vadEndLagMs: 0,
-};
-
-export type FinalizeReason = "pause" | "ceiling" | "early";
-
-interface Utterance {
-  readonly transcript: string;
-  readonly touching: boolean;
-  /** Parakeet called the current transcript a finished utterance. */
-  readonly eou: boolean;
+/** A stretch of the turn's audio, from `fromMs` to the next piece's start or the turn's end. */
+interface Piece {
+  readonly fromMs: number;
+  readonly heard: Heard | null;
 }
 
-export type EndOfTurnState =
+/** Engine times, which go back to `turnScore` and `transcribe` as they came. */
+interface Speech {
+  readonly startMs: number;
+  /** Where the next piece starts: the pre-roll before his first word, then each cut. */
+  readonly cutMs: number;
+  readonly pieces: ReadonlyArray<Piece>;
+}
+
+type LiveTurn =
   | { readonly kind: "idle" }
   | { readonly kind: "muted" }
-  | ({ readonly kind: "speaking" } & Utterance)
+  | ({ readonly kind: "speaking" } & Speech)
   | ({
       readonly kind: "paused";
-      readonly since: number;
-      readonly voice: PauseVoice;
-    } & Utterance)
-  | { readonly kind: "finalizing"; readonly reason: FinalizeReason };
+      readonly endMs: number;
+      /** When JS heard his speech end; the wait counts from here. */
+      readonly endedAtMs: number;
+      /** Smart Turn's score, null until it answers; a pause still open scored below done. */
+      readonly probability: number | null;
+    } & Speech);
 
-export type EndOfTurnEvent =
-  | { readonly type: "vad"; readonly speaking: boolean; readonly atMs: number }
-  | { readonly type: "partial"; readonly text: string; readonly atMs: number }
-  | { readonly type: "eou"; readonly text: string; readonly atMs: number }
+interface DecidedTurn {
+  readonly turn: number;
+  readonly pieces: ReadonlyArray<Piece>;
+}
+
+export interface TurnState {
+  readonly live: LiveTurn;
+  /** Ended turns, oldest first, until all their pieces are transcribed. */
+  readonly decided: ReadonlyArray<DecidedTurn>;
+  /** Turns decided this session. */
+  readonly count: number;
+}
+
+export type TurnEvent =
+  | {
+      readonly type: "vad";
+      readonly speaking: boolean;
+      /** Engine time his speech really started or ended. */
+      readonly speechMs: number;
+      readonly atMs: number;
+    }
+  | {
+      readonly type: "scored";
+      readonly toMs: number;
+      readonly probability: number;
+      readonly atMs: number;
+    }
+  | {
+      readonly type: "transcribed";
+      readonly fromMs: number;
+      readonly text: string;
+      readonly messageId: string;
+      readonly atMs: number;
+    }
   | { readonly type: "tick"; readonly atMs: number }
-  | { readonly type: "holdStart"; readonly atMs: number }
-  | { readonly type: "holdEnd"; readonly atMs: number }
   | { readonly type: "muted"; readonly muted: boolean; readonly atMs: number };
 
-export type EndOfTurnEffect = { readonly type: "finalize"; readonly reason: FinalizeReason };
+export type TurnEffect =
+  | { readonly type: "scoreTurn"; readonly fromMs: number; readonly toMs: number }
+  | { readonly type: "transcribe"; readonly fromMs: number; readonly toMs: number }
+  | {
+      readonly type: "decided";
+      readonly turn: number;
+      readonly endedAtMs: number;
+      readonly probability: number | null;
+      readonly waited: boolean;
+    }
+  /** Every piece of the turn is transcribed; `text` is empty when no words came of it. */
+  | {
+      readonly type: "heard";
+      readonly turn: number;
+      readonly text: string;
+      readonly messageId: string;
+    };
 
-export interface EndOfTurnStep {
-  readonly state: EndOfTurnState;
-  readonly effects: ReadonlyArray<EndOfTurnEffect>;
+export interface TurnStep {
+  readonly state: TurnState;
+  readonly effects: ReadonlyArray<TurnEffect>;
 }
+
+const IDLE: LiveTurn = { kind: "idle" };
+const MUTED: LiveTurn = { kind: "muted" };
+
+export const INITIAL_TURN_STATE: TurnState = { live: IDLE, decided: [], count: 0 };
 
 /**
- * A voice heard in the pause before its words are known. Parakeet decodes in 320 ms chunks, so the
- * words for a voice arrive up to `WORDS_LAG_MS` after it ends; a voice without words is noise.
+ * Silero starts a turn; at each end of speech Smart Turn judges it. Done ends the turn; unfinished
+ * transcribes the piece so far and waits for more speech, ending the turn anyway after the wait.
  */
-type PauseVoice =
-  | { readonly kind: "quiet" }
-  | { readonly kind: "voiced" }
-  | { readonly kind: "ended"; readonly atMs: number };
-
-export const WORDS_LAG_MS = 400;
-
-export const INITIAL_END_OF_TURN_STATE: EndOfTurnState = { kind: "idle" };
-
-const TRAILING_FILLER = /\b(?:and|so|um+|uh+|but|because)[\s,.…-]*$/i;
-const TRAILING_HOLD = /\b(?:hang|hold) on[\s,.…!-]*$/i;
-
-const NEW_UTTERANCE: Utterance = { transcript: "", touching: false, eou: false };
-
-export function stepEndOfTurn(
-  state: EndOfTurnState,
-  event: EndOfTurnEvent,
-  config: EndOfTurnConfig = DEFAULT_END_OF_TURN_CONFIG,
-): EndOfTurnStep {
-  if (event.type === "muted") {
-    return stay(
-      event.muted ? { kind: "muted" } : state.kind === "muted" ? { kind: "idle" } : state,
-    );
-  }
-  switch (state.kind) {
+export function stepTurn(state: TurnState, event: TurnEvent): TurnStep {
+  switch (event.type) {
     case "muted":
-      return stay(state);
-    case "idle":
-    case "finalizing":
-      if (event.type === "vad" && event.speaking) {
-        return stay({ kind: "speaking", ...NEW_UTTERANCE });
-      }
-      if (state.kind === "idle" && (event.type === "partial" || event.type === "eou")) {
-        return stay({ kind: "speaking", ...heard(NEW_UTTERANCE, event) });
-      }
-      return stay(state);
-    case "speaking":
-      switch (event.type) {
-        case "vad":
-          return event.speaking
-            ? stay(state)
-            : decide(
-                {
-                  ...state,
-                  kind: "paused",
-                  since: event.atMs - config.vadEndLagMs,
-                  voice: { kind: "quiet" },
-                },
-                event.atMs,
-                config,
-              );
-        case "partial":
-        case "eou":
-          return stay({ ...state, ...heard(state, event) });
-        case "holdStart":
-        case "holdEnd":
-          return stay({ ...state, touching: event.type === "holdStart" });
-        case "tick":
-          return stay(state);
-      }
-    case "paused":
-      switch (event.type) {
-        case "vad":
-          if (event.speaking) return stay({ ...state, voice: { kind: "voiced" } });
-          return state.voice.kind === "voiced"
-            ? decide({ ...state, voice: { kind: "ended", atMs: event.atMs } }, event.atMs, config)
-            : stay(state);
-        case "partial":
-        case "eou": {
-          const utterance = heard(state, event);
-          if (utterance.transcript === state.transcript || state.voice.kind === "quiet") {
-            return decide({ ...state, ...utterance }, event.atMs, config);
-          }
-          if (state.voice.kind === "voiced") {
-            return stay({
-              kind: "speaking",
-              transcript: utterance.transcript,
-              touching: state.touching,
-              eou: utterance.eou,
-            });
-          }
-          return decide(
-            {
-              ...state,
-              ...utterance,
-              since: state.voice.atMs - config.vadEndLagMs,
-              voice: { kind: "quiet" },
-            },
-            event.atMs,
-            config,
-          );
-        }
-        case "holdStart":
-          return stay({ ...state, touching: true });
-        case "holdEnd":
-          return decide({ ...state, touching: false, since: event.atMs }, event.atMs, config);
-        case "tick":
-          return decide(state, event.atMs, config);
-      }
+      if (event.muted) return stay({ ...state, live: MUTED });
+      return state.live.kind === "muted" ? stay({ ...state, live: IDLE }) : stay(state);
+    case "vad":
+      return onVad(state, event);
+    case "scored":
+      return onScored(state, event);
+    case "transcribed":
+      return onTranscribed(state, event);
+    case "tick":
+      return state.live.kind === "paused" && event.atMs - state.live.endedAtMs >= UNFINISHED_WAIT_MS
+        ? decide(state, state.live, true)
+        : stay(state);
   }
 }
 
-function heard(utterance: Utterance, event: { type: "partial" | "eou"; text: string }): Utterance {
-  const transcript = event.text.trim() === "" ? utterance.transcript : event.text;
+/** Amar's turn is on, or ended without its words known yet. */
+export function isTurnOpen(state: TurnState): boolean {
+  return state.live.kind === "speaking" || state.live.kind === "paused" || state.decided.length > 0;
+}
+
+/** Drops the turn in progress; ended turns still finish. */
+export function dropLiveTurn(state: TurnState): TurnState {
+  return state.live.kind === "speaking" || state.live.kind === "paused"
+    ? { ...state, live: IDLE }
+    : state;
+}
+
+function onVad(state: TurnState, event: Extract<TurnEvent, { type: "vad" }>): TurnStep {
+  const { live } = state;
+  if (event.speaking) {
+    if (live.kind === "idle") {
+      const speech = { startMs: event.speechMs, cutMs: event.speechMs - PRE_ROLL_MS, pieces: [] };
+      return stay({ ...state, live: { kind: "speaking", ...speech } });
+    }
+    if (live.kind !== "paused") return stay(state);
+    const { startMs, cutMs, pieces } = live;
+    return stay({ ...state, live: { kind: "speaking", startMs, cutMs, pieces } });
+  }
+  if (live.kind !== "speaking") return stay(state);
   return {
-    ...utterance,
-    transcript,
-    eou: event.type === "eou" || (utterance.eou && transcript === utterance.transcript),
+    state: {
+      ...state,
+      live: {
+        ...live,
+        kind: "paused",
+        endMs: event.speechMs,
+        endedAtMs: event.atMs,
+        probability: null,
+      },
+    },
+    effects: [{ type: "scoreTurn", fromMs: live.startMs, toMs: event.speechMs }],
   };
 }
 
-function isHeld(state: Utterance): boolean {
-  return state.touching || TRAILING_HOLD.test(state.transcript);
+function onScored(state: TurnState, event: Extract<TurnEvent, { type: "scored" }>): TurnStep {
+  const { live } = state;
+  if (live.kind !== "paused" || live.probability !== null || live.endMs !== event.toMs) {
+    return stay(state);
+  }
+  const scored = { ...live, probability: event.probability };
+  if (event.probability >= TURN_DONE_PROBABILITY) return decide(state, scored, false);
+  return {
+    state: {
+      ...state,
+      live: {
+        ...scored,
+        cutMs: live.endMs,
+        pieces: [...live.pieces, { fromMs: live.cutMs, heard: null }],
+      },
+    },
+    effects: [{ type: "transcribe", fromMs: live.cutMs, toMs: live.endMs }],
+  };
 }
 
 function decide(
-  state: Extract<EndOfTurnState, { kind: "paused" }>,
-  atMs: number,
-  config: EndOfTurnConfig,
-): EndOfTurnStep {
-  const silentMs = atMs - state.since;
-  const wordsMayFollow =
-    state.voice.kind === "voiced" ||
-    (state.voice.kind === "ended" && atMs - state.voice.atMs < WORDS_LAG_MS);
-  if (isHeld(state) || wordsMayFollow) {
-    return silentMs >= config.ceilingMs ? finalize(state, "ceiling") : stay(state);
-  }
-  if (
-    config.earlySend &&
-    state.eou &&
-    silentMs >= config.floorMs &&
-    !TRAILING_FILLER.test(state.transcript)
-  ) {
-    return finalize(state, "early");
-  }
-  return silentMs >= config.pauseMs ? finalize(state, "pause") : stay(state);
+  state: TurnState,
+  live: Extract<LiveTurn, { kind: "paused" }>,
+  waited: boolean,
+): TurnStep {
+  const rest = live.cutMs < live.endMs;
+  const turn = state.count + 1;
+  const pieces = rest ? [...live.pieces, { fromMs: live.cutMs, heard: null }] : live.pieces;
+  const settled = settle({
+    live: IDLE,
+    decided: [...state.decided, { turn, pieces }],
+    count: turn,
+  });
+  return {
+    state: settled.state,
+    effects: [
+      {
+        type: "decided",
+        turn,
+        endedAtMs: live.endedAtMs,
+        probability: live.probability,
+        waited,
+      },
+      ...(rest ? [{ type: "transcribe", fromMs: live.cutMs, toMs: live.endMs } as const] : []),
+      ...settled.effects,
+    ],
+  };
 }
 
-function finalize(state: Utterance, reason: FinalizeReason): EndOfTurnStep {
-  if (state.transcript.trim() === "") return stay({ kind: "idle" });
-  return { state: { kind: "finalizing", reason }, effects: [{ type: "finalize", reason }] };
+function onTranscribed(
+  state: TurnState,
+  event: Extract<TurnEvent, { type: "transcribed" }>,
+): TurnStep {
+  const heard = { text: event.text, messageId: event.messageId };
+  const fill = (pieces: ReadonlyArray<Piece>) =>
+    pieces.some((piece) => piece.fromMs === event.fromMs && piece.heard === null)
+      ? pieces.map((piece) => (piece.fromMs === event.fromMs ? { ...piece, heard } : piece))
+      : pieces;
+  const { live } = state;
+  if ((live.kind === "speaking" || live.kind === "paused") && fill(live.pieces) !== live.pieces) {
+    return stay({ ...state, live: { ...live, pieces: fill(live.pieces) } });
+  }
+  const index = state.decided.findIndex((turn) => fill(turn.pieces) !== turn.pieces);
+  if (index === -1) return stay(state);
+  const decided = state.decided.map((turn, at) =>
+    at === index ? { ...turn, pieces: fill(turn.pieces) } : turn,
+  );
+  return settle({ ...state, decided });
 }
 
-function stay(state: EndOfTurnState): EndOfTurnStep {
+/** Hands on each ended turn, in order, once every piece of it is transcribed. */
+function settle(state: TurnState): TurnStep {
+  const effects: TurnEffect[] = [];
+  let decided = state.decided;
+  for (const turn of state.decided) {
+    const heard = turn.pieces.flatMap((piece) => (piece.heard === null ? [] : [piece.heard]));
+    const last = heard.at(-1);
+    if (heard.length < turn.pieces.length || last === undefined) break;
+    const text = heard
+      .map((piece) => piece.text.trim())
+      .filter((piece) => piece !== "")
+      .join(" ");
+    effects.push({ type: "heard", turn: turn.turn, text, messageId: last.messageId });
+    decided = decided.slice(1);
+  }
+  return { state: decided === state.decided ? state : { ...state, decided }, effects };
+}
+
+function stay(state: TurnState): TurnStep {
   return { state, effects: [] };
 }

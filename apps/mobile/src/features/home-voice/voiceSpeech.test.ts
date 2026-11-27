@@ -1,11 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { speechChunks } from "./speakable";
-import type { BargeInConfig } from "./speechQueue";
 import {
-  DEFAULT_VOICE_SPEECH_CONFIG,
   isHearing,
-  liveWords,
   needsTicks,
   openVoiceSpeech,
   stepVoiceSpeech,
@@ -27,10 +24,14 @@ const ONE = "Sure, I am checking on that.";
 const TWO = "Home is working through the queue.";
 const THREE = "It has three threads running right now.";
 
-const TIMER_ONLY: VoiceSpeechConfig = {
-  ...DEFAULT_VOICE_SPEECH_CONFIG,
-  endOfTurn: { ...DEFAULT_VOICE_SPEECH_CONFIG.endOfTurn, earlySend: false },
+const CONFIG: VoiceSpeechConfig = {
+  vad: { minSpeechMs: 250, minSilenceMs: 200 },
+  voiceBargeIn: true,
 };
+const { minSpeechMs, minSilenceMs } = CONFIG.vad;
+
+/** The engine keeps its own clock; times it reports must come back to it unchanged. */
+const ENGINE_CLOCK_AHEAD_MS = 7_000_000;
 
 /**
  * The speech state machine wired to a fake engine on a fake clock. Engine replies queue up
@@ -44,7 +45,8 @@ function call(
     readonly config?: VoiceSpeechConfig;
   } = {},
 ) {
-  let now = 0;
+  let now = 1_000;
+  const engineNow = () => now + ENGINE_CLOCK_AHEAD_MS;
   let state: VoiceSpeechState;
   let replies: AgentReply[] = [];
   let ids = 0;
@@ -56,20 +58,34 @@ function call(
     held: [] as Array<{ messageId: string; text: string }>,
   };
   const answers: Array<() => void> = [];
+  const lateTranscripts: Array<() => void> = [];
+  let talking: { readonly fromMs: number; readonly text: string } | null = null;
   const engine = {
-    transcript: "",
     muted: false,
     volume: 1,
     downloading: false,
-    discarded: 0,
     readyCues: 0,
     hangUps: 0,
     stops: [] as number[],
     synthesizing: [] as Array<{ id: string; text: string }>,
+    /** What the mic heard of Amar, on the engine's clock. */
+    audio: [] as Array<{ fromMs: number; toMs: number; text: string }>,
+    /** The ranges Parakeet was asked to transcribe. */
+    transcribed: [] as Array<readonly [number, number]>,
+    /** Smart Turn's score for the words of the turn so far. */
+    smartTurn: (_words: string) => 0.9,
+    /** Parakeet answers only when the test lets its transcripts arrive. */
+    slowParakeet: false,
   };
   const sent: string[] = [];
   const played: string[] = [];
   const logs: string[] = [];
+
+  const wordsBetween = (fromMs: number, toMs: number) =>
+    engine.audio
+      .filter((speech) => speech.fromMs >= fromMs && speech.fromMs < toMs)
+      .map((speech) => speech.text)
+      .join(" ");
 
   const run = (effect: VoiceSpeechEffect) => {
     switch (effect.type) {
@@ -91,17 +107,20 @@ function call(
       case "setMuted":
         engine.muted = effect.muted;
         return;
-      case "finalize": {
-        const text = engine.transcript;
-        engine.transcript = "";
-        const messageId = `m${++ids}`;
-        answers.push(() => send({ type: "finalized", text, messageId }));
+      case "scoreTurn": {
+        const probability = engine.smartTurn(wordsBetween(effect.fromMs, effect.toMs));
+        answers.push(() => send({ type: "scored", toMs: effect.toMs, probability }));
         return;
       }
-      case "discardTranscript":
-        engine.transcript = "";
-        engine.discarded += 1;
+      case "transcribe": {
+        const { fromMs, toMs } = effect;
+        engine.transcribed.push([fromMs, toMs]);
+        const messageId = `m${++ids}`;
+        const answer = () =>
+          send({ type: "transcribed", fromMs, text: wordsBetween(fromMs, toMs), messageId });
+        (engine.slowParakeet ? lateTranscripts : answers).push(answer);
         return;
+      }
       case "send":
         sent.push(effect.text);
         if (thread.delivering) land(effect.messageId, effect.text);
@@ -142,16 +161,21 @@ function call(
 
   const send = (input: Input) => {
     apply(
-      stepVoiceSpeech(
-        state,
-        { ...input, atMs: now } as VoiceSpeechEvent,
-        options.config ?? TIMER_ONLY,
-      ),
+      stepVoiceSpeech(state, { ...input, atMs: now } as VoiceSpeechEvent, options.config ?? CONFIG),
     );
   };
 
   const settle = () => {
     while (answers.length > 0) answers.shift()!();
+  };
+
+  /** Advances the clock, ticking every 100 ms only while the machine asks for ticks. */
+  const wait = (ms: number) => {
+    for (let elapsed = 0; elapsed < ms; elapsed += 100) {
+      now += Math.min(100, ms - elapsed);
+      if (needsTicks(state)) send({ type: "tick" });
+      settle();
+    }
   };
 
   const land = (messageId: string, text: string) => {
@@ -167,6 +191,28 @@ function call(
       lastLine: thread.lines.at(-1) ?? null,
     });
 
+  /** He starts talking now; the detector reports it once the voice has held long enough. */
+  const startTalking = (text: string) => {
+    const fromMs = engineNow();
+    talking = { fromMs, text };
+    wait(minSpeechMs);
+    send({ type: "vad", speaking: true, speechMs: fromMs });
+    settle();
+    return fromMs;
+  };
+
+  /** He stops now; the detector reports it once the silence has held long enough. */
+  const stopTalking = () => {
+    const speech = talking!;
+    talking = null;
+    const toMs = engineNow();
+    engine.audio.push({ fromMs: speech.fromMs, toMs, text: speech.text });
+    wait(minSilenceMs);
+    send({ type: "vad", speaking: false, speechMs: toMs });
+    settle();
+    return toMs;
+  };
+
   apply(openVoiceSpeech(options.previous ?? null));
   settle();
 
@@ -180,23 +226,18 @@ function call(
       send(input);
       settle();
     },
-    say(text: string) {
-      if (state.turn.kind !== "speaking") send({ type: "vad", speaking: true });
-      engine.transcript = text;
-      send({ type: "partial", text });
-      settle();
+    wait,
+    startTalking,
+    stopTalking,
+    /** He says `text` for `ms`; returns when the speech really started and ended, on the engine's clock. */
+    talk(text: string, ms = 800) {
+      const fromMs = startTalking(text);
+      wait(ms - minSpeechMs);
+      return { fromMs, toMs: stopTalking() };
     },
-    stopTalking() {
-      send({ type: "vad", speaking: false });
+    transcriptsArrive() {
+      for (const answer of lateTranscripts.splice(0)) answer();
       settle();
-    },
-    /** Advances the clock in 100 ms steps, ticking only while the machine asks for ticks. */
-    wait(ms: number) {
-      for (let elapsed = 0; elapsed < ms; elapsed += 100) {
-        now += 100;
-        if (needsTicks(state)) send({ type: "tick" });
-        settle();
-      }
     },
     reply(id: string, text: string, streaming = false) {
       replies = [...replies.filter((reply) => reply.id !== id), { id, text, streaming }];
@@ -218,6 +259,11 @@ function call(
       threadChanged();
       settle();
     },
+    /** Starts the oldest sentence the engine was handed. */
+    startNext() {
+      send({ type: "playback", id: engine.synthesizing[0]!.id, state: "started" });
+      settle();
+    },
     /** Plays the oldest sentence the engine was handed, start to finish. */
     playNext() {
       const item = engine.synthesizing.shift();
@@ -233,67 +279,101 @@ function call(
   };
 }
 
-describe("voice speech", () => {
-  it("sends a spoken turn after the pause and logs its latency through the first audio", () => {
+describe("his turn", () => {
+  it("sends as soon as Smart Turn calls it done, and logs its latency through the first audio", () => {
     const voice = call();
     expect(voice.state().engine.kind).toBe("listening");
 
-    voice.say("what is home doing");
-    voice.stopTalking();
-    voice.wait(2_900);
-    expect(voice.sent).toEqual([]);
-    expect(liveWords(voice.state())).toBe("what is home doing");
-
-    voice.engine.transcript = "What is Home doing?";
-    voice.wait(100);
+    const speech = voice.talk("What is Home doing?");
     expect(voice.sent).toEqual(["What is Home doing?"]);
-    expect(liveWords(voice.state())).toBeNull();
+    expect(voice.engine.transcribed).toEqual([[speech.fromMs - 400, speech.toMs]]);
     expect(needsTicks(voice.state())).toBe(false);
 
+    voice.wait(500);
     voice.reply("r1", "Home is idle.", true);
     voice.reply("r1", "Home is idle. No threads are running.");
     voice.playAll();
     expect(voice.played).toEqual(["Home is idle. No threads are running."]);
     expect(voice.logs).toEqual([
-      "[voice] turn 1 (pause) from vad speech end: finalized +3000ms, sent +3000ms, first text +3000ms, first speak +3000ms, first audio +3000ms",
+      "[voice] turn 1 from speech end: decided +200ms (Smart Turn 0.90), transcribed +200ms, sent +200ms, first text +700ms, first audio +700ms",
     ]);
   });
 
-  it("counts the pause and its latency log from his real end of speech", () => {
-    const voice = call({
-      config: {
-        ...DEFAULT_VOICE_SPEECH_CONFIG,
-        endOfTurn: { ...DEFAULT_VOICE_SPEECH_CONFIG.endOfTurn, earlySend: false, vadEndLagMs: 300 },
-      },
-    });
-    voice.say("what is home doing");
-    voice.wait(300);
-    voice.stopTalking();
-    voice.engine.transcript = "What is Home doing?";
-    voice.wait(2_600);
+  it("waits out a pause Smart Turn calls unfinished, then sends after 2 s", () => {
+    const voice = call();
+    voice.engine.smartTurn = () => 0.2;
+    voice.talk("So the deploy, and");
+    voice.wait(1_900);
     expect(voice.sent).toEqual([]);
 
     voice.wait(100);
-    expect(voice.sent).toEqual(["What is Home doing?"]);
-    voice.reply("r1", "Home is idle. No threads are running.");
+    expect(voice.sent).toEqual(["So the deploy, and"]);
+    voice.reply("r1", "Which deploy?");
     voice.playAll();
     expect(voice.logs).toEqual([
-      "[voice] turn 1 (pause) from real speech end: finalized +3000ms, sent +3000ms, first text +3000ms, first speak +3000ms, first audio +3000ms",
+      "[voice] turn 1 from speech end: decided +2200ms (Smart Turn 0.20, waited), transcribed +2200ms, sent +2200ms, first text +2200ms, first audio +2200ms",
     ]);
   });
 
-  it("keeps his line on screen from the end of his turn until the thread has it", () => {
+  it("keeps one turn when he speaks again in the wait", () => {
     const voice = call();
+    voice.engine.smartTurn = (words) => (words.endsWith("and") ? 0.2 : 0.9);
+    voice.talk("Check the deploy and");
+    voice.wait(1_000);
+    voice.talk("tell me if it passed.");
+    expect(voice.sent).toEqual(["Check the deploy and tell me if it passed."]);
+
+    voice.wait(3_000);
+    expect(voice.sent).toHaveLength(1);
+  });
+
+  it("transcribes a long turn's earlier pieces while he talks, and only the rest at its end", () => {
+    const voice = call();
+    voice.engine.smartTurn = (words) => (words.endsWith(",") ? 0.1 : 0.9);
+    const first = voice.talk("First, the deploy failed,", 3_000);
+    voice.wait(500);
+    const second = voice.talk("then the retry passed,", 3_000);
+    voice.wait(500);
+    expect(voice.engine.transcribed).toEqual([
+      [first.fromMs - 400, first.toMs],
+      [first.toMs, second.toMs],
+    ]);
+    expect(voice.sent).toEqual([]);
+
+    const third = voice.talk("so merge it.");
+    expect(voice.engine.transcribed.at(-1)).toEqual([second.toMs, third.toMs]);
+    expect(voice.engine.transcribed).toHaveLength(3);
+    expect(voice.sent).toEqual(["First, the deploy failed, then the retry passed, so merge it."]);
+  });
+
+  it("sends nothing when no words came of it, and plays the reply that waited for it", () => {
+    const voice = call();
+    voice.engine.slowParakeet = true;
+    voice.talk("");
+    voice.reply("r1", "Home finished the deploy.");
+    expect(voice.engine.synthesizing).toEqual([]);
+
+    voice.transcriptsArrive();
+    expect(voice.sent).toEqual([]);
+    expect(voice.state().own).toBeNull();
+    expect(voice.logs).toEqual([
+      "[voice] turn 1 from speech end: decided +200ms (Smart Turn 0.90), transcribed +200ms, no words",
+    ]);
+    voice.playAll();
+    expect(voice.played).toEqual(["Home finished the deploy."]);
+  });
+
+  it("shows his line once its words are known, until the thread has it", () => {
+    const voice = call();
+    voice.engine.slowParakeet = true;
     voice.holdDelivery();
-    voice.say("merge it");
-    voice.stopTalking();
-    voice.wait(2_900);
+    voice.talk("Merge it.");
     expect(voice.state().own).toBeNull();
 
-    voice.wait(100);
-    expect(voice.state().own).toEqual({ text: "merge it", messageId: "m1" });
+    voice.transcriptsArrive();
+    expect(voice.state().own).toEqual({ text: "Merge it.", messageId: "m1" });
     voice.reply("r0", "An older reply.");
-    expect(voice.state().own).toEqual({ text: "merge it", messageId: "m1" });
+    expect(voice.state().own).toEqual({ text: "Merge it.", messageId: "m1" });
 
     voice.deliver();
     expect(voice.state().own).toBeNull();
@@ -301,24 +381,56 @@ describe("voice speech", () => {
 
   it("drops his line when it could not be queued", () => {
     const voice = call();
-    voice.say("merge it");
-    voice.stopTalking();
-    voice.wait(3_000);
+    voice.talk("Merge it.");
     voice.send({ type: "sent", ok: false, messageId: "m1" });
     expect(voice.state().own).toBeNull();
   });
 
+  it("drops the turn in progress on mute and hears nothing until unmuted", () => {
+    const voice = call();
+    voice.startTalking("Never mind.");
+    voice.send({ type: "muted", muted: true });
+    expect(voice.engine.muted).toBe(true);
+    expect(isHearing(voice.state())).toBe(false);
+    voice.stopTalking();
+    voice.talk("A secret.");
+    voice.wait(5_000);
+    expect(voice.sent).toEqual([]);
+
+    voice.send({ type: "muted", muted: false });
+    voice.talk("OK, go.");
+    expect(voice.sent).toEqual(["OK, go."]);
+  });
+
+  it("hears Amar while his voice is on, settles in his pause, and ignores sound over the agent", () => {
+    const voice = call();
+    voice.engine.smartTurn = () => 0.2;
+    expect(isHearing(voice.state())).toBe(false);
+
+    voice.startTalking("Merge it");
+    expect(isHearing(voice.state())).toBe(true);
+    voice.stopTalking();
+    expect(isHearing(voice.state())).toBe(false);
+    voice.startTalking("now.");
+    expect(isHearing(voice.state())).toBe(true);
+    voice.stopTalking();
+    voice.wait(2_000);
+
+    voice.reply("r1", "A long answer that keeps going.");
+    voice.send({ type: "vad", speaking: true, speechMs: 0 });
+    expect(isHearing(voice.state())).toBe(false);
+  });
+});
+
+describe("voice speech", () => {
   it("never plays a reply Amar talked past before it started", () => {
     const voice = call();
-    voice.say("what is Home doing");
-    voice.stopTalking();
-    voice.wait(3_000);
+    voice.talk("What is Home doing?");
 
-    voice.say("actually, never mind");
+    voice.startTalking("Actually, never mind.");
     voice.reply("r1", "Home is checking three threads.", true);
-    voice.stopTalking();
     voice.holdDelivery();
-    voice.wait(3_000);
+    voice.stopTalking();
     voice.reply("r1", "Home is checking three threads. One is waiting on you.");
     expect(voice.engine.synthesizing).toEqual([]);
     expect(voice.state().shown.get("r1")).toEqual({ kind: "whole" });
@@ -345,82 +457,16 @@ describe("voice speech", () => {
     expect(voice.played).toEqual([ONE, `${TWO} ${THREE} PR 43 merged an hour ago.`]);
   });
 
-  it("stops the voice when Amar talks over it, and stale sentences never play", () => {
-    const voice = call();
-    voice.reply("r1", `${ONE} ${TWO} ${THREE} Second`, true);
-    const [first] = voice.engine.synthesizing;
-    voice.send({ type: "playback", id: first!.id, state: "started" });
-
-    voice.send({ type: "vad", speaking: true });
-    expect(voice.engine.volume).toBe(DEFAULT_VOICE_SPEECH_CONFIG.bargeIn.duckLevel);
-    voice.engine.transcript = "wait";
-    voice.send({ type: "partial", text: "wait" });
-    expect(voice.engine.stops).toEqual([DEFAULT_VOICE_SPEECH_CONFIG.bargeIn.fadeMs]);
-    expect(liveWords(voice.state())).toBe("wait");
-
-    voice.reply("r1", `${ONE} ${TWO} ${THREE} Second sentence here. Third sentence here.`);
-    expect(voice.engine.synthesizing).toEqual([]);
-
-    voice.say("wait, ask Home instead");
-    voice.stopTalking();
-    voice.wait(3_000);
-    expect(voice.sent).toEqual(["wait, ask Home instead"]);
-
-    voice.reply("r2", "Asking Home.");
-    expect(voice.engine.volume).toBe(1);
-    voice.playAll();
-    expect(voice.played).toEqual(["Asking Home."]);
-  });
-
-  it("ducks for a sound with no words and plays on, and the sound starts no turn", () => {
-    const voice = call();
-    voice.reply("r1", "A long answer that keeps going.");
-    voice.send({ type: "vad", speaking: true });
-    expect(voice.engine.volume).toBe(DEFAULT_VOICE_SPEECH_CONFIG.bargeIn.duckLevel);
-    voice.wait(100);
-    voice.send({ type: "vad", speaking: false });
-    voice.wait(5_000);
-
-    expect(voice.engine.stops).toEqual([]);
-    expect(voice.engine.volume).toBe(1);
-    expect(voice.state().turn.kind).toBe("idle");
-
-    voice.playAll();
-    expect(voice.played).toEqual(["A long answer that keeps going."]);
-    expect(voice.sent).toEqual([]);
-  });
-
   it("drops speech whose playback never reports back, and listens again", () => {
-    const voice = call({ config: { ...TIMER_ONLY, voiceBargeIn: false } });
+    const voice = call({ config: { ...CONFIG, voiceBargeIn: false } });
     voice.reply("r1", "This sentence never plays.");
     voice.wait(29_000);
     expect(voice.engine.stops).toEqual([]);
 
     voice.wait(2_000);
     expect(voice.engine.stops).toHaveLength(1);
-    voice.say("are you there");
-    voice.stopTalking();
-    voice.wait(3_500);
-    expect(voice.sent).toEqual(["are you there"]);
-  });
-
-  it("drops the words in progress on mute and hears nothing until unmuted", () => {
-    const voice = call();
-    voice.say("never mind");
-    voice.send({ type: "muted", muted: true });
-    expect(voice.engine.muted).toBe(true);
-    expect(voice.engine.discarded).toBe(1);
-    expect(liveWords(voice.state())).toBeNull();
-
-    voice.send({ type: "partial", text: "secret" });
-    voice.wait(5_000);
-    expect(voice.sent).toEqual([]);
-
-    voice.send({ type: "muted", muted: false });
-    voice.say("ok go");
-    voice.stopTalking();
-    voice.wait(3_000);
-    expect(voice.sent).toEqual(["ok go"]);
+    voice.talk("Are you there?");
+    expect(voice.sent).toEqual(["Are you there?"]);
   });
 
   it("downloads missing models first and speaks what arrived meanwhile once it listens", () => {
@@ -428,7 +474,8 @@ describe("voice speech", () => {
     expect(voice.engine.downloading).toBe(true);
 
     voice.send({ type: "models", state: "downloading", part: "asr", fraction: 0.5 });
-    expect(voice.state().engine).toEqual({ kind: "downloading", fraction: 0.24 });
+    const halfway = voice.state().engine;
+    expect(halfway.kind === "downloading" ? halfway.fraction : null).toBeCloseTo(0.28);
     voice.reply("r1", "Hi. Home is idle.");
     expect(voice.engine.synthesizing).toEqual([]);
 
@@ -441,29 +488,6 @@ describe("voice speech", () => {
     expect(voice.state().engine.kind).toBe("listening");
     voice.playAll();
     expect(voice.played).toEqual(["Hi. Home is idle."]);
-  });
-
-  it("hears Amar while his voice is on, settles in his pause, and ignores sound over the agent", () => {
-    const voice = call();
-    expect(isHearing(voice.state())).toBe(false);
-
-    voice.say("merge it");
-    expect(isHearing(voice.state())).toBe(true);
-    voice.stopTalking();
-    expect(isHearing(voice.state())).toBe(false);
-    voice.send({ type: "vad", speaking: true });
-    expect(isHearing(voice.state())).toBe(true);
-    voice.stopTalking();
-    voice.wait(3_000);
-
-    voice.reply("r1", "A long answer that keeps going.");
-    voice.send({ type: "vad", speaking: true });
-    expect(isHearing(voice.state())).toBe(false);
-    voice.send({ type: "vad", speaking: false });
-
-    voice.send({ type: "muted", muted: true });
-    voice.send({ type: "vad", speaking: true });
-    expect(isHearing(voice.state())).toBe(false);
   });
 
   it("cues once when it starts listening, and not again after an interruption", () => {
@@ -508,16 +532,93 @@ describe("voice speech", () => {
   });
 });
 
-describe("ending the call", () => {
-  const sayLine = (voice: ReturnType<typeof call>, text: string) => {
-    voice.say(text);
-    voice.stopTalking();
-    voice.wait(3_000);
-  };
+describe("interrupting the voice", () => {
+  const LONG = `${ONE} ${TWO} ${THREE} PR 43 merged an hour ago, and its checks are all green now.`;
+  const CHUNKS = speechChunks(LONG);
 
+  function playing() {
+    const voice = call();
+    voice.reply("r1", LONG);
+    voice.startNext();
+    return voice;
+  }
+
+  it("reads a long reply as more than one chunk", () => {
+    expect(CHUNKS.length).toBeGreaterThan(1);
+  });
+
+  it("ducks at his voice and stops once it outlasts the confirm; what he says is his next turn", () => {
+    const voice = playing();
+    const fromMs = voice.startTalking("Wait, ask Home instead.");
+    expect(voice.engine.volume).toBe(0.25);
+    voice.wait(200);
+    expect(voice.engine.stops).toEqual([]);
+
+    voice.wait(100);
+    expect(voice.engine.stops).toEqual([80]);
+    expect(isHearing(voice.state())).toBe(true);
+    const toMs = voice.stopTalking();
+    expect(voice.sent).toEqual(["Wait, ask Home instead."]);
+    expect(voice.engine.transcribed).toEqual([[fromMs - 400, toMs]]);
+    expect(voice.logs).toContain("[voice] interrupt from speech onset: duck +250ms, stop +550ms");
+
+    voice.reply("r1", `${LONG} One more sentence here.`);
+    expect(voice.engine.synthesizing).toEqual([]);
+    voice.reply("r2", "Asking Home.");
+    expect(voice.engine.volume).toBe(1);
+    voice.playAll();
+    expect(voice.played).toEqual(["Asking Home."]);
+  });
+
+  it("plays on at full volume after a blip shorter than the confirm, replaying nothing", () => {
+    const voice = playing();
+    voice.startTalking("");
+    voice.stopTalking();
+    expect(voice.engine.volume).toBe(1);
+    expect(voice.engine.stops).toEqual([]);
+    expect(voice.logs).toEqual([
+      "[voice] interrupt from speech onset: duck +250ms, restore +450ms",
+    ]);
+
+    voice.wait(3_000);
+    voice.playAll();
+    expect(voice.played).toEqual(CHUNKS);
+    expect(voice.sent).toEqual([]);
+    expect(voice.state().turn.live.kind).toBe("idle");
+  });
+
+  it("keeps the duck for a reply that arrives under it", () => {
+    const voice = playing();
+    voice.startTalking("");
+    voice.reply("r2", "Also, Home is idle.");
+    expect(voice.engine.volume).toBe(0.25);
+  });
+
+  it("takes his voice over the agent's last words as his turn when the agent finishes first", () => {
+    const voice = call();
+    voice.reply("r1", "Done.");
+    voice.startTalking("Thanks, now check the queue.");
+    voice.playAll();
+    expect(voice.engine.stops).toEqual([]);
+    voice.stopTalking();
+    expect(voice.sent).toEqual(["Thanks, now check the queue."]);
+    expect(voice.logs).toContain("[voice] interrupt from speech onset: duck +250ms, end +250ms");
+  });
+
+  it("restores the volume when he mutes under a duck, and never stops the agent for it", () => {
+    const voice = playing();
+    voice.startTalking("");
+    voice.send({ type: "muted", muted: true });
+    expect(voice.engine.volume).toBe(1);
+    voice.wait(1_000);
+    expect(voice.engine.stops).toEqual([]);
+  });
+});
+
+describe("ending the call", () => {
   it("hangs up once the goodbye to Amar's bye has played, never voicing the marker", () => {
     const voice = call();
-    sayLine(voice, "Okay, that's all, bye.");
+    voice.talk("Okay, that's all, bye.");
     voice.reply("r1", "Bye, Amar. [end call]", true);
     voice.reply("r1", "Bye, Amar. [end call]");
     expect(voice.engine.synthesizing.map((item) => item.text)).toEqual(["Bye, Amar."]);
@@ -537,7 +638,7 @@ describe("ending the call", () => {
 
   it("stays on when Amar says bye and keeps going", () => {
     const voice = call();
-    sayLine(voice, "Bye bye, wait, one more thing.");
+    voice.talk("Bye bye, wait, one more thing.");
     voice.reply("r1", "Sure, go ahead. [end call]");
     voice.playAll();
     expect(voice.played).toEqual(["Sure, go ahead."]);
@@ -546,7 +647,7 @@ describe("ending the call", () => {
 
   it("never ends the call on the agent's own initiative", () => {
     const voice = call();
-    sayLine(voice, "What is Home doing?");
+    voice.talk("What is Home doing?");
     voice.reply("r1", "Home is idle. [end call]");
     voice.playAll();
     expect(voice.engine.hangUps).toBe(0);
@@ -554,7 +655,7 @@ describe("ending the call", () => {
 
   it("ignores a marker anywhere but the very end of the reply", () => {
     const voice = call();
-    sayLine(voice, "Bye.");
+    voice.talk("Bye.");
     voice.reply("r1", "Bye. [end call] Anything else before you go?");
     voice.playAll();
     expect(voice.played).toEqual(["Bye. Anything else before you go?"]);
@@ -563,11 +664,11 @@ describe("ending the call", () => {
 
   it("stays on when Amar talks over the goodbye", () => {
     const voice = call();
-    sayLine(voice, "Bye.");
+    voice.talk("Bye.");
     voice.reply("r1", `${ONE} ${TWO} ${THREE} Bye for now. [end call]`);
-    const [first] = voice.engine.synthesizing;
-    voice.send({ type: "playback", id: first!.id, state: "started" });
-    voice.say("wait, one more thing");
+    voice.startNext();
+    voice.startTalking("Wait, one more thing.");
+    voice.wait(300);
     voice.playAll();
     expect(voice.engine.hangUps).toBe(0);
   });
@@ -595,9 +696,9 @@ describe("what the transcript shows of a reply", () => {
   it("keeps only what played when Amar cuts the reply off", () => {
     const voice = call();
     voice.reply("r1", REPLY, true);
-    const [first] = voice.engine.synthesizing;
-    voice.send({ type: "playback", id: first!.id, state: "started" });
-    voice.send({ type: "partial", text: "wait" });
+    voice.startNext();
+    voice.startTalking("Wait.");
+    voice.wait(300);
     voice.reply("r1", `${REPLY} It found two more threads.`);
     voice.playAll();
 
@@ -607,7 +708,8 @@ describe("what the transcript shows of a reply", () => {
   it("shows a reply whole when it is cut off before it plays a word", () => {
     const voice = call();
     voice.reply("r1", REPLY);
-    voice.send({ type: "partial", text: "wait" });
+    voice.startTalking("Wait.");
+    voice.wait(300);
     expect(voice.state().shown.get("r1")).toEqual({ kind: "whole" });
   });
 
@@ -615,182 +717,5 @@ describe("what the transcript shows of a reply", () => {
     const voice = call({ models: "missing" });
     voice.reply("r1", "Hi. Home is idle.");
     expect(voice.state().shown.get("r1")).toEqual({ kind: "whole" });
-  });
-});
-
-describe("interrupting the voice", () => {
-  const LONG = `${ONE} ${TWO} ${THREE} PR 43 merged an hour ago, and its checks are all green now.`;
-  const CHUNKS = speechChunks(LONG);
-
-  function playing(bargeIn: Partial<BargeInConfig>) {
-    const voice = call({
-      config: { ...TIMER_ONLY, bargeIn: { ...TIMER_ONLY.bargeIn, ...bargeIn } },
-    });
-    voice.reply("r1", LONG);
-    return voice;
-  }
-
-  function startNext(voice: ReturnType<typeof call>) {
-    voice.send({ type: "playback", id: voice.engine.synthesizing[0]!.id, state: "started" });
-  }
-
-  /** A sound with no words: the detector hears it for `ms`, then nothing. */
-  function cough(voice: ReturnType<typeof call>, ms: number) {
-    voice.send({ type: "vad", speaking: true });
-    voice.wait(ms);
-    voice.stopTalking();
-  }
-
-  const { duckLevel, fadeMs } = TIMER_ONLY.bargeIn;
-
-  it("reads a long reply as more than one chunk", () => {
-    expect(CHUNKS.length).toBeGreaterThan(1);
-  });
-
-  it("anySound stops the voice the moment the detector fires", () => {
-    const voice = playing({ mode: "anySound" });
-    startNext(voice);
-    voice.send({ type: "vad", speaking: true });
-    expect(voice.engine.stops).toEqual([fadeMs]);
-    expect(voice.logs).toEqual([
-      "[voice] interrupt anySound: onset +0ms, word none, duck none, stop +0ms",
-    ]);
-  });
-
-  it("words ignores the detector, and stops at the first word with its delay logged", () => {
-    const voice = playing({ mode: "words" });
-    startNext(voice);
-    voice.send({ type: "vad", speaking: true });
-    voice.wait(300);
-    expect(voice.engine.volume).toBe(1);
-    expect(voice.engine.stops).toEqual([]);
-
-    voice.engine.transcript = "wait";
-    voice.send({ type: "partial", text: "wait" });
-    expect(voice.engine.stops).toEqual([fadeMs]);
-    expect(liveWords(voice.state())).toBe("wait");
-    expect(voice.logs).toEqual([
-      "[voice] interrupt words: onset +0ms, word +300ms, duck none, stop +300ms",
-    ]);
-  });
-
-  it("words never stops for a sound that brings no words", () => {
-    const voice = playing({ mode: "words" });
-    startNext(voice);
-    cough(voice, 200);
-    voice.wait(3_000);
-    expect(voice.engine.stops).toEqual([]);
-    voice.playAll();
-    expect(voice.played).toEqual(CHUNKS);
-  });
-
-  it("hybrid ducks at the detector and stops at the first word", () => {
-    const voice = playing({ mode: "hybrid" });
-    startNext(voice);
-    voice.send({ type: "vad", speaking: true });
-    expect(voice.engine.volume).toBe(duckLevel);
-    voice.wait(400);
-    voice.engine.transcript = "hold on";
-    voice.send({ type: "partial", text: "hold on" });
-    expect(voice.engine.stops).toEqual([fadeMs]);
-    expect(voice.logs).toEqual([
-      "[voice] interrupt hybrid: onset +0ms, word +400ms, duck +0ms, stop +400ms",
-    ]);
-  });
-
-  it("hybrid restores the volume after a cough, and resume plays on", () => {
-    const voice = playing({ mode: "hybrid", recovery: "resume" });
-    startNext(voice);
-    cough(voice, 100);
-    voice.wait(400);
-    expect(voice.engine.volume).toBe(duckLevel);
-    voice.wait(200);
-    expect(voice.engine.volume).toBe(1);
-    expect(voice.engine.stops).toEqual([]);
-    expect(voice.logs).toEqual([
-      "[voice] interrupt hybrid: onset +0ms, word none, duck +0ms, restore +600ms",
-      "[voice] recover hybrid resume: paused 600ms, restored volume",
-    ]);
-    voice.playAll();
-    expect(voice.played).toEqual(CHUNKS);
-    expect(voice.sent).toEqual([]);
-  });
-
-  it("hybrid keeps the duck while the sound goes on, until it has been quiet for words", () => {
-    const voice = playing({ mode: "hybrid", recovery: "resume" });
-    startNext(voice);
-    cough(voice, 1_500);
-    expect(voice.engine.volume).toBe(duckLevel);
-    voice.wait(400);
-    expect(voice.engine.volume).toBe(1);
-    expect(voice.logs.at(-1)).toBe("[voice] recover hybrid resume: paused 1900ms, restored volume");
-  });
-
-  it("restart plays the cut chunk again from its start, then the rest", () => {
-    const voice = playing({ mode: "hybrid", recovery: "restart" });
-    voice.playNext();
-    startNext(voice);
-    cough(voice, 100);
-    voice.wait(600);
-    expect(voice.engine.stops).toEqual([fadeMs]);
-    expect(voice.engine.volume).toBe(1);
-    expect(voice.logs.at(-1)).toBe(
-      "[voice] recover hybrid restart: paused 600ms, replayed the chunk",
-    );
-    expect(voice.state().shown.get("r1")).toEqual({ kind: "spoken", text: CHUNKS[0] });
-
-    voice.playAll();
-    expect(voice.played).toEqual(CHUNKS);
-    expect(voice.state().shown.get("r1")).toEqual({ kind: "whole" });
-  });
-
-  it("smart plays on after a short pause", () => {
-    const voice = playing({ mode: "hybrid", recovery: "smart", smartCutoffMs: 1_000 });
-    startNext(voice);
-    cough(voice, 100);
-    voice.wait(600);
-    expect(voice.engine.stops).toEqual([]);
-    expect(voice.logs.at(-1)).toBe("[voice] recover hybrid smart: paused 600ms, restored volume");
-  });
-
-  it("smart restarts the chunk after a long pause", () => {
-    const voice = playing({ mode: "hybrid", recovery: "smart", smartCutoffMs: 1_000 });
-    startNext(voice);
-    cough(voice, 800);
-    voice.wait(400);
-    expect(voice.engine.stops).toEqual([fadeMs]);
-    expect(voice.logs.at(-1)).toBe(
-      "[voice] recover hybrid smart: paused 1200ms, replayed the chunk",
-    );
-    voice.playAll();
-    expect(voice.played).toEqual(CHUNKS);
-  });
-
-  it("after anySound stops for a cough, even resume replays the chunk, and no turn is sent", () => {
-    const voice = playing({ mode: "anySound", recovery: "resume" });
-    startNext(voice);
-    cough(voice, 100);
-    expect(voice.engine.stops).toEqual([fadeMs]);
-    expect(voice.engine.synthesizing).toEqual([]);
-    voice.wait(600);
-    expect(voice.logs.at(-1)).toBe(
-      "[voice] recover anySound resume: paused 600ms, replayed the chunk",
-    );
-    expect(voice.state().turn.kind).toBe("idle");
-
-    voice.playAll();
-    expect(voice.played).toEqual(CHUNKS);
-    voice.wait(5_000);
-    expect(voice.sent).toEqual([]);
-  });
-
-  it("after anySound stops for real words, nothing replays and the words are sent", () => {
-    const voice = playing({ mode: "anySound" });
-    startNext(voice);
-    voice.say("stop, ask Home instead");
-    voice.stopTalking();
-    voice.wait(3_500);
-    expect(voice.engine.synthesizing).toEqual([]);
-    expect(voice.sent).toEqual(["stop, ask Home instead"]);
   });
 });

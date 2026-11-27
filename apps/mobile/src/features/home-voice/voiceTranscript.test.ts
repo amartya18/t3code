@@ -76,15 +76,6 @@ describe("voiceTranscript", () => {
         { id: "m", kind: "user", text: "Merge it." },
       ]);
     }
-    expect(
-      voiceTranscript([agent("a", "Ready.")], [], {
-        ...speech,
-        own: { text: "Merge it", messageId: null },
-      }),
-    ).toEqual([
-      { id: "a", kind: "agent", text: "Ready." },
-      { id: "own", kind: "user", text: "Merge it" },
-    ]);
   });
 
   it("shows a reply as far as the voice has spoken it, and all of it without a voice", () => {
