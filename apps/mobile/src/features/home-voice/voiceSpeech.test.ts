@@ -475,7 +475,7 @@ describe("voice speech", () => {
 
     voice.send({ type: "models", state: "downloading", part: "asr", fraction: 0.5 });
     const halfway = voice.state().engine;
-    expect(halfway.kind === "downloading" ? halfway.fraction : null).toBeCloseTo(0.28);
+    expect(halfway.kind === "downloading" ? halfway.fraction : null).toBeCloseTo(0.425);
     voice.reply("r1", "Hi. Home is idle.");
     expect(voice.engine.synthesizing).toEqual([]);
 

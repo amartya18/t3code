@@ -323,7 +323,7 @@ function EngineNote(props: { readonly engine: VoiceSpeechView["engine"] }) {
           {note(
             gt("Downloading voice · {percent}%", { percent: Math.floor(engine.fraction * 100) }),
           )}
-          {note(gt("About 320 MB, once. Use Wi-Fi if you can."))}
+          {note(gt("About 700 MB, once. Use Wi-Fi if you can."))}
         </View>
       );
     case "downloadFailed":

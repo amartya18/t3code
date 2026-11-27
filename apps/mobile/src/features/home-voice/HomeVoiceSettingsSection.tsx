@@ -129,7 +129,7 @@ function VoiceDownloadRow(props: { readonly voiceId: string; readonly minSpeechM
     }
     Dialog.confirm({
       title: gt("Delete the voice download?"),
-      message: gt("Your next voice session downloads it again, about 320 MB."),
+      message: gt("Your next voice session downloads it again, about 700 MB."),
       confirmText: gt("Delete"),
       destructive: true,
       onConfirm: () => {

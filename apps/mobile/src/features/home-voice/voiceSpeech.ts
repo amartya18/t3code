@@ -198,10 +198,10 @@ const INTERRUPT_CONFIRM_MS = 250;
 
 /** Share of the whole download each model takes, downloaded in this order. */
 const DOWNLOAD_SHARE: Record<VoiceModelPart, readonly [number, number]> = {
-  vad: [0, 0.01],
-  asr: [0.01, 0.55],
-  turn: [0.55, 0.57],
-  tts: [0.57, 1],
+  vad: [0, 0.005],
+  asr: [0.005, 0.845],
+  turn: [0.845, 0.87],
+  tts: [0.87, 1],
 };
 
 /**
