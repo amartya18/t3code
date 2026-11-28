@@ -468,6 +468,7 @@ import {
 } from "./scheduledTask.ts";
 import { SecretRequestAnswerInput, SecretRequestError } from "./secretRequest.ts";
 import { AgentFeedbackAnswerInput, AgentFeedbackRequestError } from "./agentFeedback.ts";
+import { ClientDiagnosticSubmitError, ClientDiagnosticSubmitInput } from "./clientDiagnostics.ts";
 import {
   ProjectCloneActionInput,
   ProjectCloneActionResult,
@@ -680,6 +681,7 @@ export const WS_METHODS = {
   notificationsRegisterDevice: "notifications.registerDevice",
   notificationsUnregisterDevice: "notifications.unregisterDevice",
   notificationsRegisterLiveActivity: "notifications.registerLiveActivity",
+  clientDiagnosticsSubmit: "clientDiagnostics.submit",
 
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -1254,6 +1256,11 @@ const WsNotificationsRegisterLiveActivityRpc = Rpc.make(
     error: EnvironmentAuthorizationError,
   },
 );
+
+const WsClientDiagnosticsSubmitRpc = Rpc.make(WS_METHODS.clientDiagnosticsSubmit, {
+  payload: ClientDiagnosticSubmitInput,
+  error: Schema.Union([ClientDiagnosticSubmitError, EnvironmentAuthorizationError]),
+});
 
 const WsServerReportClientActivityRpc = Rpc.make(WS_METHODS.serverReportClientActivity, {
   payload: ClientActivityReportInput,
@@ -2652,6 +2659,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsNotificationsRegisterDeviceRpc,
   WsNotificationsUnregisterDeviceRpc,
   WsNotificationsRegisterLiveActivityRpc,
+  WsClientDiagnosticsSubmitRpc,
   WsServerReportClientActivityRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,

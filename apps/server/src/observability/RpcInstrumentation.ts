@@ -109,6 +109,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.notificationsRegisterDevice]: "server",
   [WS_METHODS.notificationsUnregisterDevice]: "server",
   [WS_METHODS.notificationsRegisterLiveActivity]: "server",
+  [WS_METHODS.clientDiagnosticsSubmit]: "server",
   [WS_METHODS.workflowsSubscribe]: "workflows",
   [WS_METHODS.workflowsCounts]: "workflows",
   [WS_METHODS.workflowsGet]: "workflows",
