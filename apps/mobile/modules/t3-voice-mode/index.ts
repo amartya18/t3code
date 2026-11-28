@@ -61,6 +61,13 @@ export interface VoiceEngineEvents {
   readonly error: { readonly code: string; readonly message: string };
 }
 
+/** A word Parakeet should favour; `aliases` are how it is heard, `minSimilarity` (0–1) how close a heard word must be. */
+export interface VoiceVocabularyTerm {
+  readonly text: string;
+  readonly aliases?: ReadonlyArray<string>;
+  readonly minSimilarity?: number;
+}
+
 export interface VoiceEngine {
   configure(config: VoiceEngineConfig): Promise<void>;
   modelStatus(): Promise<VoiceModelStatus>;
@@ -74,10 +81,17 @@ export interface VoiceEngine {
   start(): Promise<void>;
   stop(): Promise<void>;
   setMuted(muted: boolean): void;
-  /** Words Parakeet should favour; replaces the previous list. */
-  setVocabulary(words: ReadonlyArray<string>): Promise<void>;
+  /** Replaces the previous list. */
+  setVocabulary(terms: ReadonlyArray<VoiceVocabularyTerm>): Promise<void>;
   /** Parakeet TDT 0.6B v3 on the mic audio between two engine times, from the recent-audio buffer. */
-  transcribe(fromMs: number, toMs: number): Promise<{ readonly text: string }>;
+  transcribe(
+    fromMs: number,
+    toMs: number,
+  ): Promise<{
+    readonly text: string;
+    /** Words the vocabulary swapped in, in order; builds before it existed leave it out. */
+    readonly replaced?: ReadonlyArray<{ readonly from: string; readonly to: string }>;
+  }>;
   /** Smart Turn v3: how likely the speech between two engine times is a finished turn, 0 to 1. */
   turnScore(fromMs: number, toMs: number): Promise<{ readonly probability: number }>;
   speak(item: SpeechItem): Promise<void>;
@@ -110,7 +124,7 @@ export const voiceEngine: VoiceEngine | null = native && {
   start: () => native.start(),
   stop: () => native.stop(),
   setMuted: (muted) => native.setMuted(muted),
-  setVocabulary: (words) => native.setVocabulary(words),
+  setVocabulary: (terms) => native.setVocabulary(terms),
   transcribe: (fromMs, toMs) => native.transcribe(fromMs, toMs),
   turnScore: (fromMs, toMs) => native.turnScore(fromMs, toMs),
   speak: (item) => native.speak(item.id, item.text, ++seq),

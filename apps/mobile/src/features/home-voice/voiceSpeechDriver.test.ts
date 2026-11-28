@@ -31,7 +31,7 @@ function fakeEngine() {
     },
     setMuted: () => {},
     setVocabulary: async (words) => {
-      calls.push(`setVocabulary ${words.join(", ")}`);
+      calls.push(`setVocabulary ${words.map((term) => term.text).join(", ")}`);
     },
     transcribe: async () => ({ text: "" }),
     turnScore: async () => ({ probability: 1 }),
@@ -65,7 +65,7 @@ function open(
     engine,
     inputs: inputs(engineConfig(log !== null), send),
     previous: null,
-    vocabulary: ["T3", "laptop13"],
+    vocabulary: [{ text: "T3" }, { text: "laptop13" }],
     now,
     newMessageId: () => "m1",
     log: log ?? (() => {}),
@@ -205,6 +205,49 @@ it("hands Smart Turn and Parakeet the engine's own times for his speech, and sen
   expect(asked).toEqual(["turnScore 5000-6200", "transcribe 4600-6200"]);
   expect(sent).toEqual(["Merge it."]);
 
+  driver.dispose();
+});
+
+it("in development, logs each word the word list swapped in", async () => {
+  const logs: string[] = [];
+  const listeners = new Map<string, (event: unknown) => void>();
+  const sent: string[] = [];
+  const engine: VoiceEngine = {
+    ...fakeEngine().engine,
+    stop: async () => {},
+    transcribe: async () => ({
+      text: "Run pstack on laptop13.",
+      replaced: [
+        { from: "P stack", to: "pstack" },
+        { from: "laptop thirteen", to: "laptop13" },
+      ],
+    }),
+    addListener: (name, listener) => {
+      listeners.set(name, listener as (event: unknown) => void);
+      return { remove: () => {} };
+    },
+  };
+  const driver = open(
+    engine,
+    () => 0,
+    (line) => {
+      logs.push(line);
+    },
+    async (text) => {
+      sent.push(text);
+    },
+  );
+  await settle();
+
+  listeners.get("vad")!({ speaking: true, probability: 0.9, level: 0.4, atMs: 5_000 });
+  listeners.get("vad")!({ speaking: false, probability: 0.1, level: 0, atMs: 6_200 });
+  await settle();
+
+  expect(logs.filter((line) => line.includes("word list"))).toEqual([
+    '+0.000s [voice] word list: "P stack" -> "pstack"',
+    '+0.000s [voice] word list: "laptop thirteen" -> "laptop13"',
+  ]);
+  expect(sent).toEqual(["Run pstack on laptop13."]);
   driver.dispose();
 });
 

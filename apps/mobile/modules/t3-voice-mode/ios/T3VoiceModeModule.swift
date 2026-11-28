@@ -50,13 +50,13 @@ public final class T3VoiceModeModule: Module {
       self.engine.setMuted(muted)
     }
 
-    AsyncFunction("setVocabulary") { (words: [String]) async throws in
-      try await self.engine.setVocabulary(words)
+    AsyncFunction("setVocabulary") { (terms: [VocabularyTermRecord]) async throws in
+      try await self.engine.setVocabulary(terms.map(VocabularyTerm.init))
     }
 
     AsyncFunction("transcribe") { (fromMs: Double, toMs: Double) async throws -> [String: Any] in
-      let text = try await self.engine.transcribe(fromMs: fromMs, toMs: toMs)
-      return ["text": text]
+      let result = try await self.engine.transcribe(fromMs: fromMs, toMs: toMs)
+      return ["text": result.text, "replaced": result.replaced.map { ["from": $0.from, "to": $0.to] }]
     }
 
     AsyncFunction("turnScore") { (fromMs: Double, toMs: Double) async throws -> [String: Any] in

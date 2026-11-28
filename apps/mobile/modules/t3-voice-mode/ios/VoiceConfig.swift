@@ -14,6 +14,12 @@ struct TtsConfigRecord: Record {
   @Field var gpu: Bool = false
 }
 
+struct VocabularyTermRecord: Record {
+  @Field(.required) var text: String = ""
+  @Field var aliases: [String] = []
+  @Field var minSimilarity: Double?
+}
+
 struct AecConfigRecord: Record {
   @Field(.required) var enabled: Bool = false
 }

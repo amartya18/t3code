@@ -12,6 +12,12 @@ extension VoiceEngine {
     let config = try requireConfig()
     let sentence = "Ask Kokoro to check the Tailscale link before FluidAudio downloads Parakeet."
     let words = ["Kokoro", "Tailscale", "FluidAudio", "Parakeet", "T3 Code"]
+    let termsSentence = "Run P stack on laptop thirteen for T three, then check the stack on my laptop."
+    let terms = [
+      VocabularyTerm(text: "T3", aliases: ["T three", "tee three"], minSimilarity: 0.85),
+      VocabularyTerm(text: "laptop13", aliases: ["laptop thirteen"], minSimilarity: 0.85),
+      VocabularyTerm(text: "pstack", aliases: ["P stack", "pee stack"], minSimilarity: 0.85),
+    ]
     var report: [String: Any] = [
       "os": ProcessInfo.processInfo.operatingSystemVersionString,
       "models": ModelStore.status(config),
@@ -139,12 +145,26 @@ extension VoiceEngine {
         report["asrLoadMs"] = lap()
         let previous = await transcriber.vocabulary
         try await transcriber.setVocabulary([])
-        report["transcript"] = try await transcriber.transcribe(speech)
+        report["transcript"] = try await transcriber.transcribe(speech).text
         report["transcribeMs"] = lap()
-        try await transcriber.setVocabulary(words)
+        try await transcriber.setVocabulary(words.map { VocabularyTerm(text: $0) })
         report["vocabLoadMs"] = lap()
-        report["vocabTranscript"] = try await transcriber.transcribe(speech)
+        report["vocabTranscript"] = try await transcriber.transcribe(speech).text
         report["vocabTranscribeMs"] = lap()
+
+        let spoken = try await speaker.synthesize(termsSentence)
+        let termsSpeech = try resampled(spoken.samples, rate: spoken.sampleRate)
+        try await transcriber.setVocabulary([])
+        let plain = try await transcriber.transcribe(termsSpeech)
+        try await transcriber.setVocabulary(terms)
+        let boosted = try await transcriber.transcribe(termsSpeech)
+        let termsReport: [String: Any] = [
+          "spoken": termsSentence,
+          "plain": plain.text,
+          "boosted": boosted.text,
+          "replaced": boosted.replaced.map { "\($0.from) -> \($0.to)" },
+        ]
+        report["terms"] = termsReport
         try await transcriber.setVocabulary(previous)
       } catch {
         errors["asr"] = String(describing: error)

@@ -1,4 +1,8 @@
-import type { VoiceEngine, VoiceEngineConfig } from "../../../modules/t3-voice-mode";
+import type {
+  VoiceEngine,
+  VoiceEngineConfig,
+  VoiceVocabularyTerm,
+} from "../../../modules/t3-voice-mode";
 import {
   needsTicks,
   openVoiceSpeech,
@@ -38,7 +42,7 @@ export function createVoiceSpeechDriver(options: {
   readonly engine: VoiceEngine;
   readonly inputs: VoiceSpeechInputs;
   readonly previous: VoiceSpeechState | null;
-  readonly vocabulary: ReadonlyArray<string>;
+  readonly vocabulary: ReadonlyArray<VoiceVocabularyTerm>;
   readonly now: () => number;
   readonly newMessageId: () => string;
   readonly log: (line: string) => void;
@@ -179,7 +183,12 @@ export function createVoiceSpeechDriver(options: {
             atMs: now(),
           });
         engine.transcribe(effect.fromMs, effect.toMs).then(
-          (result) => heard(result.text),
+          (result) => {
+            for (const swap of result.replaced ?? []) {
+              devLog(`[voice] word list: "${swap.from}" -> "${swap.to}"`);
+            }
+            heard(result.text);
+          },
           (error) => {
             devLog(`[voice] transcribe failed: ${errorCode(error)}`);
             heard("");

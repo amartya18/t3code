@@ -154,11 +154,11 @@ actor VoiceEngine {
     stopping = nil
   }
 
-  func setVocabulary(_ words: [String]) async throws {
-    try await transcriber.setVocabulary(words)
+  func setVocabulary(_ terms: [VocabularyTerm]) async throws {
+    try await transcriber.setVocabulary(terms)
   }
 
-  func transcribe(fromMs: Double, toMs: Double) async throws -> String {
+  func transcribe(fromMs: Double, toMs: Double) async throws -> Transcript {
     let samples = ring.samples(fromMs: fromMs, toMs: toMs)
     events.stage("transcribe.start")
     defer { events.stage("transcribe.end") }
