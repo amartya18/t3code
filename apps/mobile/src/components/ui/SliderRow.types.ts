@@ -15,4 +15,6 @@ export interface SliderRowProps {
   readonly step: number;
   readonly value: number;
   readonly onChange: (value: number) => void;
+  /** The snapped value while a drag is in progress, before `onChange` on release. */
+  readonly onDrag?: (value: number) => void;
 }

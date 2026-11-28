@@ -17,4 +17,10 @@ describe("speakable", () => {
       "sleep is running as background task on laptop13.",
     );
   });
+
+  it("keeps the word Home before a colon but drops thread refs", () => {
+    expect(speakable("Relayed to Home: merge PR 43. See home:abc123 for more.", 200)).toBe(
+      "Relayed to Home: merge PR 43. See for more.",
+    );
+  });
 });

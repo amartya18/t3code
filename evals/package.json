@@ -10,17 +10,20 @@
     "thread-titles": "node --env-file-if-exists=../.env thread-titles/run.ts",
     "pr-content": "node --env-file-if-exists=../.env pr-content/run.ts",
     "voice-cleanup": "node --env-file-if-exists=../.env voice-cleanup/run.ts",
+    "voice-agent": "node voice-agent/run.ts",
     "test-signal": "node --env-file-if-exists=../.env test-signal/run.ts",
     "workflow-authoring": "node --env-file-if-exists=../.env workflow-authoring/run.ts",
     "typecheck": "effect-tsgo tsrs --noEmit",
     "test": "vp test run --config ../vite.config.ts --dir ."
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.321",
     "@effect/platform-node": "catalog:",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/provider-core": "workspace:*",
     "@t3tools/shared": "workspace:*",
-    "effect": "catalog:"
+    "effect": "catalog:",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

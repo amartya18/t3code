@@ -107,6 +107,7 @@ import * as ResourceCleanupService from "./ResourceCleanupService.ts";
 import * as ThreadLaunchService from "./ThreadLaunchService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as DelegatedTaskQuestionReactor from "./DelegatedTaskQuestionReactor.ts";
+import { VoiceThreads } from "./VoiceThreads.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const layerPlatformTest = Layer.mergeAll(
@@ -3868,6 +3869,24 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         DateTime.toEpochMillis(taggedShell.updatedAt),
         DateTime.toEpochMillis(untaggedShell.updatedAt),
       );
+      const voiceThreads = yield* VoiceThreads;
+      for (const [step, tagged] of [
+        ["voice", true],
+        ["voice-retry", true],
+        ["unvoice", false],
+      ] as const) {
+        yield* orchestrator.dispatch({
+          type: "thread.tag.set",
+          commandId: CommandId.make(`runtime-layer-lifecycle-tag-${step}`),
+          threadId,
+          tag: "voice",
+          tagged,
+        });
+        assert.equal(voiceThreads.has(threadId), tagged, step);
+        // A run's thread snapshot from before the tag landed must not undo it.
+        voiceThreads.noteRunThread({ id: threadId, tags: [] });
+        assert.equal(voiceThreads.has(threadId), tagged, step);
+      }
 
       const preAutoProjection = yield* orchestrator.getThreadProjection(threadId);
       const staleAutoSettle = yield* orchestrator

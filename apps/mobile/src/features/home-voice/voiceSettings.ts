@@ -12,13 +12,23 @@ import { Atom } from "effect/reactivity";
 
 import { writeFileAtomically } from "../../lib/atomic-file";
 import { appAtomRegistry } from "../../state/atom-registry";
-import { useProjects } from "../../state/entities";
+import { environmentProjects } from "../../state/projects";
 import { userHomeAtom } from "../../state/home";
+import { voiceTuning, type VoiceTuning } from "./voiceEngine";
+
+export const KOKORO_VOICES = ["af_heart", "am_michael", "bf_emma"] as const;
+export type KokoroVoiceId = (typeof KOKORO_VOICES)[number];
 
 export interface VoiceModeSettings {
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
   readonly modelSelection: ModelSelectionType;
+  readonly voiceId: KokoroVoiceId;
+  /** Dev only: Claude turns run with extended thinking, to compare reply latency. */
+  readonly thinking: boolean;
+  /** Dev only. */
+  readonly kokoroGpu: boolean;
+  readonly tuning: VoiceTuning;
 }
 
 const DEFAULT_VOICE_MODEL: ModelSelectionType = {
@@ -33,6 +43,12 @@ const StoredVoiceSettings = Schema.Struct({
   environmentId: Schema.optional(EnvironmentId),
   projectId: Schema.optional(ProjectId),
   modelSelection: Schema.optional(ModelSelection),
+  voiceId: Schema.optional(Schema.Literals(KOKORO_VOICES)),
+  thinking: Schema.optional(Schema.Boolean),
+  kokoroGpu: Schema.optional(Schema.Boolean),
+  minSpeechMs: Schema.optional(Schema.Number),
+  minSilenceMs: Schema.optional(Schema.Number),
+  turnWaitMs: Schema.optional(Schema.Number),
 });
 type StoredVoiceSettings = typeof StoredVoiceSettings.Type;
 const StoredVoiceSettingsJson = Schema.fromJsonString(StoredVoiceSettings);
@@ -50,7 +66,8 @@ async function settingsFile() {
 }
 
 let changedBeforeLoad = false;
-void settingsFile()
+/** Settles once the stored choice is read, so a cold launch does not resolve the default project. */
+export const storedVoiceSettingsLoaded: Promise<void> = settingsFile()
   .then(async (file) => (file.exists ? await file.text() : null))
   .then((raw) => {
     if (raw === null || changedBeforeLoad) return;
@@ -70,10 +87,10 @@ export async function saveVoiceSettings(patch: StoredVoiceSettings) {
  * The stored choice where it still exists, else Home's environment and its project titled
  * "Voice". Null when no Voice project is found.
  */
-export function useVoiceModeSettings(): VoiceModeSettings | null {
-  const stored = useAtomValue(storedVoiceSettingsAtom);
-  const home = userHomeThreadRef(useAtomValue(userHomeAtom));
-  const projects = useProjects();
+export const voiceModeSettingsAtom = Atom.make((get): VoiceModeSettings | null => {
+  const stored = get(storedVoiceSettingsAtom);
+  const home = userHomeThreadRef(get(userHomeAtom));
+  const projects = get(environmentProjects.projectsAtom);
   const storedProject = projects.find(
     (project) => project.environmentId === stored.environmentId && project.id === stored.projectId,
   );
@@ -84,11 +101,24 @@ export function useVoiceModeSettings(): VoiceModeSettings | null {
         project.environmentId === home?.environmentId &&
         project.title.trim().toLowerCase() === VOICE_PROJECT_TITLE,
     );
-  return project === undefined
-    ? null
-    : {
-        environmentId: project.environmentId,
-        projectId: project.id,
-        modelSelection: stored.modelSelection ?? DEFAULT_VOICE_MODEL,
-      };
+  return project === undefined ? null : voiceModeSettings(stored, project);
+}).pipe(Atom.withLabel("home-voice:mode-settings"));
+
+export function useVoiceModeSettings(): VoiceModeSettings | null {
+  return useAtomValue(voiceModeSettingsAtom);
+}
+
+export function voiceModeSettings(
+  stored: StoredVoiceSettings,
+  project: { readonly environmentId: EnvironmentId; readonly id: ProjectId },
+): VoiceModeSettings {
+  return {
+    environmentId: project.environmentId,
+    projectId: project.id,
+    modelSelection: stored.modelSelection ?? DEFAULT_VOICE_MODEL,
+    voiceId: stored.voiceId ?? "af_heart",
+    thinking: stored.thinking ?? false,
+    kokoroGpu: stored.kokoroGpu ?? true,
+    tuning: voiceTuning(stored),
+  };
 }

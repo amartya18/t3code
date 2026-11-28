@@ -1,0 +1,623 @@
+import { expect, it, vi } from "vite-plus/test";
+
+import type { VoiceEngine, VoiceEngineConfig } from "../../../modules/t3-voice-mode";
+import { DEFAULT_VOICE_TUNING, voiceEngineConfig, voiceSpeechConfig } from "./voiceEngine";
+import { createVoiceSpeechDriver } from "./voiceSpeechDriver";
+
+vi.mock("react-native", () => ({ Platform: { OS: "ios", Version: "26.0" } }));
+vi.mock("../../../modules/t3-voice-mode", () => ({ voiceEngine: null }));
+vi.stubGlobal("__DEV__", false);
+
+function fakeEngine() {
+  const calls: string[] = [];
+  let finishStop = () => {};
+  const engine: VoiceEngine = {
+    configure: async () => {},
+    modelStatus: async () => ({ state: "ready", bytesOnDisk: 1 }),
+    downloadModels: async () => {},
+    deleteModels: async () => {},
+    prepare: async () => ({ loadMs: {} }),
+    start: async () => {
+      calls.push("start");
+    },
+    stop: () => {
+      calls.push("stop");
+      return new Promise<void>((resolve) => {
+        finishStop = () => {
+          calls.push("stopped");
+          resolve();
+        };
+      });
+    },
+    setMuted: () => {},
+    setSpeaker: (on) => {
+      calls.push(`setSpeaker ${on}`);
+    },
+    playChime: async () => {},
+    setVocabulary: async (words) => {
+      calls.push(`setVocabulary ${words.map((term) => term.text).join(", ")}`);
+    },
+    transcribe: async () => ({ text: "" }),
+    turnScore: async () => ({ probability: 1 }),
+    speak: async () => {},
+    duck: () => {},
+    stopSpeech: () => {
+      calls.push("stopSpeech");
+    },
+    selfTest: async () => "",
+    addListener: () => ({ remove: () => {} }),
+  };
+  return { engine, calls, finishStop: () => finishStop() };
+}
+
+function engineConfig(logStages: boolean): VoiceEngineConfig {
+  return { ...voiceEngineConfig("af_heart", DEFAULT_VOICE_TUNING, false), logStages };
+}
+
+function inputs(
+  config: VoiceEngineConfig,
+  send: (text: string) => Promise<unknown>,
+  speaker = false,
+) {
+  return { engineConfig: config, config: voiceSpeechConfig(DEFAULT_VOICE_TUNING), speaker, send };
+}
+
+function open(
+  engine: VoiceEngine,
+  now: () => number = () => 0,
+  log: ((line: string) => void) | null = null,
+  send: (text: string) => Promise<unknown> = async () => {},
+  overrides: Partial<Parameters<typeof createVoiceSpeechDriver>[0]> = {},
+) {
+  return createVoiceSpeechDriver({
+    engine,
+    inputs: inputs(engineConfig(log !== null), send),
+    previous: null,
+    vocabulary: [{ text: "T3" }, { text: "laptop13" }],
+    now,
+    newMessageId: () => "m1",
+    log: log ?? (() => {}),
+    chime: async () => {},
+    onReady: () => {},
+    onHangUp: () => {},
+    onChange: () => {},
+    ...overrides,
+  });
+}
+
+const settle = async () => {
+  for (let turn = 0; turn < 20; turn++) await Promise.resolve();
+};
+
+it("hanging up mid-speech stops the voice, and the next call starts only after the stop finishes", async () => {
+  const fake = fakeEngine();
+  open(fake.engine).dispose();
+  expect(fake.calls).toEqual(["stopSpeech", "stop"]);
+
+  open(fake.engine);
+  await settle();
+  expect(fake.calls).not.toContain("start");
+
+  fake.finishStop();
+  await settle();
+  fake.finishStop();
+  await settle();
+  expect(fake.calls.slice(-4)).toEqual([
+    "stopped",
+    "start",
+    "setSpeaker false",
+    "setVocabulary T3, laptop13",
+  ]);
+});
+
+it("gives Parakeet the call's word list once the engine has started", async () => {
+  const fake = fakeEngine();
+  open({ ...fake.engine, stop: async () => {} });
+  await settle();
+  expect(fake.calls).toEqual(["start", "setSpeaker false", "setVocabulary T3, laptop13"]);
+});
+
+it("sends the speaker choice to the engine when it changes, and only then", async () => {
+  const fake = fakeEngine();
+  const driver = open({ ...fake.engine, stop: async () => {} });
+  await settle();
+  fake.calls.splice(0);
+  const config = engineConfig(false);
+
+  driver.update(inputs(config, async () => {}, true));
+  driver.update(inputs(config, async () => {}, true));
+  driver.update(inputs(config, async () => {}, false));
+
+  expect(fake.calls).toEqual(["setSpeaker true", "setSpeaker false"]);
+  driver.dispose();
+});
+
+it("feeds new detector holds from the sliders to the live engine without restarting it", async () => {
+  const fake = fakeEngine();
+  const configured: VoiceEngineConfig["vad"][] = [];
+  const engine: VoiceEngine = {
+    ...fake.engine,
+    stop: async () => {},
+    configure: async (config) => {
+      configured.push(config.vad);
+    },
+  };
+  const driver = open(engine);
+  await settle();
+  const tuning = { ...DEFAULT_VOICE_TUNING, minSpeechMs: 900, minSilenceMs: 1_200 };
+  driver.update(inputs(voiceEngineConfig("af_heart", tuning, false), async () => {}));
+  await settle();
+
+  expect(configured.at(-1)).toMatchObject({ minSpeechMs: 900, minSilenceMs: 1_200 });
+  expect(fake.calls.filter((call) => call === "start")).toHaveLength(1);
+  driver.dispose();
+});
+
+it("ducks the voice in steps rather than one jump, and restores it the same way", async () => {
+  vi.useFakeTimers();
+  const levels: number[] = [];
+  const listeners = new Map<string, (event: unknown) => void>();
+  const engine: VoiceEngine = {
+    ...fakeEngine().engine,
+    stop: async () => {},
+    duck: (level) => {
+      levels.push(level);
+    },
+    addListener: (name, listener) => {
+      listeners.set(name, listener as (event: unknown) => void);
+      return { remove: () => {} };
+    },
+  };
+  let clock = 0;
+  const driver = open(engine, () => clock);
+  await settle();
+  driver.dispatch({
+    type: "thread",
+    replies: [{ id: "r1", text: "A long answer that keeps going.", streaming: false }],
+    userMessageIds: new Set(),
+    lastLine: null,
+    atMs: 0,
+  });
+
+  listeners.get("vad")!({ speaking: true, probability: 1, level: 0.5, atMs: 0 });
+  vi.advanceTimersByTime(200);
+  const ducked = levels.splice(0);
+  expect(ducked.length).toBeGreaterThan(2);
+  expect(ducked.at(-1)).toBe(0.25);
+  expect(ducked).toEqual([...ducked].sort((left, right) => right - left));
+
+  clock = 200;
+  listeners.get("vad")!({ speaking: false, probability: 0, level: 0, atMs: clock });
+  vi.advanceTimersByTime(200);
+  expect(levels.length).toBeGreaterThan(2);
+  expect(levels.at(-1)).toBe(1);
+  expect(levels).toEqual([...levels].sort((left, right) => left - right));
+
+  driver.dispose();
+  vi.useRealTimers();
+});
+
+it("hands Smart Turn and Parakeet the engine's own times for his speech, and sends what Parakeet heard", async () => {
+  const listeners = new Map<string, (event: unknown) => void>();
+  const asked: string[] = [];
+  const sent: string[] = [];
+  const engine: VoiceEngine = {
+    ...fakeEngine().engine,
+    stop: async () => {},
+    turnScore: async (fromMs, toMs) => {
+      asked.push(`turnScore ${fromMs}-${toMs}`);
+      return { probability: 0.9 };
+    },
+    transcribe: async (fromMs, toMs) => {
+      asked.push(`transcribe ${fromMs}-${toMs}`);
+      return { text: "Merge it." };
+    },
+    addListener: (name, listener) => {
+      listeners.set(name, listener as (event: unknown) => void);
+      return { remove: () => {} };
+    },
+  };
+  const driver = open(
+    engine,
+    () => 1_800_000_000_000,
+    null,
+    async (text) => {
+      sent.push(text);
+    },
+  );
+  await settle();
+
+  listeners.get("vad")!({ speaking: true, probability: 0.9, level: 0.4, atMs: 5_000 });
+  listeners.get("vad")!({ speaking: false, probability: 0.1, level: 0, atMs: 6_200 });
+  await settle();
+  expect(asked).toEqual(["turnScore 5000-6200", "transcribe 4600-6200"]);
+  expect(sent).toEqual(["Merge it."]);
+
+  driver.dispose();
+});
+
+it("in development, logs each word the word list swapped in", async () => {
+  const logs: string[] = [];
+  const listeners = new Map<string, (event: unknown) => void>();
+  const sent: string[] = [];
+  const engine: VoiceEngine = {
+    ...fakeEngine().engine,
+    stop: async () => {},
+    transcribe: async () => ({
+      text: "Run pstack on laptop13.",
+      replaced: [
+        { from: "P stack", to: "pstack" },
+        { from: "laptop thirteen", to: "laptop13" },
+      ],
+    }),
+    addListener: (name, listener) => {
+      listeners.set(name, listener as (event: unknown) => void);
+      return { remove: () => {} };
+    },
+  };
+  const driver = open(
+    engine,
+    () => 0,
+    (line) => {
+      logs.push(line);
+    },
+    async (text) => {
+      sent.push(text);
+    },
+  );
+  await settle();
+
+  listeners.get("vad")!({ speaking: true, probability: 0.9, level: 0.4, atMs: 5_000 });
+  listeners.get("vad")!({ speaking: false, probability: 0.1, level: 0, atMs: 6_200 });
+  await settle();
+
+  expect(logs.filter((line) => line.includes("word list"))).toEqual([
+    '+0.000s [voice] word list: "P stack" -> "pstack"',
+    '+0.000s [voice] word list: "laptop thirteen" -> "laptop13"',
+  ]);
+  expect(sent).toEqual(["Run pstack on laptop13."]);
+  driver.dispose();
+});
+
+it("in development, logs a blocked JS thread with the voice step just before it", () => {
+  vi.useFakeTimers();
+  let clock = 0;
+  const logs: string[] = [];
+  const driver = open(
+    { ...fakeEngine().engine, stop: async () => {} },
+    () => clock,
+    (line) => {
+      logs.push(line);
+    },
+  );
+  driver.dispatch({ type: "retry" });
+
+  clock = 1_600;
+  vi.advanceTimersByTime(100);
+  expect(logs).toContain("+1.600s [voice] js blocked 1500ms, 100ms after retry");
+
+  driver.dispose();
+  vi.useRealTimers();
+});
+
+it("in development, stamps each line with the time since the session opened, on arrival", async () => {
+  vi.useFakeTimers();
+  let clock = 5_000;
+  const logs: string[] = [];
+  const listeners = new Map<string, (event: unknown) => void>();
+  const engine: VoiceEngine = {
+    ...fakeEngine().engine,
+    stop: async () => {},
+    addListener: (name, listener) => {
+      listeners.set(name, listener as (event: unknown) => void);
+      return { remove: () => {} };
+    },
+  };
+  const driver = open(
+    engine,
+    () => clock,
+    (line) => {
+      logs.push(line);
+    },
+  );
+  await settle();
+  logs.splice(0);
+  clock = 5_250;
+  driver.dispatch({
+    type: "thread",
+    replies: [{ id: "r1", text: "Hello there.", streaming: false }],
+    userMessageIds: new Set(),
+    lastLine: null,
+    atMs: clock,
+  });
+  clock = 5_400;
+  listeners.get("stage")!({ name: "synth.start:r1:0", atMs: 5_390 });
+
+  expect(logs).toEqual(["+0.250s [voice] speak r1:0", "+0.400s [voice] stage synth.start:r1:0"]);
+
+  driver.dispose();
+  vi.useRealTimers();
+});
+
+it("in development, logs how long Kokoro took for each sentence, and on which route", async () => {
+  const logs: string[] = [];
+  const listeners = new Map<string, (event: unknown) => void>();
+  const engine: VoiceEngine = {
+    ...fakeEngine().engine,
+    stop: async () => {},
+    addListener: (name, listener) => {
+      listeners.set(name, listener as (event: unknown) => void);
+      return { remove: () => {} };
+    },
+  };
+  const driver = open(
+    engine,
+    () => 0,
+    (line) => {
+      logs.push(line);
+    },
+  );
+  await settle();
+  driver.dispatch({
+    type: "thread",
+    replies: [{ id: "r1", text: "Hello there.", streaming: false }],
+    userMessageIds: new Set(),
+    lastLine: null,
+    atMs: 0,
+  });
+  listeners.get("stage")!({ name: "synth.start:r1:0", atMs: 9_000 });
+  listeners.get("stage")!({ name: "synth.end:r1:0", atMs: 9_142.4 });
+
+  expect(logs.filter((line) => line.includes("synth "))).toEqual([
+    "+0.000s [voice] synth 142ms, 12 chars, route cpu",
+  ]);
+  driver.dispose();
+});
+
+it("a sentence the engine couldn't voice reaches the call as a failed reply", async () => {
+  const listeners = new Map<string, (event: unknown) => void>();
+  const states: Array<ReadonlyMap<string, unknown>> = [];
+  const engine: VoiceEngine = {
+    ...fakeEngine().engine,
+    stop: async () => {},
+    speak: async () => {
+      throw Object.assign(new Error("noise stage failed"), { code: "synth_failed" });
+    },
+    addListener: (name, listener) => {
+      listeners.set(name, listener as (event: unknown) => void);
+      return { remove: () => {} };
+    },
+  };
+  const driver = open(
+    engine,
+    () => 0,
+    null,
+    async () => {},
+    {
+      onChange: (state) => states.push(state.shown),
+    },
+  );
+  await settle();
+  driver.dispatch({
+    type: "thread",
+    replies: [{ id: "r1", text: "Hello there.", streaming: false }],
+    userMessageIds: new Set(),
+    lastLine: null,
+    atMs: 0,
+  });
+  await settle();
+
+  expect(states.at(-1)?.get("r1")).toEqual({ kind: "unplayed" });
+  driver.dispose();
+});
+
+it("in development, logs how loud the mic was while he spoke", async () => {
+  const logs: string[] = [];
+  const listeners = new Map<string, (event: unknown) => void>();
+  const engine: VoiceEngine = {
+    ...fakeEngine().engine,
+    stop: async () => {},
+    addListener: (name, listener) => {
+      listeners.set(name, listener as (event: unknown) => void);
+      return { remove: () => {} };
+    },
+  };
+  const driver = open(
+    engine,
+    () => 0,
+    (line) => {
+      logs.push(line);
+    },
+  );
+  await settle();
+  const vad = (speaking: boolean) =>
+    listeners.get("vad")!({ speaking, probability: 0.9, level: 0, atMs: 0 });
+  const mic = (level: number) => listeners.get("micLevel")!({ level, atMs: 0 });
+
+  listeners.get("route")!({ output: "Receiver" });
+  mic(0.5);
+  vad(true);
+  for (const level of [0.02, 0.04, 0.03, 0.01, 0.08]) mic(level);
+  vad(false);
+  mic(0.5);
+
+  expect(logs.filter((line) => line.includes("mic while speaking"))).toEqual([
+    "+0.000s [voice] mic while speaking: median 0.030, p90 0.080, peak 0.080 over 5 windows, on Receiver",
+  ]);
+  driver.dispose();
+});
+
+it("in development, logs the tuning the engine starts with", async () => {
+  const logs: string[] = [];
+  const driver = open(
+    { ...fakeEngine().engine, stop: async () => {} },
+    () => 0,
+    (line) => {
+      logs.push(line);
+    },
+  );
+  await settle();
+
+  expect(logs).toContain(
+    "+0.000s [voice] tuning: threshold 0.5, min speech 150ms, silence before scoring 200ms, wait when not done 3000ms",
+  );
+  driver.dispose();
+});
+
+function listening(fake: ReturnType<typeof fakeEngine>) {
+  const listeners = new Map<string, (event: unknown) => void>();
+  const engine: VoiceEngine = {
+    ...fake.engine,
+    stop: async () => {
+      fake.calls.push("stop");
+    },
+    speak: async ({ id }) => {
+      fake.calls.push(`speak ${id}`);
+    },
+    addListener: (name, listener) => {
+      listeners.set(name, listener as (event: unknown) => void);
+      return { remove: () => {} };
+    },
+  };
+  const chime = async (sound: "start" | "end") => {
+    fake.calls.push(`chime ${sound}`);
+  };
+  return { engine, listeners, chime };
+}
+
+it("plays the start chime through the started engine, before the call goes live", async () => {
+  const fake = fakeEngine();
+  const { engine, chime } = listening(fake);
+  const driver = open(
+    engine,
+    () => 0,
+    null,
+    async () => {},
+    { chime, onReady: () => fake.calls.push("ready") },
+  );
+  await settle();
+
+  expect(fake.calls.slice(0, 6)).toEqual([
+    "stop",
+    "start",
+    "setSpeaker false",
+    "chime start",
+    "setVocabulary T3, laptop13",
+    "ready",
+  ]);
+  driver.dispose();
+  await settle();
+});
+
+it("still starts the engine when the start chime fails", async () => {
+  const fake = fakeEngine();
+  const { engine } = listening(fake);
+  const driver = open(
+    engine,
+    () => 0,
+    null,
+    async () => {},
+    {
+      chime: () => Promise.reject(new Error("no audio")),
+    },
+  );
+  await settle();
+
+  expect(fake.calls).toContain("start");
+  driver.dispose();
+  await settle();
+});
+
+it("hanging up a live call plays the end chime once, before the engine stops", async () => {
+  const fake = fakeEngine();
+  const { engine, chime } = listening(fake);
+  const driver = open(
+    engine,
+    () => 0,
+    null,
+    async () => {},
+    { chime },
+  );
+  await settle();
+  fake.calls.splice(0);
+
+  driver.dispose();
+  await settle();
+  expect(fake.calls).toEqual(["stopSpeech", "chime end", "stop"]);
+});
+
+it("ending the call with [end call] plays the end chime once, after the goodbye has played", async () => {
+  const fake = fakeEngine();
+  const { engine, listeners, chime } = listening(fake);
+  let driver: ReturnType<typeof open> | null = null;
+  driver = open(
+    engine,
+    () => 0,
+    null,
+    async () => {},
+    {
+      chime,
+      onHangUp: () => driver?.dispose(),
+    },
+  );
+  await settle();
+  fake.calls.splice(0);
+
+  driver.dispatch({
+    type: "thread",
+    replies: [{ id: "r1", text: "Bye for now. [end call]", streaming: false }],
+    userMessageIds: new Set(),
+    lastLine: "bye",
+    atMs: 0,
+  });
+  await settle();
+  listeners.get("playback")!({ id: "r1:0", state: "started" });
+  listeners.get("playback")!({ id: "r1:0", state: "finished" });
+  await settle();
+
+  expect(fake.calls).toEqual(["speak r1:0", "stopSpeech", "chime end", "stop"]);
+});
+
+it("hanging up before the call is live plays no end chime", async () => {
+  const fake = fakeEngine();
+  const { engine, chime } = listening(fake);
+  open(
+    engine,
+    () => 0,
+    null,
+    async () => {},
+    { chime },
+  ).dispose();
+  await settle();
+
+  expect(fake.calls).not.toContain("chime end");
+  expect(fake.calls).not.toContain("start");
+});
+
+it("a failed end chime doesn't hold up hanging up or the next call", async () => {
+  const fake = fakeEngine();
+  const { engine } = listening(fake);
+  const failing = () => Promise.reject(new Error("no audio"));
+  const hungUp = open(
+    engine,
+    () => 0,
+    null,
+    async () => {},
+    { chime: failing },
+  );
+  await settle();
+  hungUp.dispose();
+  fake.calls.splice(0);
+
+  const next = open(
+    engine,
+    () => 0,
+    null,
+    async () => {},
+    { chime: failing },
+  );
+  await settle();
+  expect(fake.calls).toContain("start");
+  next.dispose();
+  await settle();
+});

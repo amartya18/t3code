@@ -22,12 +22,14 @@ export function SliderRow(props: SliderRowProps) {
   // The value of the drag in progress; null until the drag moves.
   const draft = useRef<number | null>(null);
   const editing = useRef(false);
-  const commit = (value: number) => {
-    if (props.disabled) return;
-    const next = Math.min(
+  const snap = (value: number) =>
+    Math.min(
       props.max,
       Math.max(props.min, props.min + Math.round((value - props.min) / props.step) * props.step),
     );
+  const commit = (value: number) => {
+    if (props.disabled) return;
+    const next = snap(value);
     if (next === props.value) return;
     void Haptics.selectionAsync().catch(() => undefined);
     props.onChange(next);
@@ -59,8 +61,10 @@ export function SliderRow(props: SliderRowProps) {
             ]}
             onValueChange={(value) => {
               // Accessibility adjustments do not begin a touch editing session.
-              if (editing.current) draft.current = value;
-              else commit(value);
+              if (editing.current) {
+                draft.current = value;
+                props.onDrag?.(snap(value));
+              } else commit(value);
             }}
             onEditingChanged={(isEditing) => {
               editing.current = isEditing;

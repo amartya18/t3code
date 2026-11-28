@@ -11,11 +11,12 @@ import {
 import { Atom } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../../connection/runtime";
-import { makeQueuedMessageMetadata, makeTurnCommandMetadata } from "../../lib/commandMetadata";
+import { makeQueuedMessageMetadata } from "../../lib/commandMetadata";
 import { scopedThreadKey } from "../../lib/scopedEntities";
+import { uuidv4 } from "../../lib/uuid";
 import { appAtomRegistry } from "../../state/atom-registry";
+import { serverEnvironment } from "../../state/server";
 import { enqueueThreadOutboxMessage } from "../../state/thread-outbox";
-import { buildCatchUp, renderCatchUp } from "./catchUp";
 import {
   diffHomeUpdates,
   renderHomeUpdate,
@@ -23,6 +24,8 @@ import {
   type HomeUpdateCursor,
 } from "./homeUpdates";
 import type { HomeView } from "./homeView";
+import { voiceInstanceEnabled, voiceTurnSelection } from "./voiceInstances";
+import { voiceDevLog } from "./voiceLogUpload";
 import type { VoiceModeSettings } from "./voiceSettings";
 
 export const VOICE_THREAD_TAG = "voice";
@@ -30,7 +33,11 @@ export const VOICE_THREAD_TAG = "voice";
 /** The one live voice session, in memory: its thread, Home's thread, and what it has reported. */
 export interface VoiceSession extends HomeUpdateCursor {
   readonly thread: ScopedThreadRef;
+  /** Amar's first line creates the thread; until it is queued, nothing reads the thread or sends to it. */
+  readonly threadCreated: boolean;
   readonly home: ScopedThreadRef;
+  readonly muted: boolean;
+  readonly speaker: boolean;
 }
 
 export const voiceSessionAtom = Atom.make<VoiceSession | null>(null).pipe(
@@ -41,55 +48,106 @@ export const voiceSessionAtom = Atom.make<VoiceSession | null>(null).pipe(
 const sameThread = (left: ScopedThreadRef, right: ScopedThreadRef) =>
   left.environmentId === right.environmentId && left.threadId === right.threadId;
 
-/** Queues the voice thread's creation with the catch-up as its first message; replaces any live session. */
-export async function startVoiceSession(input: {
+/** Opens a silent session, replacing any live one; nothing is sent until Amar speaks. */
+export function startVoiceSession(input: {
   readonly settings: VoiceModeSettings;
   readonly home: ScopedThreadRef;
   readonly view: HomeView;
   readonly nowMs: number;
-}): Promise<ScopedThreadRef> {
-  const metadata = makeTurnCommandMetadata();
-  const thread = {
-    environmentId: input.settings.environmentId,
-    threadId: ThreadId.make(metadata.threadId),
-  };
-  await enqueueThreadOutboxMessage({
-    ...thread,
-    messageId: MessageId.make(metadata.messageId),
-    commandId: CommandId.make(metadata.commandId),
-    text: renderCatchUp(buildCatchUp(input.view, input.nowMs)),
-    attachments: [],
-    modelSelection: input.settings.modelSelection,
-    // Home's MCP access check refuses senders in a narrower mode; the project's deny list keeps tools narrow.
-    runtimeMode: "full-access",
-    interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-    creation: {
-      projectId: input.settings.projectId,
-      workspaceMode: "local",
-      branch: null,
-      worktreePath: null,
-    },
-    createdAt: metadata.createdAt,
-  });
+}) {
   appAtomRegistry.set(voiceSessionAtom, {
-    thread,
+    thread: { environmentId: input.settings.environmentId, threadId: ThreadId.make(uuidv4()) },
+    threadCreated: false,
     home: input.home,
+    muted: false,
+    speaker: false,
     ...startHomeUpdateCursor(input.view, input.nowMs),
   });
-  return thread;
 }
 
-export function endVoiceSession(thread: ScopedThreadRef) {
+export function endVoiceSession() {
+  appAtomRegistry.set(voiceSessionAtom, null);
+}
+
+export function toggleVoiceMuted() {
   const session = appAtomRegistry.get(voiceSessionAtom);
-  if (session !== null && sameThread(session.thread, thread)) {
-    appAtomRegistry.set(voiceSessionAtom, null);
+  if (session !== null)
+    appAtomRegistry.set(voiceSessionAtom, { ...session, muted: !session.muted });
+}
+
+export function toggleVoiceSpeaker() {
+  const session = appAtomRegistry.get(voiceSessionAtom);
+  if (session !== null)
+    appAtomRegistry.set(voiceSessionAtom, { ...session, speaker: !session.speaker });
+}
+
+/** Queues what Amar said (or typed) in the voice thread, on the session's current model. */
+export async function sendVoiceMessage(
+  thread: ScopedThreadRef,
+  settings: VoiceModeSettings,
+  text: string,
+  messageId?: string,
+) {
+  // Claimed before the write, so a line sent meanwhile can't create the thread a second time.
+  const creation = markThreadCreated(thread, true)
+    ? ({
+        projectId: settings.projectId,
+        workspaceMode: "local",
+        branch: null,
+        worktreePath: null,
+      } as const)
+    : null;
+  const metadata = makeQueuedMessageMetadata();
+  const modelSelection = voiceTurnSelection(
+    settings.modelSelection,
+    voiceInstanceEnabled(
+      appAtomRegistry.get(serverEnvironment.configValueAtom(thread.environmentId)),
+      settings.projectId,
+    ),
+    settings.thinking,
+  );
+  voiceDevLog(`[voice] turn on ${modelSelection.instanceId}/${modelSelection.model}`);
+  try {
+    await enqueueThreadOutboxMessage({
+      ...thread,
+      messageId: MessageId.make(messageId ?? metadata.messageId),
+      commandId: CommandId.make(metadata.commandId),
+      text,
+      attachments: [],
+      modelSelection,
+      // Home's MCP access check refuses senders in a narrower mode; the project's deny list keeps tools narrow.
+      runtimeMode: "full-access",
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      ...(creation === null ? {} : { creation }),
+      createdAt: metadata.createdAt,
+    });
+  } catch (error) {
+    if (creation !== null) markThreadCreated(thread, false);
+    throw error;
   }
 }
 
-/** Sends what changed at Home since the session last reported; repeat calls send nothing new. */
+/** Sets the live session's flag; true when this call changed it. */
+function markThreadCreated(thread: ScopedThreadRef, created: boolean): boolean {
+  const session = appAtomRegistry.get(voiceSessionAtom);
+  if (
+    session === null ||
+    !sameThread(session.thread, thread) ||
+    session.threadCreated === created
+  ) {
+    return false;
+  }
+  appAtomRegistry.set(voiceSessionAtom, { ...session, threadCreated: created });
+  return true;
+}
+
+/**
+ * Sends what changed at Home since the session last reported; repeat calls send nothing new.
+ * Before Amar's first line there is no thread, so the cursor stays put and the changes wait.
+ */
 export function pushHomeUpdates(thread: ScopedThreadRef, view: HomeView) {
   const session = appAtomRegistry.get(voiceSessionAtom);
-  if (session === null || !sameThread(session.thread, thread)) return;
+  if (session === null || !sameThread(session.thread, thread) || !session.threadCreated) return;
   const { updates, cursor } = diffHomeUpdates(view, session);
   if (cursor === session) return;
   // Advance before sending so a re-render while the outbox writes cannot send the same update.

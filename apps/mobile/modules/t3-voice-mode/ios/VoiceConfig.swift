@@ -1,11 +1,5 @@
 import ExpoModulesCore
-@_implementationOnly import FluidAudio
 import Foundation
-
-struct AsrConfigRecord: Record {
-  @Field(.required) var chunkMs: Int = 0
-  @Field(.required) var eouDebounceMs: Int = 0
-}
 
 struct VadConfigRecord: Record {
   @Field(.required) var threshold: Double = 0
@@ -17,6 +11,13 @@ struct TtsConfigRecord: Record {
   @Field(.required) var voiceId: String = ""
   @Field(.required) var speed: Double = 0
   @Field(.required) var vocoderFloat32: Bool = false
+  @Field var gpu: Bool = false
+}
+
+struct VocabularyTermRecord: Record {
+  @Field(.required) var text: String = ""
+  @Field var aliases: [String] = []
+  @Field var minSimilarity: Double?
 }
 
 struct AecConfigRecord: Record {
@@ -24,38 +25,24 @@ struct AecConfigRecord: Record {
 }
 
 struct VoiceEngineConfigRecord: Record {
-  @Field(.required) var asr = AsrConfigRecord()
   @Field(.required) var vad = VadConfigRecord()
   @Field(.required) var tts = TtsConfigRecord()
   @Field(.required) var aec = AecConfigRecord()
   @Field(.required) var logStages: Bool = false
 }
 
-struct VadSettings: Equatable {
-  let threshold: Float
-  let minSpeechSamples: Int
-  let minSilenceSeconds: Double
-}
-
 struct VoiceConfig: Equatable {
-  let chunkSize: StreamingChunkSize
-  let eouDebounceMs: Int
-  let vad: VadSettings
+  let vad: SpeechGate.Settings
   let voiceId: String
   let speed: Float
   let vocoderFloat32: Bool
+  let kokoroGpu: Bool
   let aec: Bool
   let logStages: Bool
+}
 
-  var asrRepo: Repo { chunkSize == .ms160 ? .parakeetEou160 : .parakeetEou320 }
-
+extension VoiceConfig {
   init(_ record: VoiceEngineConfigRecord) throws {
-    switch record.asr.chunkMs {
-    case 160: chunkSize = .ms160
-    case 320: chunkSize = .ms320
-    default: throw VoiceModeError.invalidConfig("asr.chunkMs must be 160 or 320")
-    }
-    guard record.asr.eouDebounceMs >= 0 else { throw VoiceModeError.invalidConfig("asr.eouDebounceMs must be >= 0") }
     guard record.vad.threshold > 0, record.vad.threshold <= 1 else {
       throw VoiceModeError.invalidConfig("vad.threshold must be in (0, 1]")
     }
@@ -67,16 +54,12 @@ struct VoiceConfig: Equatable {
       throw VoiceModeError.invalidConfig("tts.voiceId must be letters, digits and underscores")
     }
     guard record.tts.speed > 0 else { throw VoiceModeError.invalidConfig("tts.speed must be > 0") }
-    eouDebounceMs = record.asr.eouDebounceMs
-    vad = VadSettings(
-      threshold: Float(record.vad.threshold),
-      minSpeechSamples: record.vad.minSpeechMs * VadManager.sampleRate / 1000,
-      minSilenceSeconds: Double(record.vad.minSilenceMs) / 1000)
-    voiceId = voice
-    speed = Float(record.tts.speed)
-    vocoderFloat32 = record.tts.vocoderFloat32
-    aec = record.aec.enabled
-    logStages = record.logStages
+    self.init(
+      vad: SpeechGate.Settings(
+        threshold: Float(record.vad.threshold), minSpeechMs: Double(record.vad.minSpeechMs),
+        minSilenceMs: Double(record.vad.minSilenceMs)),
+      voiceId: voice, speed: Float(record.tts.speed), vocoderFloat32: record.tts.vocoderFloat32,
+      kokoroGpu: record.tts.gpu, aec: record.aec.enabled, logStages: record.logStages)
   }
 }
 

@@ -1,27 +1,37 @@
 import AVFoundation
 import Foundation
+import UIKit
 
 /// One AVAudioEngine for the mic and the voice, so Apple's voice processing cancels our own speech.
 actor VoiceEngine {
   nonisolated let events: EventSink
   nonisolated let controls: Controls
+  nonisolated let ring: AudioRing
+  nonisolated let levels: MicLevelEvents
   let listener: Listener
+  let transcriber = Transcriber()
+  let turn = TurnDetector()
   let speaker: Speaker
   private(set) var config: VoiceConfig?
   private var audio: AVAudioEngine?
   private var running = false
   private var downloading = false
+  private var loading: Task<[String: Int], Error>?
   private var sessionObservers: [NSObjectProtocol] = []
   private var engineObserver: NSObjectProtocol?
   private var stopping: Task<Void, Never>?
   private var restarting = false
+  private var speakerOverride = false
 
   init() {
     let events = EventSink()
     let controls = Controls()
+    let ring = AudioRing(seconds: 60)
     self.events = events
     self.controls = controls
-    listener = Listener(events: events)
+    self.ring = ring
+    levels = MicLevelEvents(events)
+    listener = Listener(events: events, ring: ring)
     speaker = Speaker(events: events, controls: controls)
   }
 
@@ -58,9 +68,18 @@ actor VoiceEngine {
 
   func deleteModels() async throws {
     guard !running, !downloading else { throw VoiceModeError.busy }
+    _ = await loading?.result
     await listener.unload()
+    await transcriber.unload()
+    await turn.unload()
     await speaker.unload()
     try ModelStore.delete()
+  }
+
+  func prepare() async throws -> [String: Int] {
+    let config = try requireConfig()
+    guard !running, ModelStore.isReady(config) else { return [:] }
+    return try await load(config)
   }
 
   func start() async throws {
@@ -68,15 +87,13 @@ actor VoiceEngine {
     guard !running else { return }
     let config = try requireConfig()
     running = true
+    controls.speaker = false
     do {
       guard await AVAudioApplication.requestRecordPermission() else { throw VoiceModeError.permissionDenied }
       guard ModelStore.isReady(config) else { throw VoiceModeError.modelsMissing }
-      events.stage("load.start")
-      async let heard: Void = listener.load(config)
-      async let spoken: Void = speaker.load(config)
-      _ = try await (heard, spoken)
-      events.stage("load.end")
+      _ = try await load(config)
       guard running else { return }
+      ring.clear()
       listener.input.yield(.reset)
       try activateSession(config)
       try await buildAudio(config)
@@ -85,6 +102,37 @@ actor VoiceEngine {
       await stop()
       throw error
     }
+  }
+
+  private func load(_ config: VoiceConfig) async throws -> [String: Int] {
+    let previous = loading
+    let task = Task {
+      _ = await previous?.result
+      return try await self.loadModels(config)
+    }
+    loading = task
+    return try await task.value
+  }
+
+  private func loadModels(_ config: VoiceConfig) async throws -> [String: Int] {
+    let began = nowMs()
+    events.stage("load.start")
+    async let heard = timed("vad", since: began) { try await self.listener.load() }
+    async let written = timed("asr", since: began) { try await self.transcriber.load() }
+    async let turned = timed("turn", since: began) { try await self.turn.load() }
+    async let spoken = timed("tts", since: began) { try await self.speaker.load(config) }
+    let (vad, asr, turnLoad, tts) = try await (heard, written, turned, spoken)
+    events.stage("load.end \(Int(nowMs() - began))ms")
+    return Dictionary(uniqueKeysWithValues: [vad, asr, turnLoad, tts])
+  }
+
+  private nonisolated func timed(
+    _ part: String, since began: Double, _ work: () async throws -> Void
+  ) async throws -> (String, Int) {
+    try await work()
+    let ms = Int(nowMs() - began)
+    events.stage("load.\(part).end \(ms)ms")
+    return (part, ms)
   }
 
   func stop() async {
@@ -99,6 +147,7 @@ actor VoiceEngine {
       await self.teardownAudio()
       await self.speaker.stopAll()
       self.listener.input.yield(.reset)
+      await self.leaveRoute()
       try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
     stopping = task
@@ -106,8 +155,19 @@ actor VoiceEngine {
     stopping = nil
   }
 
-  func finalize() async throws -> String {
-    try await listener.finalize()
+  func setVocabulary(_ terms: [VocabularyTerm]) async throws {
+    try await transcriber.setVocabulary(terms)
+  }
+
+  func transcribe(fromMs: Double, toMs: Double) async throws -> Transcript {
+    let samples = ring.samples(fromMs: fromMs, toMs: toMs)
+    events.stage("transcribe.start")
+    defer { events.stage("transcribe.end") }
+    return try await transcriber.transcribe(samples)
+  }
+
+  func turnScore(fromMs: Double, toMs: Double) async throws -> Float {
+    try await turn.probability(ring.samples(fromMs: fromMs, toMs: toMs))
   }
 
   func speak(id: String, text: String, seq: Int) async throws {
@@ -116,7 +176,17 @@ actor VoiceEngine {
 
   nonisolated func setMuted(_ muted: Bool) {
     controls.muted = muted
+    if muted { levels.silence() }
     Task { await self.applyMute() }
+  }
+
+  nonisolated func setSpeaker(_ on: Bool) {
+    controls.speaker = on
+    Task { await self.applyRoute() }
+  }
+
+  func playChime(_ url: URL) async throws {
+    try await speaker.chime(url)
   }
 
   nonisolated func duck(_ level: Double) {
@@ -134,11 +204,9 @@ actor VoiceEngine {
     input.isVoiceProcessingInputMuted = controls.muted
   }
 
-  private func activateSession(_ config: VoiceConfig) throws {
+  func activateSession(_ config: VoiceConfig) throws {
     let session = AVAudioSession.sharedInstance()
-    try session.setCategory(
-      .playAndRecord, mode: config.aec ? .voiceChat : .default,
-      options: [.defaultToSpeaker, .allowBluetoothHFP])
+    try session.setCategory(.playAndRecord, mode: config.aec ? .voiceChat : .default, options: [.allowBluetoothHFP])
     try session.setActive(true)
   }
 
@@ -154,7 +222,7 @@ actor VoiceEngine {
       Task { await self?.engineConfigurationChanged(engine) }
     }
     events.stage("mic.start")
-    emitRoute()
+    await applyRoute()
   }
 
   /// Taps the mic in its current format and starts the engine. Right after a route change or
@@ -171,10 +239,17 @@ actor VoiceEngine {
       throw VoiceModeError.noInput
     }
     let controls = self.controls
+    let ring = self.ring
+    let levels = self.levels
     let sink = listener.input
-    input.installTap(onBus: 0, bufferSize: 4096, format: format) { buffer, _ in
-      guard let converted = mic.convert(buffer, silence: controls.muted) else { return }
-      sink.yield(.audio(converted))
+    let sampleRate = format.sampleRate
+    input.installTap(onBus: 0, bufferSize: 4096, format: format) { buffer, when in
+      let muted = controls.muted
+      guard let samples = mic.convert(buffer, silence: muted) else { return }
+      let capturedMs =
+        when.isHostTimeValid ? hostMs(when.hostTime) : nowMs() - Double(buffer.frameLength) / sampleRate * 1000
+      if muted { levels.silence() } else { levels.hear(samples, atMs: capturedMs) }
+      sink.yield(.audio(samples, start: ring.append(samples, atMs: capturedMs)))
     }
     if aec { input.isVoiceProcessingInputMuted = controls.muted }
     await speaker.attach(engine)
@@ -189,6 +264,7 @@ actor VoiceEngine {
     audio = nil
     engine.inputNode.removeTap(onBus: 0)
     engine.stop()
+    levels.silence()
     await speaker.attach(nil)
   }
 
@@ -213,12 +289,12 @@ actor VoiceEngine {
     for attempt in 1...3 {
       try? await Task.sleep(nanoseconds: UInt64(attempt) * 250_000_000)
       guard engine === audio, running, let config else { return }
-      if engine.isRunning { return emitRoute() }
+      if engine.isRunning { return await applyRoute() }
       do {
         try activateSession(config)
         try await run(engine, aec: config.aec)
         events.stage("mic.restart")
-        return emitRoute()
+        return await applyRoute()
       } catch {
         events.stage("mic.restart_failed:\(attempt)")
       }
@@ -238,7 +314,7 @@ actor VoiceEngine {
       },
       center.addObserver(forName: AVAudioSession.routeChangeNotification, object: session, queue: nil) {
         [weak self] _ in
-        Task { await self?.emitRoute() }
+        Task { await self?.applyRoute() }
       },
       center.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: session, queue: nil) {
         [weak self] _ in
@@ -249,14 +325,52 @@ actor VoiceEngine {
 
   private func interrupted(began: Bool) async {
     events.send("interruption", ["phase": began ? "began" : "ended"])
-    if began { return }
+    if began { return levels.silence() }
     guard let engine = audio else { return await recover() }
     await engineConfigurationChanged(engine)
   }
 
-  private func emitRoute() {
-    let output = AVAudioSession.sharedInstance().currentRoute.outputs.first?.portType.rawValue ?? "none"
-    events.send("route", ["output": output])
+  /// Converges the live call onto the chosen output after a toggle, a route change, an interruption
+  /// or a restart, since iOS drops the speaker override whenever the route changes.
+  private func applyRoute() async {
+    guard running, audio != nil else { return }
+    let output: AVAudioSession.Port?
+    do {
+      output = try routeSpeaker(controls.speaker)
+    } catch {
+      events.error("speaker_failed", error)
+      output = AVAudioSession.sharedInstance().currentRoute.outputs.first?.portType
+    }
+    await setProximityMonitoring(output == .builtInReceiver)
+    events.send("route", ["output": output?.rawValue ?? "none"])
+  }
+
+  /// Overrides only when the route has drifted from the choice: each override posts a route change
+  /// that calls back here, and a device with no earpiece stays on the speaker either way.
+  func routeSpeaker(_ on: Bool) throws -> AVAudioSession.Port? {
+    let session = AVAudioSession.sharedInstance()
+    let output = { session.currentRoute.outputs.first?.portType }
+    if on, !speakerOverride || output() != .builtInSpeaker {
+      try session.overrideOutputAudioPort(.speaker)
+      speakerOverride = true
+    } else if !on, speakerOverride {
+      try session.overrideOutputAudioPort(.none)
+      speakerOverride = false
+    }
+    return output()
+  }
+
+  private func leaveRoute() async {
+    _ = try? routeSpeaker(false)
+    await setProximityMonitoring(false)
+  }
+
+  @discardableResult
+  func setProximityMonitoring(_ on: Bool) async -> Bool {
+    await MainActor.run { () -> Bool in
+      UIDevice.current.isProximityMonitoringEnabled = on
+      return UIDevice.current.isProximityMonitoringEnabled
+    }
   }
 }
 
@@ -274,7 +388,7 @@ final class MicConverter: @unchecked Sendable {
     ratio = Self.format.sampleRate / input.sampleRate
   }
 
-  func convert(_ buffer: AVAudioPCMBuffer, silence: Bool) -> AVAudioPCMBuffer? {
+  func convert(_ buffer: AVAudioPCMBuffer, silence: Bool) -> [Float]? {
     let capacity = AVAudioFrameCount((Double(buffer.frameLength) * ratio).rounded(.up)) + 32
     guard let output = AVAudioPCMBuffer(pcmFormat: Self.format, frameCapacity: capacity) else { return nil }
     var supplied = false
@@ -289,12 +403,44 @@ final class MicConverter: @unchecked Sendable {
       return buffer
     }
     guard status != .error, output.frameLength > 0, let channel = output.floatChannelData?[0] else { return nil }
-    if silence { channel.update(repeating: 0, count: Int(output.frameLength)) }
-    return output
+    let count = Int(output.frameLength)
+    return silence ? [Float](repeating: 0, count: count) : Array(UnsafeBufferPointer(start: channel, count: count))
   }
 }
 
-/// Sends `models` progress once per whole percent per part, so a download doesn't flood the bridge.
+/// Sends `micLevel` for each window the mic hears, and a single 0 when it goes quiet (muted,
+/// stopped or interrupted) so the wave never keeps a stale level. Sending under the lock keeps
+/// that 0 after every level sent before it.
+final class MicLevelEvents: @unchecked Sendable {
+  private let lock = NSLock()
+  private let events: EventSink
+  private var quiet = true
+
+  init(_ events: EventSink) {
+    self.events = events
+  }
+
+  func hear(_ samples: [Float], atMs: Double) {
+    let windows = MicLevel.windows(samples, atMs: atMs)
+    lock.withLock {
+      quiet = false
+      for window in windows {
+        events.send("micLevel", ["level": Double(window.level), "atMs": window.atMs])
+      }
+    }
+  }
+
+  func silence() {
+    lock.withLock {
+      guard !quiet else { return }
+      quiet = true
+      events.send("micLevel", ["level": 0.0, "atMs": nowMs()])
+    }
+  }
+}
+
+/// Sends `models` progress once per whole percent per part, never going back within a part, so a
+/// download doesn't flood the bridge and FluidAudio's per-file restarts don't rewind the bar.
 final class DownloadProgressEvents: @unchecked Sendable {
   private let lock = NSLock()
   private let events: EventSink
@@ -307,7 +453,7 @@ final class DownloadProgressEvents: @unchecked Sendable {
   func report(_ part: String, _ fraction: Double) {
     let percent = Int(fraction * 100)
     let changed = lock.withLock { () -> Bool in
-      guard last?.0 != part || last?.1 != percent else { return false }
+      if let last, last.0 == part, percent <= last.1 { return false }
       last = (part, percent)
       return true
     }

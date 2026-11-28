@@ -14,8 +14,13 @@ actor Speaker {
 
   private let events: EventSink
   private let controls: Controls
+  private struct Build: Equatable {
+    let float32: Bool
+    let gpu: Bool
+  }
+
   private var tts: KokoroAneManager?
-  private var ttsFloat32: Bool?
+  private var build: Build?
   private var voice = ""
   private var speed: Float = 1
   private var engine: AVAudioEngine?
@@ -37,20 +42,22 @@ actor Speaker {
 
   func load(_ config: VoiceConfig) async throws {
     apply(config)
-    guard tts == nil || ttsFloat32 != config.vocoderFloat32 else { return }
+    let wanted = Build(float32: config.vocoderFloat32, gpu: config.kokoroGpu)
+    guard tts == nil || build != wanted else { return }
     let manager = KokoroAneManager(
       variant: .english, directory: ModelStore.root,
+      computeUnits: config.kokoroGpu ? .aneTailGpu : .aneTailCpu,
       vocoderPrecision: config.vocoderFloat32 ? .float32 : .float16)
     try await manager.initialize(preloadVoices: [config.voiceId])
     await tts?.cleanup()
     tts = manager
-    ttsFloat32 = config.vocoderFloat32
+    build = wanted
   }
 
   func unload() async {
     await tts?.cleanup()
     tts = nil
-    ttsFloat32 = nil
+    build = nil
   }
 
   func synthesize(_ text: String) async throws -> KokoroAneSynthesisResult {
@@ -69,6 +76,21 @@ actor Speaker {
     self.engine = engine
     player = makePlayer()
     for id in lost { finish(id, "stopped") }
+  }
+
+  /// Plays a short sound file through the call's route on a node of its own, so stopping speech can't cut it.
+  func chime(_ url: URL) async throws {
+    guard let engine, engine.isRunning else { throw VoiceModeError.notStarted }
+    let file = try AVAudioFile(forReading: url)
+    let node = AVAudioPlayerNode()
+    engine.attach(node)
+    engine.connect(node, to: engine.mainMixerNode, format: file.processingFormat)
+    node.scheduleFile(file, at: nil, completionHandler: nil)
+    node.play()
+    let ms = Double(file.length) / file.processingFormat.sampleRate * 1000 + 60
+    try? await Task.sleep(nanoseconds: UInt64(ms * 1_000_000))
+    node.stop()
+    engine.detach(node)
   }
 
   func stopAll() {

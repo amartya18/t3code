@@ -128,6 +128,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderInstallationGate from "../../provider/ProviderInstallationGate.ts";
 import { ClaudeOrchestratorReplayHarness } from "./ClaudeAdapterV2.testkit.ts";
 import { withInlineContext } from "../ContextHandoffDelivery.ts";
+import { VoiceThreads } from "../VoiceThreads.ts";
 import { provideDeterministicTestRuntime } from "../testkit/DeterministicRuntime.ts";
 import { runOrchestratorV2Scenario } from "../testkit/OrchestratorScenario.ts";
 import { layerProviderReplay } from "../testkit/ProviderReplayHarness.ts";
@@ -9265,6 +9266,73 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
     ),
   );
+
+  it.effect.each([
+    { name: "at once on a voice thread", tags: ["voice"], firstShown: ["Sure"] },
+    { name: "after the flush interval on other threads", tags: [], firstShown: [] },
+  ])("streams the first assistant text delta $name", ({ tags, firstShown }) => {
+    const voiceThreads = VoiceThreads.defaultValue();
+    return Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      voiceThreads.noteRunThread({ id: harness.threadId, tags });
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("first-delta-attempt"),
+          text: "What time is it?",
+          attachments: [],
+        }),
+      );
+      const stream = (event: unknown) =>
+        claudeSdkFrame({
+          type: "stream_event",
+          event,
+          parent_tool_use_id: null,
+          session_id: WAKE_NATIVE_SESSION,
+          uuid: "stream-frame",
+        });
+      const shown = () =>
+        harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+            ? [event.turnItem.text]
+            : [],
+        );
+      yield* harness.offerAndWait(
+        stream({ type: "message_start", message: { id: "first-delta-message" } }),
+      );
+      yield* harness.offerAndWait(
+        stream({
+          type: "content_block_start",
+          index: 0,
+          content_block: { type: "text", text: "" },
+        }),
+      );
+      yield* harness.offerAndWait(
+        stream({
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "text_delta", text: "Sure" },
+        }),
+      );
+      yield* TestClock.adjust("49 millis");
+      assert.deepEqual(shown(), firstShown);
+      yield* TestClock.adjust("1 millis");
+      assert.deepEqual(shown(), ["Sure"]);
+    }).pipe(
+      Effect.provideService(VoiceThreads, voiceThreads),
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    );
+  });
 
   // regression: #15892 non-execution metadata is carried through, not guessed from result text
   it.effect.each(["cancelled", "interrupted", "denied", "permission_denied", undefined])(

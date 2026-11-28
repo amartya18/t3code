@@ -1,5 +1,7 @@
 import { speakable, type HomeView, type LaunchedThread } from "./homeView";
 
+export const HOME_UPDATE = "[Home update]";
+
 export type HomeUpdate =
   | { readonly kind: "reply"; readonly text: string; readonly alreadySpoken: ReadonlyArray<string> }
   | { readonly kind: "needsInput"; readonly title: string }

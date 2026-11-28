@@ -78,6 +78,8 @@ import {
   ThreadRouteScreen,
 } from "./features/threads/ThreadRouteScreen";
 import { McpAppFullscreenScreen } from "./features/threads/McpAppFullscreenScreen";
+import { HOME_VOICE_SCREENS } from "./features/home-voice/voiceRoutes";
+import { VoiceScreenLayout } from "./features/home-voice/VoiceScreenLayout";
 import { ConnectionsRouteScreen } from "./features/connection/ConnectionsRouteScreen";
 import { ConnectionsNewRouteScreen } from "./features/connection/ConnectionsNewRouteScreen";
 import { AddProjectDestinationRoute } from "./features/projects/AddProjectDestinationRoute";
@@ -850,6 +852,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
       options: sheetRoute({ detent: 0.55, maxDetent: 0.7, androidFit: true }),
     }),
     ...SETTINGS_SCREENS,
+    ...HOME_VOICE_SCREENS,
     SettingsLegal: createNativeStackScreen({
       screen: SettingsLegalRouteScreen,
       linking: "settings/legal",
@@ -883,7 +886,11 @@ const RootStackConfig = createWorkspaceStackNavigator({
 
 function GuardedScreenLayout(props: {
   readonly children: ReactNode;
-  readonly route: { readonly name: string; readonly params?: object | undefined };
+  readonly route: {
+    readonly key: string;
+    readonly name: string;
+    readonly params?: object | undefined;
+  };
 }) {
   return (
     <RenderErrorBoundary
@@ -892,7 +899,7 @@ function GuardedScreenLayout(props: {
         <ScreenRenderFallback {...fallback} routeName={props.route.name} />
       )}
     >
-      {props.children}
+      <VoiceScreenLayout route={props.route}>{props.children}</VoiceScreenLayout>
     </RenderErrorBoundary>
   );
 }

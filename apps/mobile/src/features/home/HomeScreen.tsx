@@ -759,7 +759,7 @@ export function HomeScreen(props: HomeScreenProps) {
       <EmptyState
         title={gt("Searching thread messages…")}
         detail={gt('Looking for "{query}" in messages.', { query: props.searchQuery })}
-        variant={Platform.OS === "android" ? "plain" : undefined}
+        variant="plain"
       />
     ) : hasSearchQuery && threadSearch.failed ? (
       <EmptyState
@@ -767,46 +767,33 @@ export function HomeScreen(props: HomeScreenProps) {
         detail={gt('Couldn\'t search messages for "{query}". Change the search to try again.', {
           query: props.searchQuery,
         })}
-        variant={Platform.OS === "android" ? "plain" : undefined}
+        variant="plain"
       />
     ) : hasSearchQuery ? (
       <EmptyState
         title={gt("No results")}
         detail={gt('No threads matching "{query}".', { query: props.searchQuery })}
-        variant={Platform.OS === "android" ? "plain" : undefined}
+        variant="plain"
       />
     ) : v2ScopedProjectGroup !== null ? (
       <EmptyState
         title={gt("No threads in {name}", { name: v2ScopedProjectGroup.title })}
         detail={gt("Choose another project or create a new task.")}
-        variant={Platform.OS === "android" ? "plain" : undefined}
+        variant="plain"
       />
     ) : selectedEnvironmentLabel ? (
       <EmptyState
         title={gt("No threads in {name}", { name: selectedEnvironmentLabel })}
         detail={gt("Choose another environment or create a new task.")}
-        variant={Platform.OS === "android" ? "plain" : undefined}
+        variant="plain"
       />
     ) : (
       <EmptyState
         title={gt("No threads yet")}
         detail={gt("Create a task to start a new coding session.")}
-        variant={Platform.OS === "android" ? "plain" : undefined}
+        variant="plain"
       />
     );
-
-  if (Platform.OS === "android" && threadListV2Items.length === 0) {
-    return (
-      <ScreenContent surface="screen">
-        <View
-          className="flex-1 items-center justify-center px-4"
-          style={{ paddingBottom: insets.bottom }}
-        >
-          {v2ListEmpty}
-        </View>
-      </ScreenContent>
-    );
-  }
 
   return (
     <View className={containerClassName}>

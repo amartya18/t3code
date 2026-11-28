@@ -5,7 +5,7 @@ public final class T3VoiceModeModule: Module {
 
   public func definition() -> ModuleDefinition {
     Name("T3VoiceMode")
-    Events("vad", "partial", "eou", "playback", "models", "route", "interruption", "stage", "error")
+    Events("vad", "micLevel", "playback", "models", "route", "interruption", "stage", "error")
 
     OnCreate {
       self.engine.events.attach(self)
@@ -33,6 +33,11 @@ public final class T3VoiceModeModule: Module {
       try await self.engine.deleteModels()
     }
 
+    AsyncFunction("prepare") { () async throws -> [String: Any] in
+      let loadMs = try await self.engine.prepare()
+      return ["loadMs": loadMs]
+    }
+
     AsyncFunction("start") { () async throws in
       try await self.engine.start()
     }
@@ -45,13 +50,30 @@ public final class T3VoiceModeModule: Module {
       self.engine.setMuted(muted)
     }
 
-    AsyncFunction("finalize") { () async throws -> [String: Any] in
-      let text = try await self.engine.finalize()
-      return ["text": text]
+    AsyncFunction("setVocabulary") { (terms: [VocabularyTermRecord]) async throws in
+      try await self.engine.setVocabulary(terms.map(VocabularyTerm.init))
+    }
+
+    AsyncFunction("transcribe") { (fromMs: Double, toMs: Double) async throws -> [String: Any] in
+      let result = try await self.engine.transcribe(fromMs: fromMs, toMs: toMs)
+      return ["text": result.text, "replaced": result.replaced.map { ["from": $0.from, "to": $0.to] }]
+    }
+
+    AsyncFunction("turnScore") { (fromMs: Double, toMs: Double) async throws -> [String: Any] in
+      let probability = try await self.engine.turnScore(fromMs: fromMs, toMs: toMs)
+      return ["probability": Double(probability)]
     }
 
     AsyncFunction("speak") { (id: String, text: String, seq: Int) async throws in
       try await self.engine.speak(id: id, text: text, seq: seq)
+    }
+
+    Function("setSpeaker") { (on: Bool) in
+      self.engine.setSpeaker(on)
+    }
+
+    AsyncFunction("playChime") { (uri: String) async throws in
+      try await self.engine.playChime(URL(string: uri) ?? URL(fileURLWithPath: uri))
     }
 
     Function("duck") { (level: Double) in

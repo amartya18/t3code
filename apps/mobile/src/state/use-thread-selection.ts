@@ -33,7 +33,7 @@ import {
   useRemoteEnvironmentRuntime,
   useSavedRemoteConnection,
 } from "./use-remote-environment-registry";
-import { useThreadOutboxMessages } from "./use-thread-outbox";
+import { useQueuedThreadMessages } from "./use-thread-outbox";
 type ThreadSelectionRouteParams = {
   readonly environmentId?: string | string[];
   readonly threadId?: string | string[];
@@ -144,12 +144,13 @@ function useResolvedThreadSelection(params: ThreadSelectionRouteParams | undefin
     selectedThreadRef === null
       ? null
       : scopedThreadKey(selectedThreadRef.environmentId, selectedThreadRef.threadId);
-  const queuedMessagesByThreadKey = useThreadOutboxMessages();
+  const selectedThreadQueue = useQueuedThreadMessages(selectedThreadKey);
   const creationOutcome = useAtomValue(pendingThreadCreationOutcomesAtom);
   const { pendingCreation, detailRef: selectedThreadDetailRef } = selectThreadCreationDetail({
     threadRef: selectedThreadRef,
     threadKey: selectedThreadKey,
-    queuedMessagesByThreadKey,
+    queuedMessagesByThreadKey:
+      selectedThreadKey === null ? {} : { [selectedThreadKey]: selectedThreadQueue },
     outcomes: creationOutcome,
   });
   const [previousCreation, setPreviousCreation] = useState<PendingThreadCreation | null>(null);

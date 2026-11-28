@@ -5,6 +5,7 @@ import {
   toolOutputImages,
 } from "@t3tools/shared/toolOutput";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
+import { VoiceThreads } from "../VoiceThreads.ts";
 import { claudeTaskOutputRoot, tailClaudeTaskOutput } from "./ClaudeTaskOutputTail.ts";
 import {
   dynamicToolTitle,
@@ -9681,6 +9682,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           );
         });
 
+        const voiceThreads = yield* VoiceThreads;
         const assistantDeltas = yield* makeProviderTextDeltaCoalescer({
           flushIntervalMs: 50,
           emit:
@@ -11421,6 +11423,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 turnId: context.nativeTurnId,
                 itemId,
                 delta: event.content_block.text,
+                leading: voiceThreads.has(context.input.threadId),
               });
             } else if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
               const itemId = context.assistant.streamBlocks.get(event.index);
@@ -11429,6 +11432,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   turnId: context.nativeTurnId,
                   itemId,
                   delta: event.delta.text,
+                  leading: voiceThreads.has(context.input.threadId),
                 });
               }
             } else if (event.type === "content_block_stop") {

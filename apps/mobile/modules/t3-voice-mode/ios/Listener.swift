@@ -1,156 +1,89 @@
-import AVFoundation
-import CoreML
-@_implementationOnly import FluidAudio
+import Accelerate
 import Foundation
 
-/// Parakeet streaming ASR plus Silero VAD. One loop consumes every command in order, so a finalize
-/// always sees exactly the audio that arrived before it.
+/// The ring is written before the vad event fires, so its range is always readable from JS.
 actor Listener {
   enum Command {
-    case audio(AVAudioPCMBuffer)
+    case audio([Float], start: Int)
     case reset
-    case finalize(CheckedContinuation<String, Error>)
   }
 
   nonisolated let input: AsyncStream<Command>.Continuation
   private let events: EventSink
-  private var asr: StreamingEouAsrManager?
-  private var asrChunk: StreamingChunkSize?
-  private var asrDebounceMs: Int?
-  private var vadModel: MLModel?
-  private var vad: VadManager?
-  private var settings = VadSettings(threshold: 0.5, minSpeechSamples: 0, minSilenceSeconds: 0.75)
-  private var segmentation = VadSegmentationConfig()
-  private var vadState = VadStreamState.initial()
+  private let ring: AudioRing
+  private var vad: SileroVad?
+  private var gate = SpeechGate(settings: .init(threshold: 0.5, minSpeechMs: 250, minSilenceMs: 300))
   private var pending: [Float] = []
-  private var speechStart: Int?
-  private var reported = false
+  private var pendingStart = 0
+  private var failing = false
 
-  init(events: EventSink) {
+  init(events: EventSink, ring: AudioRing) {
     self.events = events
+    self.ring = ring
     let (stream, input) = AsyncStream.makeStream(of: Command.self)
     self.input = input
     Task { await self.run(stream) }
   }
 
-  func apply(_ settings: VadSettings) {
-    self.settings = settings
-    segmentation = VadSegmentationConfig(
-      minSilenceDuration: settings.minSilenceSeconds,
-      maxSpeechDuration: max(14, settings.minSilenceSeconds))
-    if let vadModel {
-      vad = VadManager(config: VadConfig(defaultThreshold: settings.threshold), vadModel: vadModel)
-    }
+  func apply(_ settings: SpeechGate.Settings) {
+    gate.settings = settings
   }
 
-  func load(_ config: VoiceConfig) async throws {
-    if vadModel == nil {
-      let models = try await ModelHub.loadModels(
-        .vad, modelNames: Array(ModelNames.VAD.requiredModels), directory: ModelStore.root)
-      guard let model = models[ModelNames.VAD.sileroVadFile] else { throw VoiceModeError.modelsMissing }
-      vadModel = model
-    }
-    apply(config.vad)
-    guard asr == nil || asrChunk != config.chunkSize || asrDebounceMs != config.eouDebounceMs else { return }
-    let manager = StreamingEouAsrManager(chunkSize: config.chunkSize, eouDebounceMs: config.eouDebounceMs)
-    try await manager.loadModels(to: ModelStore.root)
-    let events = self.events
-    await manager.setPartialCallback { text in events.send("partial", ["text": text]) }
-    await manager.setEouCallback { text in
-      events.stage("eou")
-      events.send("eou", ["text": text])
-    }
-    await asr?.cleanup()
-    asr = manager
-    asrChunk = config.chunkSize
-    asrDebounceMs = config.eouDebounceMs
+  func load() throws {
+    guard vad == nil else { return }
+    vad = try SileroVad.load()
   }
 
-  func unload() async {
-    await asr?.cleanup()
-    asr = nil
+  func unload() {
     vad = nil
-    vadModel = nil
-  }
-
-  nonisolated func finalize() async throws -> String {
-    try await withCheckedThrowingContinuation { input.yield(.finalize($0)) }
   }
 
   private func run(_ stream: AsyncStream<Command>) async {
     for await command in stream {
       switch command {
-      case .audio(let buffer): await hear(buffer)
-      case .reset: await reset()
-      case .finalize(let reply): await finalize(reply)
+      case .audio(let samples, let start): hear(samples, start: start)
+      case .reset: reset()
       }
     }
   }
 
-  private func hear(_ buffer: AVAudioPCMBuffer) async {
-    guard let asr, let vad, let channel = buffer.floatChannelData?[0] else { return }
-    pending.append(contentsOf: UnsafeBufferPointer(start: channel, count: Int(buffer.frameLength)))
-    while pending.count >= VadManager.chunkSize {
-      let chunk = Array(pending.prefix(VadManager.chunkSize))
-      pending.removeFirst(VadManager.chunkSize)
+  private func hear(_ samples: [Float], start: Int) {
+    guard let vad else { return }
+    if pending.isEmpty { pendingStart = start }
+    pending.append(contentsOf: samples)
+    let frame = SileroVad.frameSamples
+    var offset = 0
+    while pending.count - offset >= frame {
+      let window = pending[offset..<offset + frame]
+      offset += frame
       do {
-        let result = try await vad.processStreamingChunk(chunk, state: vadState, config: segmentation)
-        vadState = result.state
-        track(result)
+        let probability = try vad.probability(window)
+        failing = false
+        let energy = window.withUnsafeBufferPointer { Double(vDSP.sumOfSquares($0)) }
+        let change = gate.push(
+          start: pendingStart + offset - frame, count: frame, probability: probability, energy: energy)
+        if let change { emit(change) }
       } catch {
-        events.error("vad_failed", error)
+        if !failing { events.error("vad_failed", error) }
+        failing = true
       }
     }
-    do {
-      try await asr.appendAudio(buffer)
-      try await asr.processBufferedAudio()
-      // A confirmed end latches until rearmed; rearming keeps the transcript and replays the audio since.
-      if await asr.eouDetected { try await asr.rearm(keepTranscript: true) }
-    } catch {
-      events.error("asr_failed", error)
-    }
+    pending.removeFirst(offset)
+    pendingStart += offset
   }
 
-  private func track(_ result: VadStreamResult) {
-    if let event = result.event {
-      if event.isStart {
-        speechStart = event.sampleIndex
-      } else if event.isEnd {
-        if reported { emitVad(false, result.probability) }
-        speechStart = nil
-        reported = false
-      }
-    }
-    if let start = speechStart, !reported, result.state.processedSamples - start >= settings.minSpeechSamples {
-      reported = true
-      emitVad(true, result.probability)
-    }
-  }
-
-  private func emitVad(_ speaking: Bool, _ probability: Float) {
-    events.stage(speaking ? "vad.start" : "vad.end")
-    events.send("vad", ["speaking": speaking, "probability": Double(probability), "atMs": nowMs()])
-  }
-
-  private func reset() async {
-    await asr?.reset()
-    if reported { emitVad(false, 0) }
-    vadState = VadStreamState.initial()
+  private func reset() {
+    if let change = gate.reset() { emit(change) }
+    vad?.reset()
     pending.removeAll()
-    speechStart = nil
-    reported = false
+    failing = false
   }
 
-  private func finalize(_ reply: CheckedContinuation<String, Error>) async {
-    guard let asr else { return reply.resume(returning: "") }
-    events.stage("finalize.start")
-    do {
-      let text = try await asr.finish()
-      await asr.reset()
-      events.stage("finalize.end")
-      reply.resume(returning: text)
-    } catch {
-      reply.resume(throwing: error)
-    }
+  private func emit(_ change: SpeechGate.Change) {
+    events.stage(change.speaking ? "vad.start" : "vad.end")
+    events.send("vad", [
+      "speaking": change.speaking, "probability": Double(change.probability), "level": Double(change.level),
+      "atMs": ring.ms(at: change.sample),
+    ])
   }
 }

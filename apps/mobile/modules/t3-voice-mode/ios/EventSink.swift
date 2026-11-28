@@ -1,7 +1,16 @@
 import ExpoModulesCore
 import Foundation
 
-func nowMs() -> Double { Date().timeIntervalSince1970 * 1000 }
+private let msPerHostTick: Double = {
+  var timebase = mach_timebase_info_data_t()
+  mach_timebase_info(&timebase)
+  return Double(timebase.numer) / Double(timebase.denom) / 1_000_000
+}()
+
+/// The engine clock: host time in milliseconds, the clock audio buffers are stamped with.
+func hostMs(_ hostTime: UInt64) -> Double { Double(hostTime) * msPerHostTick }
+
+func nowMs() -> Double { hostMs(mach_absolute_time()) }
 
 /// Thread-safe path from any actor or audio thread to JS events.
 final class EventSink: @unchecked Sendable {
@@ -40,6 +49,7 @@ final class Controls: @unchecked Sendable {
   private let lock = NSLock()
   private var _muted = false
   private var _volume: Float = 1
+  private var _speaker = false
   private var _stopBefore = 0
 
   var muted: Bool {
@@ -50,6 +60,11 @@ final class Controls: @unchecked Sendable {
   var volume: Float {
     get { lock.withLock { _volume } }
     set { lock.withLock { _volume = newValue } }
+  }
+
+  var speaker: Bool {
+    get { lock.withLock { _speaker } }
+    set { lock.withLock { _speaker = newValue } }
   }
 
   var stopBefore: Int { lock.withLock { _stopBefore } }

@@ -1,11 +1,13 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId, MessageId } from "@t3tools/contracts";
+import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 
 import { appAtomRegistry } from "./atom-registry";
 import { environmentShell } from "./shell";
 import { threadOutboxManager } from "./thread-outbox";
+import { flattenQueuedThreadMessages, type QueuedThreadMessage } from "./thread-outbox-model";
 
 export const threadOutboxShellStatusesAtom = Atom.make(
   (get): ReadonlyMap<EnvironmentId, EnvironmentShellStatus> => {
@@ -54,9 +56,38 @@ export function releaseEditingQueuedMessage(messageId: MessageId): void {
   appAtomRegistry.set(editingQueuedMessageIdsAtom, next);
 }
 
-export function useThreadOutboxMessages() {
-  return useAtomValue(threadOutboxManager.queuedMessagesByThreadKeyAtom);
+const EMPTY_QUEUE: ReadonlyArray<QueuedThreadMessage> = [];
+const emptyQueueAtom = Atom.make(EMPTY_QUEUE);
+
+const sameMessages = (
+  left: ReadonlyArray<QueuedThreadMessage>,
+  right: ReadonlyArray<QueuedThreadMessage>,
+) => left.length === right.length && left.every((message, index) => message === right[index]);
+
+// Every outbox change rebuilds each thread's queue array; readers of one slice keep the previous
+// array when its messages are the same, so a send to one thread re-renders no other thread's screen.
+export const queuedThreadMessagesAtom = Atom.family((threadKey: string) =>
+  Atom.make((get): ReadonlyArray<QueuedThreadMessage> => {
+    const queue = get(threadOutboxManager.queuedMessagesByThreadKeyAtom)[threadKey] ?? EMPTY_QUEUE;
+    const previous = Option.getOrUndefined(get.self<ReadonlyArray<QueuedThreadMessage>>());
+    return previous !== undefined && sameMessages(previous, queue) ? previous : queue;
+  }).pipe(Atom.withLabel(`mobile:thread-outbox:queue:${threadKey}`)),
+);
+
+export function useQueuedThreadMessages(
+  threadKey: string | null,
+): ReadonlyArray<QueuedThreadMessage> {
+  return useAtomValue(threadKey === null ? emptyQueueAtom : queuedThreadMessagesAtom(threadKey));
 }
+
+/** Queued thread creations; follow-ups to threads that exist leave it unchanged. */
+export const queuedCreationMessagesAtom = Atom.make((get): ReadonlyArray<QueuedThreadMessage> => {
+  const creations = flattenQueuedThreadMessages(
+    get(threadOutboxManager.queuedMessagesByThreadKeyAtom),
+  ).filter((message) => message.creation !== undefined);
+  const previous = Option.getOrUndefined(get.self<ReadonlyArray<QueuedThreadMessage>>());
+  return previous !== undefined && sameMessages(previous, creations) ? previous : creations;
+}).pipe(Atom.withLabel("mobile:thread-outbox:queued-creations"));
 
 export const queuedThreadKeysAtom = Atom.make((get): ReadonlySet<string> => {
   const keys = new Set<string>();
@@ -67,7 +98,10 @@ export const queuedThreadKeysAtom = Atom.make((get): ReadonlySet<string> => {
       keys.add(threadKey);
     }
   }
-  return keys;
+  const previous = Option.getOrUndefined(get.self<ReadonlySet<string>>());
+  return previous?.size === keys.size && [...keys].every((key) => previous.has(key))
+    ? previous
+    : keys;
 }).pipe(Atom.keepAlive, Atom.withLabel("mobile:thread-outbox:queued-thread-keys"));
 
 export function useQueuedThreadKeys(): ReadonlySet<string> {

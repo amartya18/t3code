@@ -13,6 +13,7 @@ import {
 import { it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { describe, expect } from "vite-plus/test";
@@ -21,6 +22,7 @@ import {
   coalesceThreadLiveStream,
   makeThreadLiveEventCoalescer,
 } from "./ThreadLiveEventCoalescer.ts";
+import { VoiceThreads } from "./VoiceThreads.ts";
 
 import { applyOrchestrationV2ProjectionEvent } from "../../../../packages/client-runtime/src/state/orchestrationV2Projection.ts";
 
@@ -468,6 +470,32 @@ describe("ThreadLiveEventCoalescer", () => {
         yield* pull.pipe(Effect.result);
         expect(yield* coalescer.usage).toEqual({ retainedItems: 0, retainedSerializedBytes: 0 });
       }),
+  );
+
+  it.effect.each([
+    { name: "a voice thread's first text at once", tags: ["voice"], atOnce: true },
+    { name: "other threads' first text after the window", tags: [], atOnce: false },
+  ])("delivers $name", ({ tags, atOnce }) =>
+    Effect.gen(function* () {
+      const voiceThreads = VoiceThreads.defaultValue();
+      voiceThreads.noteRunThread({ id: threadId, tags });
+      const coalescer = yield* makeThreadLiveEventCoalescer().pipe(
+        Effect.provideService(VoiceThreads, voiceThreads),
+      );
+      const first = makeStreamingMessage(1, { text: "Sure" });
+      const delivered = yield* coalescer.stream.pipe(
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* coalescer.offer(first);
+      yield* TestClock.adjust("0 millis");
+      expect(delivered.pollUnsafe() !== undefined).toBe(atOnce);
+      yield* TestClock.adjust("49 millis");
+      expect(delivered.pollUnsafe() !== undefined).toBe(atOnce);
+      yield* TestClock.adjust("1 millis");
+      expect(yield* Fiber.join(delivered)).toEqual([first]);
+    }),
   );
 
   it.effect("keeps the flush timer alive when an offer's shorter scope closes", () =>

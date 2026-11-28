@@ -1,8 +1,7 @@
 import { requireOptionalNativeModule, type EventSubscription } from "expo";
 
-/** `asr`, `aec` and `tts.vocoderFloat32` apply on the next `start()`; the rest at once. */
+/** `aec`, `tts.vocoderFloat32` and `tts.gpu` apply on the next `prepare()` or `start()`; the rest at once. */
 export interface VoiceEngineConfig {
-  readonly asr: { readonly chunkMs: 160 | 320; readonly eouDebounceMs: number };
   readonly vad: {
     readonly threshold: number;
     readonly minSpeechMs: number;
@@ -12,6 +11,8 @@ export interface VoiceEngineConfig {
     readonly voiceId: string;
     readonly speed: number;
     readonly vocoderFloat32: boolean;
+    /** Kokoro's noise and tail stages on the GPU, which iOS refuses while the app is in the background. */
+    readonly gpu: boolean;
   };
   readonly aec: { readonly enabled: boolean };
   readonly logStages: boolean;
@@ -27,16 +28,30 @@ export interface SpeechItem {
   readonly text: string;
 }
 
-/** Every `speak` item ends with exactly one `finished` or `stopped` playback event. */
+export type VoiceModelPart = "vad" | "asr" | "turn" | "tts";
+
+/**
+ * Times are milliseconds on the engine's own monotonic clock; `transcribe` and `turnScore` take
+ * them back. Every `speak` item ends with exactly one `finished` or `stopped` playback event.
+ */
 export interface VoiceEngineEvents {
-  readonly vad: { readonly speaking: boolean; readonly probability: number; readonly atMs: number };
-  readonly partial: { readonly text: string };
-  readonly eou: { readonly text: string };
+  /** `atMs` is when the speech really started or ended, not when the hold rule confirmed it. */
+  readonly vad: {
+    readonly speaking: boolean;
+    readonly probability: number;
+    readonly level: number;
+    readonly atMs: number;
+  };
+  /**
+   * The mic's raw RMS for each ~32 ms window from `atMs`, unsmoothed and unfiltered, sent in bursts
+   * as tap buffers arrive. A single 0 means the mic muted, stopped or was interrupted.
+   */
+  readonly micLevel: { readonly level: number; readonly atMs: number };
   readonly playback: { readonly id: string; readonly state: "started" | "finished" | "stopped" };
   /** FluidAudio reports download progress per model as a fraction, never in bytes. */
   readonly models: {
     readonly state: "downloading" | "ready" | "failed";
-    readonly part: "vad" | "asr" | "tts" | null;
+    readonly part: VoiceModelPart | null;
     readonly fraction: number;
     readonly bytesOnDisk: number;
   };
@@ -46,15 +61,43 @@ export interface VoiceEngineEvents {
   readonly error: { readonly code: string; readonly message: string };
 }
 
+/** A word Parakeet should favour; `aliases` are how it is heard, `minSimilarity` (0–1) how close a heard word must be. */
+export interface VoiceVocabularyTerm {
+  readonly text: string;
+  readonly aliases?: ReadonlyArray<string>;
+  readonly minSimilarity?: number;
+}
+
 export interface VoiceEngine {
   configure(config: VoiceEngineConfig): Promise<void>;
   modelStatus(): Promise<VoiceModelStatus>;
   downloadModels(): Promise<void>;
   deleteModels(): Promise<void>;
+  /**
+   * Loads the models `start()` loads, without the mic or the audio session. `loadMs` is each
+   * model's time from the load's start; empty when the models aren't downloaded or the engine runs.
+   */
+  prepare(): Promise<{ readonly loadMs: Partial<Record<VoiceModelPart, number>> }>;
   start(): Promise<void>;
   stop(): Promise<void>;
   setMuted(muted: boolean): void;
-  finalize(): Promise<{ readonly text: string }>;
+  /** The built-in speaker instead of the earpiece; `start()` goes back to the earpiece. */
+  setSpeaker(on: boolean): void;
+  /** Plays a local sound file through the running call's output; resolves once it has played. */
+  playChime(fileUri: string): Promise<void>;
+  /** Replaces the previous list. */
+  setVocabulary(terms: ReadonlyArray<VoiceVocabularyTerm>): Promise<void>;
+  /** Parakeet TDT 0.6B v3 on the mic audio between two engine times, from the recent-audio buffer. */
+  transcribe(
+    fromMs: number,
+    toMs: number,
+  ): Promise<{
+    readonly text: string;
+    /** Words the vocabulary swapped in, in order; builds before it existed leave it out. */
+    readonly replaced?: ReadonlyArray<{ readonly from: string; readonly to: string }>;
+  }>;
+  /** Smart Turn v3: how likely the speech between two engine times is a finished turn, 0 to 1. */
+  turnScore(fromMs: number, toMs: number): Promise<{ readonly probability: number }>;
   speak(item: SpeechItem): Promise<void>;
   duck(level: number): void;
   stopSpeech(fadeMs: number): void;
@@ -81,10 +124,15 @@ export const voiceEngine: VoiceEngine | null = native && {
   modelStatus: () => native.modelStatus(),
   downloadModels: () => native.downloadModels(),
   deleteModels: () => native.deleteModels(),
+  prepare: () => native.prepare(),
   start: () => native.start(),
   stop: () => native.stop(),
   setMuted: (muted) => native.setMuted(muted),
-  finalize: () => native.finalize(),
+  setSpeaker: (on) => native.setSpeaker(on),
+  playChime: (fileUri) => native.playChime(fileUri),
+  setVocabulary: (terms) => native.setVocabulary(terms),
+  transcribe: (fromMs, toMs) => native.transcribe(fromMs, toMs),
+  turnScore: (fromMs, toMs) => native.turnScore(fromMs, toMs),
   speak: (item) => native.speak(item.id, item.text, ++seq),
   duck: (level) => native.duck(level),
   stopSpeech: (fadeMs) => native.stopSpeech(fadeMs, ++seq),

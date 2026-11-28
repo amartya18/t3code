@@ -64,6 +64,7 @@ import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
+import { VoiceThreads } from "./VoiceThreads.ts";
 
 const mockEventSink = (implementation: Partial<EventSink.EventSinkV2["Service"]>) =>
   Layer.mock(EventSink.EventSinkV2)({
@@ -5077,6 +5078,48 @@ it.effect.each([
       'turn_item.updated:streaming:"First.\\n\\nWaiting on the build.\\n\\nRunning"',
       `message.updated:final:"First.\\n\\nWaiting on the build.\\n\\nRunning tests passed." in commit`,
       `turn_item.updated:final:"First.\\n\\nWaiting on the build.\\n\\nRunning tests passed." in commit`,
+    ]);
+  }),
+);
+
+it.effect("streams each snapshot once the voice tag lands mid-reply", () =>
+  Effect.gen(function* () {
+    const ids = backgroundScenarioIds("voice-tag-mid-reply");
+    const providerEvents = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+    const delivered = yield* Queue.unbounded<string>();
+    const voiceThreads = VoiceThreads.defaultValue();
+    const reply = (text: string) =>
+      streamedMessageEvent({
+        id: "message:voice-tag-mid-reply",
+        threadId: ids.threadId,
+        runId: ids.runId,
+        role: "assistant",
+        text,
+        streaming: true,
+      });
+    const scenario = yield* runBackgroundItemScenario(
+      "voice-tag-mid-reply",
+      () => Stream.fromQueue(providerEvents),
+      {
+        onIngest: (event) =>
+          event.type === "message.updated"
+            ? Queue.offer(delivered, event.message.text)
+            : Effect.void,
+      },
+    ).pipe(Effect.provideService(VoiceThreads, voiceThreads), Effect.forkChild);
+
+    yield* Queue.offer(providerEvents, reply("Sure.\n\nIt is"));
+    assert.equal(yield* Queue.take(delivered), "Sure.\n\n");
+    voiceThreads.noteRunThread({ id: ids.threadId, tags: ["voice"] });
+    yield* Queue.offerAll(providerEvents, [
+      reply("Sure.\n\nIt is five"),
+      reply("Sure.\n\nIt is five past"),
+      rootTerminalEvent(ids, "completed"),
+    ]);
+    yield* Fiber.join(scenario);
+    assert.deepEqual(yield* Queue.takeAll(delivered), [
+      "Sure.\n\nIt is five",
+      "Sure.\n\nIt is five past",
     ]);
   }),
 );
