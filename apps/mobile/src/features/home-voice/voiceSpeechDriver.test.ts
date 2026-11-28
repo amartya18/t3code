@@ -268,6 +268,41 @@ it("in development, stamps each line with the time since the session opened, on 
   vi.useRealTimers();
 });
 
+it("in development, logs how long Kokoro took for each sentence, and on which route", async () => {
+  const logs: string[] = [];
+  const listeners = new Map<string, (event: unknown) => void>();
+  const engine: VoiceEngine = {
+    ...fakeEngine().engine,
+    stop: async () => {},
+    addListener: (name, listener) => {
+      listeners.set(name, listener as (event: unknown) => void);
+      return { remove: () => {} };
+    },
+  };
+  const driver = open(
+    engine,
+    () => 0,
+    (line) => {
+      logs.push(line);
+    },
+  );
+  await settle();
+  driver.dispatch({
+    type: "thread",
+    replies: [{ id: "r1", text: "Hello there.", streaming: false }],
+    userMessageIds: new Set(),
+    lastLine: null,
+    atMs: 0,
+  });
+  listeners.get("stage")!({ name: "synth.start:r1:0", atMs: 9_000 });
+  listeners.get("stage")!({ name: "synth.end:r1:0", atMs: 9_142.4 });
+
+  expect(logs.filter((line) => line.includes("synth "))).toEqual([
+    "+0.000s [voice] synth 142ms, 12 chars, route cpu",
+  ]);
+  driver.dispose();
+});
+
 it("a sentence the engine couldn't voice reaches the call as a failed reply", async () => {
   const listeners = new Map<string, (event: unknown) => void>();
   const states: Array<ReadonlyMap<string, unknown>> = [];
