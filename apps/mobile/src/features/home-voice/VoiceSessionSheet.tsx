@@ -152,6 +152,19 @@ export function VoiceSessionSheet() {
               label={gt("Wait when not done (dev)")}
               step={0.1}
             />
+            <View className="border-t border-border-subtle">
+              <ListActionRow
+                icon="arrow.uturn.backward"
+                label={gt("Reset to defaults")}
+                onPress={() =>
+                  void saveVoiceSettings({
+                    minSpeechMs: undefined,
+                    minSilenceMs: undefined,
+                    turnWaitMs: undefined,
+                  })
+                }
+              />
+            </View>
           </ListSection>
         ) : null}
       </ScrollView>

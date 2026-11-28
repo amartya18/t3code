@@ -25,13 +25,13 @@ export interface VoiceTuning {
 }
 
 export const DEFAULT_VOICE_TUNING: VoiceTuning = {
-  minSpeechMs: 250,
+  minSpeechMs: 150,
   minSilenceMs: 200,
   turnWaitMs: 3_000,
 };
 
 export const VOICE_TUNING_RANGE: Record<keyof VoiceTuning, { min: number; max: number }> = {
-  minSpeechMs: { min: 100, max: 500 },
+  minSpeechMs: { min: 0, max: 1_000 },
   minSilenceMs: { min: 200, max: 1_500 },
   turnWaitMs: { min: 1_500, max: 4_000 },
 };

@@ -338,11 +338,34 @@ function EngineNote(props: { readonly engine: VoiceSpeechView["engine"] }) {
     case "failed":
       return note(gt("Voice stopped working"), { label: gt("Retry"), onPress: retryVoiceEngine });
     case "starting":
-      return note(gt("Starting voice…"));
+      return (
+        <View className="gap-0.5">
+          {note(gt("Loading voice models…"))}
+          <SlowLoadNote />
+        </View>
+      );
     case "checking":
     case "listening":
       return null;
   }
+}
+
+const SLOW_LOAD_NOTE_MS = 3_000;
+
+function SlowLoadNote() {
+  const gt = useGT();
+  const [slow, setSlow] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a timer: the note shows only once loading runs long
+  useEffect(() => {
+    const timer = setTimeout(() => setSlow(true), SLOW_LOAD_NOTE_MS);
+    return () => clearTimeout(timer);
+  }, []);
+  if (!slow) return null;
+  return (
+    <Text className="text-xs text-foreground-muted">
+      {gt("The first call after an update can take up to a minute.")}
+    </Text>
+  );
 }
 
 /** One line of the call; memoized so a streamed reply redraws only its own row. */
