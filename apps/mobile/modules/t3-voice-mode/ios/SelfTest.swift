@@ -197,8 +197,8 @@ extension VoiceEngine {
     } catch {
       result["error"] = String(describing: error)
     }
-    result["proximityOn"] = await setNearEar(true)
-    result["proximityOff"] = await setNearEar(false)
+    result["proximityOn"] = await setProximityMonitoring(true)
+    result["proximityOff"] = await setProximityMonitoring(false)
     try? session.setActive(false, options: .notifyOthersOnDeactivation)
     return result
   }

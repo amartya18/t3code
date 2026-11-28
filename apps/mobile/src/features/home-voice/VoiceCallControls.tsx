@@ -108,7 +108,6 @@ export function MuteButton(props: { readonly muted: boolean; readonly size: numb
   );
 }
 
-/** The earpiece by default, like a phone call; on, the call plays from the speaker. */
 export function SpeakerButton(props: { readonly on: boolean; readonly size: number }) {
   const gt = useGT();
   return (

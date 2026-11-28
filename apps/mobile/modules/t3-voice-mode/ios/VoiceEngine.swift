@@ -180,7 +180,6 @@ actor VoiceEngine {
     Task { await self.applyMute() }
   }
 
-  /// Every call starts on the earpiece; `start()` forgets the last call's choice.
   nonisolated func setSpeaker(_ on: Bool) {
     controls.speaker = on
     Task { await self.applyRoute() }
@@ -342,7 +341,7 @@ actor VoiceEngine {
       events.error("speaker_failed", error)
       output = AVAudioSession.sharedInstance().currentRoute.outputs.first?.portType
     }
-    await setNearEar(output == .builtInReceiver)
+    await setProximityMonitoring(output == .builtInReceiver)
     events.send("route", ["output": output?.rawValue ?? "none"])
   }
 
@@ -363,12 +362,11 @@ actor VoiceEngine {
 
   private func leaveRoute() async {
     _ = try? routeSpeaker(false)
-    await setNearEar(false)
+    await setProximityMonitoring(false)
   }
 
-  /// The screen goes dark at the ear only while the call plays through the earpiece.
   @discardableResult
-  func setNearEar(_ on: Bool) async -> Bool {
+  func setProximityMonitoring(_ on: Bool) async -> Bool {
     await MainActor.run { () -> Bool in
       UIDevice.current.isProximityMonitoringEnabled = on
       return UIDevice.current.isProximityMonitoringEnabled

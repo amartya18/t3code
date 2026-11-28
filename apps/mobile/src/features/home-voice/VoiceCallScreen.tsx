@@ -58,7 +58,6 @@ import {
 import { useVoiceModeSettings } from "./voiceSettings";
 import { voiceTranscript, type TranscriptLine } from "./voiceTranscript";
 
-/** The full-screen call: the session's time, its last few lines, speaker, mute and hang up. */
 export function VoiceCallScreen() {
   const session = useAtomValue(voiceSessionAtom);
   const navigation = useNavigation();
@@ -112,7 +111,6 @@ const SPEAKER = VOICE_ENGINE_SUPPORT === "available";
 // Fewer bars leave room for the speaker button on a 375 pt wide phone.
 const CALL_WAVE = callWaveHeights(SPEAKER ? 19 : 29, 30);
 
-/** Speaker and mute, the wave, and hang up, over a glow that rises while Amar talks. */
 function CallControls(props: {
   readonly muted: boolean;
   readonly speaker: boolean;

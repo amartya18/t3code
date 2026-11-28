@@ -37,7 +37,6 @@ export interface VoiceSession extends HomeUpdateCursor {
   readonly threadCreated: boolean;
   readonly home: ScopedThreadRef;
   readonly muted: boolean;
-  /** The built-in speaker instead of the earpiece; every call starts on the earpiece. */
   readonly speaker: boolean;
 }
 
