@@ -53,7 +53,7 @@ extension VoiceEngine {
           guard !result.samples.isEmpty else { throw VoiceModeError.make("bad_audio", "Kokoro returned no audio.") }
           sentenceMs.append(lap())
         }
-        routes[route] = ["loadMs": loadMs, "firstMs": sentenceMs[0], "sentenceMs": sentenceMs]
+        routes[route] = ["loadMs": loadMs, "firstMs": sentenceMs[0], "sentenceMs": sentenceMs] as [String: Any]
       } catch {
         errors["tts.\(route)"] = String(describing: error)
       }
