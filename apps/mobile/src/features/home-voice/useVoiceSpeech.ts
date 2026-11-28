@@ -7,8 +7,6 @@ import { useEffect, useRef } from "react";
 import { voiceEngine } from "../../../modules/t3-voice-mode";
 import { uuidv4 } from "../../lib/uuid";
 import { appAtomRegistry } from "../../state/atom-registry";
-import { environmentProjects } from "../../state/projects";
-import { environmentThreadShells } from "../../state/threads";
 import { HOME_UPDATE } from "./homeUpdates";
 import { useVoiceThread } from "./useVoiceCall";
 import { playVoiceChime } from "./voiceChime";
@@ -29,7 +27,7 @@ import {
   type VoiceSpeechInputs,
 } from "./voiceSpeechDriver";
 import type { TranscriptSpeech } from "./voiceTranscript";
-import { voiceVocabulary } from "./voiceVocabulary";
+import { VOICE_VOCABULARY } from "./voiceVocabulary";
 
 /** What the call screen draws of the speech session. */
 export interface VoiceSpeechView {
@@ -98,11 +96,7 @@ export function useVoiceSpeech(session: VoiceSession) {
       engine: voiceEngine,
       inputs: latest.current,
       previous: remembered?.key === key ? remembered.state : null,
-      vocabulary: voiceVocabulary({
-        environmentId: thread.environmentId,
-        projects: appAtomRegistry.get(environmentProjects.projectsAtom),
-        threads: appAtomRegistry.get(environmentThreadShells.threadShellsAtom),
-      }),
+      vocabulary: VOICE_VOCABULARY,
       now: Date.now,
       newMessageId: uuidv4,
       log: voiceDevLog,
@@ -120,7 +114,7 @@ export function useVoiceSpeech(session: VoiceSession) {
       if (live === driver) live = null;
       appAtomRegistry.set(voiceSpeechAtom, null);
     };
-  }, [key, thread.environmentId]);
+  }, [key]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mute silences the native mic
   useEffect(() => {
