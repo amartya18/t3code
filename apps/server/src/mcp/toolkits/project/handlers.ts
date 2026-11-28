@@ -1,6 +1,6 @@
 import {
+  activeCustomModeSkill,
   CommandId,
-  type EnvironmentId,
   HOME_LAUNCHED_THREAD_ID_PREFIX,
   MessageId,
   type ModelSelection,
@@ -23,7 +23,6 @@ import { OrchestratorRuntimeModeAboveCeilingError } from "../../../orchestration
 import { outputRequestProblem } from "../../../orchestration-v2/runOutput.ts";
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import { refuseHomeFolder } from "../../../home/FleetService.ts";
-import * as HomeService from "../../../home/HomeService.ts";
 import { callerIsHome, routeHome, runAsHome } from "../../homeRouting.ts";
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
@@ -43,7 +42,11 @@ import {
 } from "@t3tools/shared/projectSettings";
 import { resolveProjectScripts } from "@t3tools/shared/projectScripts";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
-import { resolveRuntimeMode } from "../../delegatedTaskModes.ts";
+import {
+  providerOptionDescriptors,
+  refuseAgentModePick,
+  resolveRuntimeMode,
+} from "../../delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as OrchestrationMcp from "../../OrchestratorMcpService.ts";
@@ -197,25 +200,6 @@ const access = Effect.gen(function* () {
   yield* readCaller();
   return yield* Project.ProjectService;
 });
-/**
- * Watch a thread Home launched, saved before the launch, wherever it runs.
- * A failed launch keeps the watch: a timeout does not prove it was not created.
- */
-const watchLaunched = (homeThreadId: ThreadId, environmentId: EnvironmentId, threadId: ThreadId) =>
-  HomeService.HomeService.pipe(
-    Effect.flatMap((home) =>
-      home.updateWatches(homeThreadId, (current) =>
-        HomeService.addWatch(current, { environmentId, threadId, reason: "launched" }),
-      ),
-    ),
-    Effect.mapError(
-      () =>
-        new OrchestratorMcpFailure({
-          code: "orchestration_error",
-          message: "Home could not watch the new thread, so it was not launched.",
-        }),
-    ),
-  );
 
 /** Settings, not the project record, hold the default model and actions that new threads use. */
 const withSavedProjectSettings = Effect.gen(function* () {
@@ -249,9 +233,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         const scope = yield* McpInvocationContext.McpInvocationContext;
         const context = yield* readCaller();
         const { caller } = context;
-        // Home is always a thread caller; its id scopes the watches it saves.
-        const homeThreadId = (yield* callerIsHome()) ? caller?.id : undefined;
-        const isHome = homeThreadId !== undefined;
+        const isHome = yield* callerIsHome();
         const targetEnvironmentId = input.environmentId ?? scope.environmentId;
         const remote = targetEnvironmentId !== scope.environmentId;
         // Home's folder carries Home's own instructions, so nothing launches there.
@@ -309,7 +291,6 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             message:
               "scratch:true picks its own project and folder; omit projectId and workspaceStrategy.",
           });
-        // Checked before the watch is saved, so a refused launch leaves no watch.
         // Another environment checks its own Home folder in FleetService.
         if (isHome && !remote && input.projectId !== undefined)
           yield* refuseHomeFolder(
@@ -319,11 +300,18 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             },
             { projectId: input.projectId, workspaceStrategy: input.workspaceStrategy },
           );
-        if (homeThreadId !== undefined && attachments.length === 0) {
+        const customMode =
+          input.customMode === undefined && caller !== undefined
+            ? activeCustomModeSkill(
+                (yield* context.threads
+                  .getThreadRecords(caller.id, [])
+                  .pipe(Effect.mapError(unavailable))).thread.customMode,
+              )
+            : (input.customMode ?? null);
+        if (isHome && attachments.length === 0) {
           // Provider instances differ per machine, so another machine uses its own default.
           const modelSelection =
             input.modelSelection ?? (remote ? undefined : caller?.modelSelection);
-          yield* watchLaunched(homeThreadId, targetEnvironmentId, threadId);
           return yield* runAsHome("threads.launch", {
             threadId,
             ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
@@ -332,6 +320,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             ...(modelSelection === undefined ? {} : { modelSelection }),
             runtimeMode,
             interactionMode,
+            ...(customMode === null ? {} : { customMode }),
             ...(input.workspaceStrategy === undefined
               ? {}
               : { workspaceStrategy: input.workspaceStrategy }),
@@ -411,6 +400,16 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             const provider = OrchestrationMcp.withWorkspaceModels(providers, cwd).find(
               (candidate) => candidate.instanceId === instanceId,
             );
+            // Checked with the same provider snapshot that validates the options below.
+            yield* refuseAgentModePick({
+              callerRuntimeMode: context.limits.runtimeMode,
+              picked: requestedSelection.options,
+              descriptors: providerOptionDescriptors(provider),
+              held:
+                caller?.modelSelection.instanceId === instanceId
+                  ? caller.modelSelection.options
+                  : undefined,
+            });
             if (provider === undefined) return requestedSelection;
             yield* OrchestrationMcp.requireAdvertisedModel(provider, model);
             const options = yield* OrchestrationMcp.validateModelOptions(
@@ -537,8 +536,6 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 Effect.mapError(unavailable),
               )
             : { type: "root" as const });
-        if (homeThreadId !== undefined)
-          yield* watchLaunched(homeThreadId, scope.environmentId, threadId);
         const result = yield* ThreadMessageIntake.launchThread({
           commandId,
           threadId,
@@ -549,6 +546,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           modelSelection,
           runtimeMode: startedRuntimeMode,
           interactionMode,
+          ...(customMode === null ? {} : { customMode }),
           workspaceStrategy: launchStrategy,
           ...(input.message === undefined && attachments.length === 0
             ? {}
@@ -601,6 +599,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           link: McpInvocationContext.threadLinkFor(scope, thread.id, thread.title),
           projectId: thread.projectId,
           modelSelection: thread.modelSelection,
+          customMode: activeCustomModeSkill(thread.customMode),
           runId: run?.id ?? null,
           status: run?.status ?? null,
         };

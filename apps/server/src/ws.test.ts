@@ -169,6 +169,8 @@ import * as TaskFolders from "./workspace/TaskFolders.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
+import * as ClientDiagnostics from "./diagnostics/ClientDiagnostics.ts";
+import { sampleCrashPayload } from "./testUtils/sampleCrashPayload.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as TriageService from "./triage/TriageService.ts";
 import * as TextGenerators from "./textGeneration/TextGenerators.ts";
@@ -840,6 +842,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(SecretCheck.SecretCheck)({}),
   Layer.mock(WorkspacePaths.WorkspacePaths)({}),
   Layer.mock(TraceDiagnostics.TraceDiagnostics)({}),
+  Layer.mock(ClientDiagnostics.ClientDiagnostics)({}),
   Layer.mock(TriageService.TriageService)({}),
   Layer.mock(TextGenerators.TextGenerators)({}),
   Layer.mock(ProjectFaviconResolver.ProjectFaviconResolver)({}),
@@ -1362,6 +1365,7 @@ it.effect("access changes made while the snapshot loads reach the client after i
                   PubSub.publish(sessionChanges, {
                     type: "clientRemoved",
                     sessionId: revokedElsewhere,
+                    revoked: true,
                   }).pipe(Effect.as([])),
               }),
               Layer.mock(PairingGrantStore.PairingGrantStore)({
@@ -3206,5 +3210,87 @@ it.effect("a session that can only read sees a workflow run but cannot steer it"
       Array.from({ length: 3 }, () => "EnvironmentAuthorizationError"),
     );
     assert.deepEqual(calls, []);
+  }).pipe(Effect.provide(layerWorkflowRpcTest), Effect.scoped),
+);
+
+const clientDiagnosticsRpcs = WsRpcGroup.omit(
+  ...[...WsRpcGroup.requests.keys()].filter(
+    (
+      tag,
+    ): tag is Exclude<
+      keyof typeof RpcAuthorization.RPC_REQUIRED_SCOPES,
+      "clientDiagnostics.submit"
+    > => tag !== WS_METHODS.clientDiagnosticsSubmit,
+  ),
+);
+
+const makeClientDiagnosticsClient = Effect.fn("test.makeClientDiagnosticsClient")(function* (
+  scopes: ReadonlyArray<AuthEnvironmentScope>,
+) {
+  const services = Layer.mergeAll(
+    layerUnusedConfigRpcServices,
+    Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+    Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+    Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+    Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+    Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+    Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),
+    Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
+    Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+    Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+    Layer.mock(Workflows.Workflows)({}),
+    ClientDiagnostics.layer,
+  );
+  return yield* RpcTest.makeClient(clientDiagnosticsRpcs).pipe(
+    Effect.provide(
+      layerWsRpc(
+        {
+          sessionId: AuthSessionId.make("diagnostics-test"),
+          subject: "diagnostics-test",
+          method: "bearer-access-token",
+          scopes: [...scopes],
+        },
+        {},
+        yield* ServerBrowser.ServerBrowser,
+        () => Effect.void,
+        { secretReferences: true },
+      ).pipe(Layer.provide(services), Layer.merge(RpcAuthorization.layer(scopes))),
+    ),
+  );
+});
+
+const savedClientDiagnostics = Effect.gen(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const directory = path.join((yield* ServerConfigModule.ServerConfig).stateDir, "diagnostics");
+  if (!(yield* fileSystem.exists(directory))) return [];
+  const names = yield* fileSystem.readDirectory(directory);
+  return yield* Effect.forEach(names, (name) =>
+    fileSystem.readFileString(path.join(directory, name)).pipe(Effect.map(JSON.parse)),
+  );
+});
+
+it.effect("a paired app's crash report lands in the server's diagnostics folder", () =>
+  Effect.gen(function* () {
+    const readOnly = yield* makeClientDiagnosticsClient([AuthOrchestrationReadScope]);
+    const json = JSON.stringify(sampleCrashPayload);
+    const refused = yield* readOnly[WS_METHODS.clientDiagnosticsSubmit]({ json }).pipe(Effect.flip);
+    assert.strictEqual(refused._tag, "EnvironmentAuthorizationError");
+    assert.deepEqual(yield* savedClientDiagnostics, []);
+
+    const app = yield* makeClientDiagnosticsClient([
+      AuthOrchestrationReadScope,
+      AuthOrchestrationOperateScope,
+    ]);
+    const invalid = yield* app[WS_METHODS.clientDiagnosticsSubmit]({ json: "{" }).pipe(Effect.flip);
+    assert.strictEqual(
+      invalid._tag === "ClientDiagnosticSubmitError" && invalid.reason,
+      "invalid_json",
+    );
+
+    yield* app[WS_METHODS.clientDiagnosticsSubmit]({ json });
+    const [saved, ...rest] = yield* savedClientDiagnostics;
+    assert.deepEqual(rest, []);
+    assert.deepEqual(saved.payload, sampleCrashPayload);
   }).pipe(Effect.provide(layerWorkflowRpcTest), Effect.scoped),
 );

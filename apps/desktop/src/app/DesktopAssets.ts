@@ -13,6 +13,19 @@ export interface DesktopIconPaths {
   readonly png: Option.Option<string>;
 }
 
+/** macOS windows take the app bundle's icon; elsewhere a window shows the icon it is given. */
+export const windowIconOption = (
+  iconPaths: DesktopIconPaths,
+  platform: NodeJS.Platform,
+): { icon: string } | Record<string, never> => {
+  if (platform === "darwin") return {};
+  const ext = platform === "win32" ? "ico" : "png";
+  return Option.match(iconPaths[ext], {
+    onNone: () => ({}),
+    onSome: (icon) => ({ icon }),
+  });
+};
+
 export class DesktopAssetProbeError extends Schema.TaggedError<DesktopAssetProbeError>()(
   "DesktopAssetProbeError",
   {

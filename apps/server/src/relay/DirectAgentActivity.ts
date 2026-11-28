@@ -7,6 +7,7 @@ import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -17,17 +18,18 @@ import * as DirectApnsClient from "./DirectApnsClient.ts";
 import * as DirectApnsDevices from "./DirectApnsDevices.ts";
 import {
   chooseDirectPushes,
+  chooseLiveActivityRefresh,
   isExpiredAgentActivityState,
   isTerminalPhase,
+  LIVE_ACTIVITY_SWEEP_INTERVAL_MS,
   makeAggregateState,
   TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS,
   type DeliveredLiveActivity,
+  type DirectPush,
   type DirectPushDevice,
 } from "./directAgentActivityPolicy.ts";
 
 const SEND_CONCURRENCY = 4;
-// An idle card gets no more publishes to clear its expired finished rows.
-const IDLE_SWEEP_INTERVAL = "5 minutes";
 
 type Job =
   | {
@@ -74,15 +76,11 @@ const make = Effect.gen(function* () {
   const aggregateFor = (terminalState: RelayAgentActivityState | null, nowMs: number) =>
     makeAggregateState({ activeStates: [...rows.values()], terminalState, nowMs });
 
-  const deliver = Effect.fnUntraced(function* (input: {
-    readonly device: DirectPushDevice;
-    readonly aggregate: RelayAgentActivityAggregateState | null;
-    readonly state: RelayAgentActivityState | null;
-    readonly nowMs: number;
-    readonly replay: boolean;
-  }) {
-    const { device } = input;
-    const pushes = chooseDirectPushes({ ...input, delivered: delivered.get(device.deviceId) });
+  const deliver = Effect.fnUntraced(function* (
+    device: DirectPushDevice,
+    pushes: ReadonlyArray<DirectPush>,
+    nowMs: number,
+  ) {
     for (const push of pushes) {
       const result = yield* client.send({ device, request: push.request });
       const tokenGone = result.outcome === "rejected" && result.removeToken;
@@ -99,7 +97,7 @@ const make = Effect.gen(function* () {
         delivered.set(device.deviceId, {
           token: push.request.token,
           aggregate: push.aggregate,
-          deliveredAtMs: input.nowMs,
+          deliveredAtMs: nowMs,
         });
         continue;
       }
@@ -116,21 +114,25 @@ const make = Effect.gen(function* () {
   });
 
   const deliverToAll = Effect.fnUntraced(function* (
-    input: {
-      readonly aggregate: RelayAgentActivityAggregateState | null;
-      readonly state: RelayAgentActivityState | null;
-      readonly nowMs: number;
-      readonly replay: boolean;
-    },
-    only: (device: DirectPushDevice) => boolean = () => true,
+    nowMs: number,
+    choose: (device: DirectPushDevice) => ReadonlyArray<DirectPush>,
   ) {
     if (!(yield* client.isConfigured)) return;
-    const targets = (yield* devices.list).filter(only);
-    yield* Effect.forEach(targets, (device) => deliver({ ...input, device }), {
+    yield* Effect.forEach(yield* devices.list, (device) => deliver(device, choose(device), nowMs), {
       concurrency: SEND_CONCURRENCY,
       discard: true,
     });
   });
+
+  const changePushes =
+    (input: {
+      readonly aggregate: RelayAgentActivityAggregateState | null;
+      readonly state: RelayAgentActivityState | null;
+      readonly nowMs: number;
+      readonly replay: boolean;
+    }) =>
+    (device: DirectPushDevice) =>
+      chooseDirectPushes({ ...input, device, delivered: delivered.get(device.deviceId) });
 
   const process = Effect.fnUntraced(function* (job: Job) {
     const nowMs = yield* Clock.currentTimeMillis;
@@ -147,19 +149,27 @@ const make = Effect.gen(function* () {
         if (job.state === null) rows.delete(job.threadId);
         else rows.set(job.threadId, job.state);
         const state = job.state;
-        yield* deliverToAll({
-          aggregate: aggregateFor(state !== null && isTerminalPhase(state) ? state : null, nowMs),
-          state,
+        yield* deliverToAll(
           nowMs,
-          replay,
-        });
+          changePushes({
+            aggregate: aggregateFor(state !== null && isTerminalPhase(state) ? state : null, nowMs),
+            state,
+            nowMs,
+            replay,
+          }),
+        );
         return;
       }
       case "replay": {
         delivered.delete(job.deviceId);
-        yield* deliverToAll(
-          { aggregate: aggregateFor(null, nowMs), state: null, nowMs, replay: true },
-          (device) => device.deviceId === job.deviceId,
+        const pushes = changePushes({
+          aggregate: aggregateFor(null, nowMs),
+          state: null,
+          nowMs,
+          replay: true,
+        });
+        yield* deliverToAll(nowMs, (device) =>
+          device.deviceId === job.deviceId ? pushes(device) : [],
         );
         return;
       }
@@ -170,14 +180,23 @@ const make = Effect.gen(function* () {
             nowMs - Date.parse(state.updatedAt) > TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS;
           if (finishedLongAgo || isExpiredAgentActivityState(state, nowMs)) rows.delete(threadId);
         }
-        if (aggregateFor(null, nowMs) !== null) return;
-        yield* deliverToAll({ aggregate: null, state: null, nowMs, replay: true }, (device) => {
-          const last = delivered.get(device.deviceId);
-          return (
-            device.activityPushToken !== undefined &&
-            (last === undefined ||
-              nowMs - last.deliveredAtMs >= TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS)
-          );
+        const aggregate = aggregateFor(null, nowMs);
+        if (aggregate === null) {
+          const pushes = changePushes({ aggregate: null, state: null, nowMs, replay: true });
+          yield* deliverToAll(nowMs, (device) => {
+            const last = delivered.get(device.deviceId);
+            const endDue =
+              device.activityPushToken !== undefined &&
+              (last === undefined ||
+                nowMs - last.deliveredAtMs >= TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS);
+            return endDue ? pushes(device) : [];
+          });
+          return;
+        }
+        if (aggregate.activeCount === 0) return;
+        yield* deliverToAll(nowMs, (device) => {
+          const refresh = chooseLiveActivityRefresh({ device, aggregate, nowMs });
+          return refresh ? [refresh] : [];
         });
         return;
       }
@@ -189,7 +208,10 @@ const make = Effect.gen(function* () {
 
   yield* worker
     .enqueue({ _tag: "sweep" })
-    .pipe(Effect.schedule(Schedule.spaced(IDLE_SWEEP_INTERVAL)), Effect.forkScoped);
+    .pipe(
+      Effect.schedule(Schedule.spaced(Duration.millis(LIVE_ACTIVITY_SWEEP_INTERVAL_MS))),
+      Effect.forkScoped,
+    );
 
   return DirectAgentActivity.of({
     publish: Effect.fn("DirectAgentActivity.publish")(function* ({ threadId, state }) {

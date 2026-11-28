@@ -42,7 +42,7 @@ import {
 import { scheduledTaskWorktreeBaseRef } from "@t3tools/client-runtime/scheduled-task-worktree";
 import { scheduleTimeZoneLabel } from "@t3tools/client-runtime/scheduled-task-time-zone";
 import type { MessageResolver } from "../../i18n/messages";
-import { useRef, useState, type ReactNode } from "react";
+import { use, useRef, useState, type ReactNode } from "react";
 import { useFocusEffect, useNavigation, usePreventRemove } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { AppState, Platform, Pressable, TextInput as RNTextInput, View } from "react-native";
@@ -75,6 +75,7 @@ import { useVoiceInputController } from "../voice-input/useVoiceInputController"
 import { ScheduledTaskPromptField } from "./components/ScheduledTaskPromptField";
 import { useSettingsEnvironmentMenu } from "./components/SettingsEnvironmentFilterHeader";
 import { SettingsScreen } from "./components/SettingsScreen";
+import { NativeWorkspaceTabActivityContext } from "../../native/v5-workspace-context";
 import { SettingsSection } from "./components/SettingsSection";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
 import {
@@ -149,12 +150,15 @@ function describeSchedule(
     : resolve(msg("{days} at {time} {zone}", { days, time, zone }));
 }
 
+// A stored wall time names no date or zone, so format it in UTC where nothing can shift it.
 function formatTime(value: string): string {
   const [hours, minutes] = value.split(":").map(Number);
   if (!Number.isInteger(hours) || !Number.isInteger(minutes)) return value;
-  const time = new Date();
-  time.setHours(hours ?? 9, minutes ?? 0, 0, 0);
-  return time.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return new Date(Date.UTC(2000, 0, 1, hours ?? 9, minutes ?? 0)).toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: "UTC",
+  });
 }
 
 function formatRunAtDate(value: Date): string {
@@ -167,7 +171,8 @@ function formatRunAtTime(value: Date): string {
 
 function timePickerValue(value: string): Date {
   const [hours, minutes] = value.split(":").map(Number);
-  const time = new Date();
+  // Native pickers read local hours, and 2000-01-01 has no DST change in any zone, unlike today.
+  const time = new Date(2000, 0, 1);
   time.setHours(
     Number.isInteger(hours) ? (hours ?? 9) : 9,
     Number.isInteger(minutes) ? (minutes ?? 0) : 0,
@@ -434,8 +439,9 @@ function PickerRow(props: {
   );
 }
 
-export function SettingsScheduledTasksRouteScreen() {
+export function SettingsScheduledTasksRouteScreen(props: { readonly workspace?: boolean }) {
   const gt = useGT();
+  const headerOnly = use(NativeWorkspaceTabActivityContext)?.headerOnly === true;
   const [now, setNow] = useState(Date.now);
   useFocusEffect(() => {
     const updateNow = () => setNow(Date.now());
@@ -478,6 +484,7 @@ export function SettingsScheduledTasksRouteScreen() {
         },
       ]}
       menus={[environmentMenu]}
+      workspaceRoot={props.workspace}
     >
       <ScrollView
         keyboardShouldPersistTaps="handled"
@@ -488,7 +495,7 @@ export function SettingsScheduledTasksRouteScreen() {
         contentContainerClassName="gap-5 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
-        {visibleEnvironments.length > 0 ? (
+        {headerOnly ? null : visibleEnvironments.length > 0 ? (
           visibleEnvironments.map((environment) => (
             <EnvironmentTasks
               key={environment.environmentId}

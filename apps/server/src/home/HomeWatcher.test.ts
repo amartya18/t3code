@@ -34,12 +34,17 @@ const shell = (
 const watching = (...ids: Array<string>): HomeSettings => ({
   threadId: ThreadId.make("home:current"),
   watchAll: false,
-  watches: ids.map((id) => ({
-    environmentId: hub,
-    threadId: ThreadId.make(id),
-    reason: "launched",
-  })),
+  watches: ids.map((id) => ({ environmentId: hub, threadId: ThreadId.make(id) })),
 });
+
+const done = (id: string, atMs: number, overrides: Partial<OrchestrationV2ThreadShell> = {}) =>
+  shell(id, {
+    status: "completed",
+    latestRunCompletedAt: DateTime.makeUnsafe(atMs),
+    ...overrides,
+  });
+
+const settled = { settledOverride: "settled" } as const;
 
 const run = (
   previous: ReadonlyMap<ThreadId, WatchedThreadState>,
@@ -124,31 +129,101 @@ describe("diffWatchedThreads", () => {
     expect(asked.events).toMatchObject([{ threadId: "a", kind: "approval" }]);
   });
 
-  it("ends a watch once when the thread is settled", () => {
+  it("reports a turn that ends on background work only once the thread is done", () => {
     const home = watching("a");
     const first = run(new Map(), [shell("a")], home);
-    const settled = run(first.next, [shell("a", { settledOverride: "settled" })], home);
-    expect(settled.events).toMatchObject([{ threadId: "a", kind: "ended" }]);
-    expect(run(settled.next, [shell("a", { settledOverride: "settled" })], home).events).toEqual(
-      [],
+    const subagent = {
+      id: "task-1",
+      kind: "subagent",
+      providerInstanceId: "claudeAgent",
+    } as unknown as NonNullable<OrchestrationV2ThreadShell["pendingBackgroundTasks"]>[number];
+    const waiting = run(
+      first.next,
+      [done("a", 1_000, { pendingBackgroundTasks: [subagent] })],
+      home,
     );
+    expect(waiting.events).toEqual([]);
+    const resumed = run(waiting.next, [done("a", 1_000, { activityRunStatus: "running" })], home);
+    expect(resumed.events).toEqual([]);
+    const finished = run(resumed.next, [done("a", 2_000, { pendingBackgroundTasks: [] })], home);
+    expect(finished.events).toMatchObject([{ threadId: "a", kind: "completed" }]);
+    expect(run(finished.next, [done("a", 2_000)], home).events).toEqual([]);
+  });
+
+  it("keeps a launched thread watched after it settles", () => {
+    const home = watching();
+    const first = run(new Map(), [done("home-launched:a", 1_000)], home);
+    const quiet = run(first.next, [done("home-launched:a", 1_000, settled)], home);
+    expect(quiet.events).toEqual([]);
+    const reopened = run(quiet.next, [shell("home-launched:a")], home);
+    const finished = run(reopened.next, [done("home-launched:a", 2_000)], home);
+    expect(finished.events).toMatchObject([{ threadId: "home-launched:a", kind: "completed" }]);
+    expect(run(finished.next, [done("home-launched:a", 2_000)], home).events).toEqual([]);
+  });
+
+  it("stays quiet for a settled thread with no new activity", () => {
+    const home = watching("a");
+    const first = run(new Map(), [done("a", 1_000)], home);
+    const quiet = run(first.next, [done("a", 1_000, settled)], home);
+    expect(quiet.events).toEqual([]);
+    expect(run(quiet.next, [done("a", 1_000, settled)], home).events).toEqual([]);
+  });
+
+  it("keeps an explicit watch after its thread settles, and ends it on archive", () => {
+    const home = watching("a");
+    const first = run(new Map(), [done("a", 1_000)], home);
+    const quiet = run(first.next, [done("a", 1_000, settled)], home);
+    expect(quiet.events).toEqual([]);
+    const failed = run(quiet.next, [shell("a", { status: "failed" })], home);
+    expect(failed.events).toMatchObject([{ threadId: "a", kind: "failed" }]);
+    const archived = run(
+      failed.next,
+      [shell("a", { archivedAt: DateTime.makeUnsafe(3_000) })],
+      home,
+    );
+    expect(archived.events).toMatchObject([{ threadId: "a", kind: "ended" }]);
+  });
+
+  it("reports a question or failure at once, even with background work pending", () => {
+    const home = watching();
+    const pending = {
+      pendingBackgroundTasks: [{ id: "task-1", kind: "background_task" }],
+    } as unknown as Partial<OrchestrationV2ThreadShell>;
+    const first = run(new Map(), [done("home-launched:a", 1_000, settled)], home);
+    const asked = run(
+      first.next,
+      [{ ...asking("home-launched:a", "user_input"), ...pending }],
+      home,
+    );
+    expect(asked.events).toMatchObject([{ threadId: "home-launched:a", kind: "question" }]);
+    const failed = run(
+      asked.next,
+      [shell("home-launched:a", { status: "failed", ...pending })],
+      home,
+    );
+    expect(failed.events).toMatchObject([{ threadId: "home-launched:a", kind: "failed" }]);
   });
 
   it("reports the first state of a thread Home launched after it started", () => {
-    const launched = run(new Map(), [asking("a", "command")], watching("a"), new Set());
-    expect(launched.events).toMatchObject([{ threadId: "a", kind: "approval" }]);
-    expect(run(new Map(), [asking("a", "command")], watching("a")).events).toEqual([]);
+    const created = { createdAt: DateTime.makeUnsafe(2_000) } as const;
+    const launched = { ...asking("home-launched:a", "command"), ...created };
+    expect(run(new Map(), [launched], watching()).events).toMatchObject([
+      { threadId: "home-launched:a", kind: "approval" },
+    ]);
+    expect(run(new Map(), [asking("home-launched:a", "command")], watching()).events).toEqual([]);
   });
 
-  it("ends a start-up watch on a thread settled or deleted while the server was down", () => {
+  it("ends a start-up watch on a thread archived or deleted while the server was down", () => {
     const home = watching("a", "b");
-    const first = run(new Map(), [shell("a", { settledOverride: "settled" })], home);
+    const first = run(new Map(), [shell("a", { archivedAt: DateTime.makeUnsafe(500) })], home);
     expect(first.events).toMatchObject([{ threadId: "a", kind: "ended" }]);
     expect(run(new Map(), [["b", null]], home).events).toMatchObject([
       { threadId: "b", kind: "ended" },
     ]);
-    // A launch watch saved after start-up can arrive before its thread exists.
-    expect(run(new Map(), [["b", null]], home, new Set()).events).toEqual([]);
+  });
+
+  it("keeps a watch saved after start-up on a thread this server has not seen", () => {
+    expect(run(new Map(), [["b", null]], watching("b"), new Set()).events).toEqual([]);
   });
 
   it("reports the first state of a thread created after start-up, even when watching all", () => {

@@ -218,6 +218,7 @@ import * as CloudCliState from "./cloud/CliState.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as DesktopAppUpdate from "./desktopUpdate/DesktopAppUpdate.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
+import * as ClientDiagnostics from "./diagnostics/ClientDiagnostics.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as HostResources from "./resourceTelemetry/HostResources.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
@@ -815,7 +816,10 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.provideMerge(Layer.mergeAll(Keybindings.layer, UsageLimitSources.layer)),
   Layer.provideMerge(ProviderRegistry.layer),
   Layer.provideMerge(
-    ProviderInstanceRegistryHydration.layer.pipe(Layer.provide(SqlitePersistence.layerConfig)),
+    ProviderInstanceRegistryHydration.layer.pipe(
+      Layer.provide(SqlitePersistence.layerConfig),
+      Layer.provide(layerNativeTelemetry),
+    ),
   ),
   // One gate for the server, below hydration so the Claude adapter sees it: layers memoize by
   // reference, so the runtime layer shares it.
@@ -886,6 +890,7 @@ const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
   Layer.provideMerge(ThreadViewers.layer),
   Layer.provideMerge(layerResourceDiagnostics),
   Layer.provideMerge(TraceDiagnostics.layer),
+  Layer.provideMerge(ClientDiagnostics.layer),
   Layer.provideMerge(TriageService.layer.pipe(Layer.provide(GitVcsDriver.layer))),
   // Layers memoize by reference, so this is the same policy the settings layer reads.
   Layer.provideMerge(AnalyticsService.layer.pipe(Layer.provide(ManagedPolicy.layer))),

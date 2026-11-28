@@ -14,6 +14,7 @@ import * as Option from "effect/Option";
 import { useMemo } from "react";
 
 import { environmentCatalog } from "../../connection/catalog";
+import { forgetDirectApnsEnvironments } from "../agent-awareness/directApnsRegistration";
 import {
   connectPairingUrl as connectPairingUrlAtom,
   updateBearerConnection,
@@ -84,8 +85,10 @@ export function useConnectionController() {
         }),
       }),
     );
-  const removeEnvironment = (environmentId: EnvironmentId) =>
-    removeEnvironmentMutation(environmentId);
+  const removeEnvironment = async (environmentId: EnvironmentId) => {
+    await forgetDirectApnsEnvironments([environmentId]);
+    return removeEnvironmentMutation(environmentId);
+  };
   const setEnvironmentEnabled = (environmentId: EnvironmentId, enabled: boolean) =>
     setEnvironmentEnabledMutation({ environmentId, enabled });
   const updateEnvironment = (

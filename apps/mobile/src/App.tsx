@@ -112,6 +112,8 @@ import { pruneNewTaskFlowStates } from "./features/threads/new-task-flow-state";
 import { pruneNewTaskBranchCheckouts } from "./features/threads/NewTaskDraftRouteScreen";
 import { installAppUpdateChecks } from "./features/updates/app-updates";
 import { takeVoiceCallLink } from "./features/home-voice/homeVoiceCall";
+import { installDiagnosticUpload } from "./features/diagnostics/installDiagnosticUpload";
+import { perfProbe } from "./features/development/perf-probe-hooks";
 
 import "../global.css";
 
@@ -220,6 +222,7 @@ const appServiceDisposers = [
   installAgentNotificationNavigation(linkToAppPath),
   installAppShortcuts(linkToAppPath),
   installAppUpdateChecks(),
+  installDiagnosticUpload(),
   installShowcaseCapture(rootPathnameFromState),
 ];
 disposeOnFoundationReplace(typeof module === "undefined" ? undefined : module.hot, () => {
@@ -308,7 +311,12 @@ function AppContent() {
       <SubscriptionUsageCoordinator />
       <ConnectDeviceApprovalCoordinator />
       <VoiceSessionRunner />
-      <GestureHandlerRootView className="flex-1">
+      <GestureHandlerRootView
+        className="flex-1"
+        onTouchStartCapture={perfProbe?.touchStart}
+        onTouchEndCapture={perfProbe?.touchEnd}
+        onTouchCancelCapture={perfProbe?.touchEnd}
+      >
         <KeyboardProvider statusBarTranslucent>
           <SafeAreaProvider>
             <StatusBar barStyle={themeAppearance === "dark" ? "light-content" : "dark-content"} />

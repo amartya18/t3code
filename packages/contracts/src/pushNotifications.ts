@@ -7,7 +7,7 @@ export type PushApsEnvironment = typeof PushApsEnvironment.Type;
 
 // Tokens are interpolated into the APNs request path, so only hex is accepted.
 const ApnsToken = Schema.String.check(Schema.isPattern(/^[0-9a-fA-F]{32,400}$/));
-const PushDeviceId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
+export const PushDeviceId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
 
 export const PushDeviceRegistration = Schema.Struct({
   deviceId: PushDeviceId,
@@ -16,6 +16,7 @@ export const PushDeviceRegistration = Schema.Struct({
   bundleId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
   platform: Schema.Literal("ios"),
   liveActivitiesEnabled: Schema.Boolean,
+  /** False is a card-only device: it never gets an alert, only Live Activity pushes. */
   notificationsEnabled: Schema.Boolean,
   notifyOnApproval: Schema.Boolean,
   notifyOnInput: Schema.Boolean,

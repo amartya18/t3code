@@ -16,6 +16,7 @@ import {
   type DatabaseMigrationProgress,
   type DesktopSnapShotEvent,
   DEFAULT_CLIENT_SETTINGS,
+  parseDesktopPreviewWindowReturnUrl,
 } from "@t3tools/contracts";
 
 import * as DesktopAssets from "../app/DesktopAssets.ts";
@@ -37,12 +38,9 @@ import {
   TRACKPAD_SCROLL_END_CHANNEL,
   WINDOW_FULLSCREEN_STATE_CHANNEL,
 } from "../ipc/channels.ts";
-import {
-  PASSKEY_BRIDGE_ARGUMENT,
-  PRIMARY_PASTE_DISABLED_ARGUMENT,
-} from "../preview/GuestProtocol.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 import * as PreviewPasskeys from "../preview/Passkeys.ts";
+import { hardenPreviewGuestPreferences } from "../preview/WebviewPreferences.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
@@ -158,22 +156,6 @@ export class DesktopWindow extends Context.Service<
 const { logInfo: logWindowInfo, logWarning: logWindowWarning } =
   makeComponentLogger("desktop-window");
 
-function getIconOption(
-  iconPaths: DesktopAssets.DesktopIconPaths,
-  platform: NodeJS.Platform,
-): { icon: string } | Record<string, never> {
-  if (platform === "darwin") return {};
-  const ext = platform === "win32" ? "ico" : "png";
-  return Option.match(iconPaths[ext], {
-    onNone: () => ({}),
-    onSome: (icon) => ({ icon }),
-  });
-}
-
-function getInitialWindowBackgroundColor(shouldUseDarkColors: boolean): string {
-  return shouldUseDarkColors ? "#000000" : "#ffffff";
-}
-
 type DisplayBounds = Pick<Electron.Rectangle, "x" | "y" | "width" | "height">;
 
 // A window snapped to a display edge can be reported 1px past that edge.
@@ -273,7 +255,7 @@ function buildConnectingSplashDataUrl(
   shouldUseDarkColors: boolean,
   progress: DatabaseMigrationProgress | null,
 ): string {
-  const background = getInitialWindowBackgroundColor(shouldUseDarkColors);
+  const background = ElectronTheme.getInitialWindowBackgroundColor(shouldUseDarkColors);
   const label = shouldUseDarkColors ? "#9ca3af" : "#6b7280";
   const accent = shouldUseDarkColors ? "#f8fafc" : "#1f2937";
   const track = shouldUseDarkColors ? "rgba(248,250,252,0.18)" : "rgba(31,41,55,0.18)";
@@ -367,7 +349,7 @@ function syncWindowAppearance(
       return;
     }
 
-    window.setBackgroundColor(getInitialWindowBackgroundColor(shouldUseDarkColors));
+    window.setBackgroundColor(ElectronTheme.getInitialWindowBackgroundColor(shouldUseDarkColors));
     const { titleBarOverlay } = getWindowTitleBarOptions(shouldUseDarkColors, platform);
     if (hasTitleBarOverlay && typeof titleBarOverlay === "object") {
       window.setTitleBarOverlay(titleBarOverlay);
@@ -463,7 +445,7 @@ export const make = Effect.gen(function* () {
     yield* previewManager.getBrowserSession();
     const applicationUrl = getDesktopUrl(environment.isDevelopment);
     const iconPaths = yield* assets.iconPaths;
-    const iconOption = getIconOption(iconPaths, environment.platform);
+    const iconOption = DesktopAssets.windowIconOption(iconPaths, environment.platform);
     const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
     const persistedSettings = yield* desktopSettings.get;
     const persistedBounds = persistedSettings.mainWindowBounds;
@@ -496,7 +478,7 @@ export const make = Effect.gen(function* () {
       show: false,
       autoHideMenuBar: true,
       ...(environment.platform === "darwin" ? { disableAutoHideCursor: true } : {}),
-      backgroundColor: getInitialWindowBackgroundColor(shouldUseDarkColors),
+      backgroundColor: ElectronTheme.getInitialWindowBackgroundColor(shouldUseDarkColors),
       ...iconOption,
       title: environment.displayName,
       ...getWindowTitleBarOptions(shouldUseDarkColors, environment.platform),
@@ -633,7 +615,10 @@ export const make = Effect.gen(function* () {
       yield* electronWindow.destroyAll;
       return Option.none();
     }
+    // Electron emits each guest's did-attach-webview right after its will-attach-webview.
+    let returningTabId: string | null = null;
     window.webContents.on("will-attach-webview", (event, webPreferences, params) => {
+      returningTabId = null;
       if (
         typeof params.partition !== "string" ||
         !previewManager.isBrowserPartition(params.partition)
@@ -641,23 +626,19 @@ export const make = Effect.gen(function* () {
         event.preventDefault();
         return;
       }
-      webPreferences.sandbox = true;
-      webPreferences.nodeIntegration = false;
-      webPreferences.nodeIntegrationInSubFrames = false;
-      webPreferences.contextIsolation = true;
+      // The guest always runs the app's own preload, whatever the element asked for.
+      webPreferences.preload = environment.previewPickPreloadPath;
+      hardenPreviewGuestPreferences(webPreferences, {
+        passkeyBridge: previewPasskeys.bridgeEnabled,
+        primaryPaste: primaryPaste.enabled,
+      });
       webPreferences.disableHtmlFullscreenWindowResize = true;
-      if (previewPasskeys.bridgeEnabled) {
-        webPreferences.additionalArguments = [
-          ...(webPreferences.additionalArguments ?? []),
-          PASSKEY_BRIDGE_ARGUMENT,
-        ];
-      }
-      if (!primaryPaste.enabled) {
-        webPreferences.additionalArguments = [
-          ...(webPreferences.additionalArguments ?? []),
-          PRIMARY_PASTE_DISABLED_ARGUMENT,
-        ];
-      }
+      // A guest is transparent by default, so a fresh one shows its host until it paints;
+      // opaque, it paints a browser's default canvas itself.
+      webPreferences.transparent = false;
+      // An empty guest has loaded nothing, so a tab's window history can be restored into it.
+      returningTabId = parseDesktopPreviewWindowReturnUrl(params.src ?? "");
+      if (returningTabId !== null) params.src = "";
     });
 
     const contextMenuContents = new WeakSet<Electron.WebContents>();
@@ -779,18 +760,42 @@ export const make = Effect.gen(function* () {
       });
     };
     installContextMenu(window, window.webContents);
+    yield* previewManager.setGuestContextMenu(installContextMenu);
     window.webContents.on("did-attach-webview", (_event, contents) => {
+      const tabId = returningTabId;
+      returningTabId = null;
       installContextMenu(window, contents, true);
-      void runPromise(previewManager.prepareWebview(contents));
+      void runPromise(
+        previewManager
+          .prepareWebview(contents)
+          .pipe(
+            Effect.andThen(
+              tabId === null
+                ? Effect.void
+                : previewManager.registerReturningWebview(tabId, contents),
+            ),
+          ),
+      );
     });
 
     // Popups from every frame in this window arrive here without a caller, so only web links
-    // pass. The app opens editors and other applications over IPC.
-    window.webContents.setWindowOpenHandler(({ url }) => {
+    // pass, apart from a preview tab's own window. The app opens editors and other applications over IPC.
+    window.webContents.setWindowOpenHandler((details) => {
+      const previewWindow = previewManager.windowOpenResponse(
+        details,
+        window.webContents.mainFrame,
+      );
+      if (previewWindow !== null) return previewWindow;
+      const { url } = details;
       if (Option.isSome(ElectronShell.parseWebExternalUrl(url))) {
         void runPromise(electronShell.openExternal(url));
       }
       return { action: "deny" };
+    });
+    // A preview tab's own window shows a bar this document draws, which a new document cannot.
+    // Only a committed navigation replaces it: will-navigate cancels external links.
+    window.webContents.on("did-navigate", () => {
+      void runPromise(previewManager.closeAllWindows());
     });
     // Chromium asks this before handing a navigation to an OS protocol handler, and grants it
     // when nothing answers. External links are opened through ElectronShell only.
@@ -982,6 +987,7 @@ export const make = Effect.gen(function* () {
       },
     );
     window.webContents.on("render-process-gone", (_event, details) => {
+      void runPromise(previewManager.closeAllWindows());
       const recoverable =
         details.reason === "crashed" ||
         details.reason === "oom" ||
@@ -1150,7 +1156,7 @@ export const make = Effect.gen(function* () {
       center: true,
       show: false,
       skipTaskbar: false,
-      backgroundColor: getInitialWindowBackgroundColor(shouldUseDarkColors),
+      backgroundColor: ElectronTheme.getInitialWindowBackgroundColor(shouldUseDarkColors),
       title: environment.displayName,
       webPreferences: {
         contextIsolation: true,

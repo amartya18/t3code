@@ -27,6 +27,7 @@ import {
   DesktopPortForwardSchema,
   DesktopSharesLoopbackInputSchema,
   DesktopPreviewWebviewConfigSchema,
+  DesktopPreviewWindowOverlayInputSchema,
   PreviewAnnotationSubmissionResultSchema,
   PreviewCaptureFailure,
   DEFAULT_BROWSER_PROFILE_ID,
@@ -39,6 +40,7 @@ import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import * as NodeURL from "node:url";
 
+import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as BrowserImport from "../../preview/BrowserImport/BrowserImport.ts";
 import * as LoopbackTunnel from "../../preview/LoopbackTunnel.ts";
@@ -298,6 +300,25 @@ const closePictureInPicture = tabMethod(
   "desktop.ipc.preview.closePictureInPicture",
   (manager, tabId) => manager.closePictureInPicture(tabId),
 );
+const focusWindow = tabMethod(
+  IpcChannels.PREVIEW_WINDOW_FOCUS_CHANNEL,
+  "desktop.ipc.preview.focusWindow",
+  (manager, tabId) => manager.focusWindow(tabId),
+);
+const closeWindow = tabMethod(
+  IpcChannels.PREVIEW_WINDOW_CLOSE_CHANNEL,
+  "desktop.ipc.preview.closeWindow",
+  (manager, tabId) => manager.closeWindow(tabId),
+);
+const setWindowOverlay = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_WINDOW_OVERLAY_CHANNEL,
+  payload: DesktopPreviewWindowOverlayInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.setWindowOverlay")(function* ({ tabId, open }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.setWindowOverlay(tabId, open);
+  }),
+});
 
 const clearCookies = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_CLEAR_COOKIES_CHANNEL,
@@ -363,6 +384,7 @@ const getPreviewConfig = DesktopIpc.makeIpcMethod({
   }) {
     const manager = yield* PreviewManager.PreviewManager;
     const tunnel = yield* LoopbackTunnel.LoopbackTunnel;
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const { scope, persistent, namespace } = resolvePartitionScope(environmentId, profileId);
     // Session creation installs UA and permission handlers before a guest can attach.
     const session = yield* manager.getBrowserSession(scope, persistent, namespace);
@@ -371,7 +393,7 @@ const getPreviewConfig = DesktopIpc.makeIpcMethod({
     return {
       partition: yield* manager.getBrowserPartition(scope, persistent, namespace),
       webPreferences: PREVIEW_WEBVIEW_PREFERENCES,
-      preloadUrl: NodeURL.pathToFileURL(`${__dirname}/preview-pick-preload.cjs`).href,
+      preloadUrl: NodeURL.pathToFileURL(environment.previewPickPreloadPath).href,
     };
   }),
 });
@@ -583,6 +605,9 @@ export const methods = [
   copyArtifactToClipboard,
   openPictureInPicture,
   closePictureInPicture,
+  focusWindow,
+  closeWindow,
+  setWindowOverlay,
   startRecording,
   stopRecording,
   saveRecording,

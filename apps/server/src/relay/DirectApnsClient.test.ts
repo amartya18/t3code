@@ -8,6 +8,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as DirectApnsClient from "./DirectApnsClient.ts";
@@ -65,21 +66,28 @@ const secretsWith = (values: Record<string, string> = {}) =>
     }),
   );
 
+const isTransportError = Schema.is(DirectApnsClient.DirectApnsTransportError);
+
 const makeHarness = (options: {
   readonly env?: Record<string, string>;
   readonly secrets?: Record<string, string>;
   readonly respond?: (
     request: DirectApnsClient.ApnsHttp2Request,
-  ) => DirectApnsClient.ApnsHttp2Response;
+    attempt: number,
+  ) => DirectApnsClient.ApnsHttp2Response | DirectApnsClient.DirectApnsTransportError;
 }) => {
   const requests: DirectApnsClient.ApnsHttp2Request[] = [];
   const transport = Layer.succeed(
     DirectApnsClient.DirectApnsTransport,
     DirectApnsClient.DirectApnsTransport.of({
       post: (request) =>
-        Effect.sync(() => {
+        Effect.suspend(() => {
           requests.push(request);
-          return options.respond?.(request) ?? { status: 200, body: "" };
+          const response = options.respond?.(request, requests.length) ?? {
+            status: 200,
+            body: "",
+          };
+          return isTransportError(response) ? Effect.fail(response) : Effect.succeed(response);
         }),
     }),
   );
@@ -91,6 +99,10 @@ const makeHarness = (options: {
   );
   return { requests, layer };
 };
+
+const timedOut = new DirectApnsClient.DirectApnsTransportError({
+  cause: "APNs request timed out",
+});
 
 const send = (input: Parameters<DirectApnsClient.DirectApnsClient["Service"]["send"]>[0]) =>
   DirectApnsClient.DirectApnsClient.use((client) => client.send(input));
@@ -205,25 +217,39 @@ describe("DirectApnsClient", () => {
     }).pipe(Effect.provide(harness.layer));
   });
 
-  it.effect("reports a transport failure instead of failing the caller", () => {
-    const layer = DirectApnsClient.layer.pipe(
-      Layer.provide(
-        Layer.succeed(
-          DirectApnsClient.DirectApnsTransport,
-          DirectApnsClient.DirectApnsTransport.of({
-            post: () =>
-              Effect.fail(new DirectApnsClient.DirectApnsTransportError({ cause: "boom" })),
-          }),
-        ),
-      ),
-      Layer.provide(fileSystemWith({ "/keys/AuthKey.p8": PRIVATE_PEM })),
-      Layer.provide(secretsWith()),
-      Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: ENV }))),
-    );
+  it.effect("retries a timed-out request once and reports it sent", () => {
+    const harness = makeHarness({
+      respond: (_request, attempt) => (attempt === 1 ? timedOut : { status: 200, body: "" }),
+    });
+    return Effect.gen(function* () {
+      const result = yield* send({ device: device(), request });
+      assert.deepStrictEqual(result, { outcome: "sent" });
+      assert.strictEqual(harness.requests.length, 2);
+      assert.strictEqual(
+        harness.requests[0]?.headers.authorization,
+        harness.requests[1]?.headers.authorization,
+      );
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("reports a transport failure after one retry instead of failing the caller", () => {
+    const harness = makeHarness({ respond: () => timedOut });
     return Effect.gen(function* () {
       const result = yield* send({ device: device(), request });
       assert.deepStrictEqual(result, { outcome: "error", removeToken: false });
-    }).pipe(Effect.provide(layer));
+      assert.strictEqual(harness.requests.length, 2);
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect.each([400, 410] as const)("never retries an HTTP %s rejection", (status) => {
+    const harness = makeHarness({
+      respond: () => ({ status, body: JSON.stringify({ reason: "BadDeviceToken" }) }),
+    });
+    return Effect.gen(function* () {
+      const result = yield* send({ device: device(), request });
+      assert.strictEqual(result.outcome, "rejected");
+      assert.strictEqual(harness.requests.length, 1);
+    }).pipe(Effect.provide(harness.layer));
   });
 });
 
@@ -262,6 +288,42 @@ describe("node http2 transport", () => {
         assert.strictEqual(seen[0]?.headers[":path"], "/3/device/abc");
         assert.strictEqual(seen[0]?.headers["apns-topic"], "com.example.t3code");
         assert.strictEqual(seen[0]?.body, '{"aps":{}}');
+      }),
+    ),
+  );
+
+  it.live("opens a new connection after a request fails, so a retry never reuses a dead one", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let sessions = 0;
+        let requests = 0;
+        const server = NodeHttp2.createServer((request, response) => {
+          requests += 1;
+          if (requests === 1) request.stream.close(NodeHttp2.constants.NGHTTP2_INTERNAL_ERROR);
+          else response.end();
+        });
+        server.on("session", () => (sessions += 1));
+        yield* Effect.addFinalizer(() => Effect.sync(() => server.close()));
+        const port = yield* Effect.promise(
+          () =>
+            new Promise<number>((resolve) =>
+              server.listen(0, "127.0.0.1", () =>
+                resolve((server.address() as { port: number }).port),
+              ),
+            ),
+        );
+        const transport = yield* DirectApnsClient.makeNodeHttp2Transport;
+        const post = transport.post({
+          origin: `http://127.0.0.1:${port}`,
+          path: "/",
+          headers: {},
+          body: "",
+        });
+        const failed = yield* post.pipe(Effect.flip);
+        assert.strictEqual(failed._tag, "DirectApnsTransportError");
+        const response = yield* post;
+        assert.strictEqual(response.status, 200);
+        assert.strictEqual(sessions, 2);
       }),
     ),
   );

@@ -70,6 +70,7 @@ describe("RPC authorization scopes", () => {
   it("lets any thread-reading client manage its own push registration, and nothing broader", () => {
     for (const method of [
       WS_METHODS.notificationsRegisterDevice,
+      WS_METHODS.notificationsUnregisterDevice,
       WS_METHODS.notificationsRegisterLiveActivity,
     ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);

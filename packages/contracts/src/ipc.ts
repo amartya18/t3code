@@ -619,6 +619,8 @@ export interface DesktopPreviewTabState {
   canGoForward: boolean;
   zoomFactor: number;
   pictureInPicture: boolean;
+  /** The page lives in its own OS window instead of the panel's webview. */
+  inWindow: boolean;
   colorScheme: DesktopPreviewColorScheme;
   audioMuted: boolean;
   /** Chromium reports playback even when audioMuted is true. */
@@ -1054,6 +1056,11 @@ export const DesktopPreviewSetAudioMutedInputSchema = Schema.Struct({
   audioMuted: Schema.Boolean,
 });
 
+export const DesktopPreviewWindowOverlayInputSchema = Schema.Struct({
+  tabId: DesktopPreviewTabIdSchema,
+  open: Schema.Boolean,
+});
+
 export const DesktopPreviewSetShownInputSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
   shown: Schema.Boolean,
@@ -1259,6 +1266,36 @@ export interface DesktopBridge {
 export const DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER = "__t3DesktopPreviewRecordingCapture";
 
 /**
+ * A webview `src` the desktop attaches as an empty guest for the tab, which then restores the
+ * history of the tab's window into it.
+ */
+const DESKTOP_PREVIEW_WINDOW_RETURN_URL_PREFIX = "about:blank#t3-preview-window-return:";
+export const desktopPreviewWindowReturnUrl = (tabId: string): string =>
+  `${DESKTOP_PREVIEW_WINDOW_RETURN_URL_PREFIX}${encodeURIComponent(tabId)}`;
+export const parseDesktopPreviewWindowReturnUrl = (src: string): string | null => {
+  if (!src.startsWith(DESKTOP_PREVIEW_WINDOW_RETURN_URL_PREFIX)) return null;
+  try {
+    return decodeURIComponent(src.slice(DESKTOP_PREVIEW_WINDOW_RETURN_URL_PREFIX.length)) || null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * The renderer opens a tab's own window with `window.open` under this frame name and draws the
+ * browser bar into it; the desktop puts the page below the bar.
+ */
+const DESKTOP_PREVIEW_WINDOW_NAME_PREFIX = "t3-preview-window:";
+export const desktopPreviewWindowName = (tabId: string): string =>
+  `${DESKTOP_PREVIEW_WINDOW_NAME_PREFIX}${tabId}`;
+export const desktopPreviewWindowTabId = (frameName: string): string | null =>
+  frameName.startsWith(DESKTOP_PREVIEW_WINDOW_NAME_PREFIX)
+    ? frameName.slice(DESKTOP_PREVIEW_WINDOW_NAME_PREFIX.length)
+    : null;
+/** CSS pixels of the browser bar above the page in a tab's own window. */
+export const DESKTOP_PREVIEW_WINDOW_BAR_HEIGHT = 40;
+
+/**
  * Dictation for the annotation editor drawn inside a preview guest. The guest only shows
  * controls and forwards trusted user gestures; the renderer records, with its consent
  * checks, and publishes state back. `shortcuts` are the dictation chords in effect.
@@ -1407,6 +1444,19 @@ export interface DesktopPreviewBridge {
   pictureInPicture: {
     open: (tabId: string) => Promise<void>;
     close: (tabId: string) => Promise<void>;
+  };
+  /**
+   * A tab's own OS window, opened with `window.open(…, desktopPreviewWindowName(tabId))`. Closing
+   * it brings the page back to the panel with its history.
+   */
+  window: {
+    /** Shows the window and focuses its page. */
+    focus: (tabId: string) => Promise<void>;
+    close: (tabId: string) => Promise<void>;
+    /** While a bar menu is open the bar covers the page, so the menu can draw over it. */
+    setOverlay: (tabId: string, open: boolean) => Promise<void>;
+    /** The focus-URL shortcut was pressed in the tab's window, whose bar now has keyboard focus. */
+    onFocusUrl: (listener: (tabId: string) => void) => () => void;
   };
   recording: {
     onInput: (listener: (event: DesktopPreviewRecordingInputEvent) => void) => () => void;

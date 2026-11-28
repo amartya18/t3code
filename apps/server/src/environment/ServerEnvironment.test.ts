@@ -365,4 +365,64 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerEnvironmen
       }).pipe(Effect.provide(layerTest));
     }),
   );
+
+  it.effect("reports agent activity publishing when direct APNs credentials are stored", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-server-environment-apns-secrets-test-",
+      });
+      const layerTest = Layer.mergeAll(
+        ServerEnvironment.layer.pipe(Layer.provide(ServerSecretStore.layer)),
+        ServerSecretStore.layer,
+      ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)));
+
+      yield* Effect.gen(function* () {
+        const secrets = yield* ServerSecretStore.ServerSecretStore;
+        const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+        const encode = (value: string) => new TextEncoder().encode(value);
+
+        yield* secrets.set("apns-key-id", encode("KEY1234567"));
+        yield* secrets.set("apns-team-id", encode("TEAM123456"));
+        const partial = yield* serverEnvironment.getDescriptor;
+        expect(partial.capabilities.agentActivityPublishing).toBe(false);
+
+        yield* secrets.set("apns-private-key", encode("-----BEGIN PRIVATE KEY-----"));
+        const configured = yield* serverEnvironment.getDescriptor;
+        expect(configured.capabilities.agentActivityPublishing).toBe(true);
+      }).pipe(
+        Effect.provide(layerTest),
+        Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromEnv({ env: {} })),
+      );
+    }),
+  );
+
+  it.effect("reports agent activity publishing when direct APNs is configured by env", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-server-environment-apns-env-test-",
+      });
+      const keyPath = `${baseDir}/AuthKey.p8`;
+      yield* fileSystem.writeFileString(keyPath, "-----BEGIN PRIVATE KEY-----");
+      const readDescriptor = (env: Record<string, string>) =>
+        Effect.gen(function* () {
+          const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+          return yield* serverEnvironment.getDescriptor;
+        }).pipe(
+          Effect.provide(layerServerEnvironment(baseDir)),
+          Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromEnv({ env })),
+        );
+
+      const unconfigured = yield* readDescriptor({});
+      expect(unconfigured.capabilities.agentActivityPublishing).toBe(false);
+
+      const configured = yield* readDescriptor({
+        T3CODE_APNS_KEY_ID: "KEY1234567",
+        T3CODE_APNS_TEAM_ID: "TEAM123456",
+        T3CODE_APNS_PRIVATE_KEY_PATH: keyPath,
+      });
+      expect(configured.capabilities.agentActivityPublishing).toBe(true);
+    }),
+  );
 });

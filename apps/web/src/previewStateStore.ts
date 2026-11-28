@@ -21,6 +21,7 @@ export interface DesktopPreviewOverlay {
   loading: boolean;
   zoomFactor: number;
   pictureInPicture: boolean;
+  inWindow: boolean;
   colorScheme: DesktopPreviewColorScheme;
   audioMuted: boolean;
   audible: boolean;
@@ -406,6 +407,7 @@ function isPreviewStateEqual(
       previous.loading === next.loading &&
       previous.zoomFactor === next.zoomFactor &&
       previous.pictureInPicture === next.pictureInPicture &&
+      previous.inWindow === next.inWindow &&
       previous.colorScheme === next.colorScheme &&
       previous.audioMuted === next.audioMuted &&
       previous.audible === next.audible &&

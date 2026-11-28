@@ -444,6 +444,7 @@ class T3WorkspaceNavigationView(
       "issues" -> R.drawable.t3_issues
       "workflows" -> R.drawable.t3_workflows
       "usage" -> R.drawable.t3_usage
+      "scheduledTasks" -> R.drawable.t3_scheduled_tasks
       else -> R.drawable.t3_settings
     }
   )

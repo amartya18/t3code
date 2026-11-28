@@ -30,6 +30,17 @@ export const RelayAgentAwarenessPhase = Schema.Literals([
 ]);
 export type RelayAgentAwarenessPhase = typeof RelayAgentAwarenessPhase.Type;
 
+export const ApnsNotificationPayload = Schema.Struct({
+  title: Schema.String,
+  body: Schema.String,
+  environmentId: Schema.String,
+  threadId: Schema.String,
+  deepLink: Schema.String,
+  phase: Schema.optional(RelayAgentAwarenessPhase),
+  updatedAt: Schema.optional(Schema.String),
+});
+export type ApnsNotificationPayload = typeof ApnsNotificationPayload.Type;
+
 export const RelayAgentAwarenessPreferences = Schema.Struct({
   liveActivitiesEnabled: Schema.Boolean,
   notificationsEnabled: Schema.Boolean,

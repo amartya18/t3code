@@ -1,6 +1,6 @@
 import {
+  ApnsNotificationPayload,
   RelayAgentActivityAggregateState,
-  RelayAgentAwarenessPhase,
 } from "@t3tools/contracts/relay";
 import { stableStringify } from "@t3tools/shared/relaySigning";
 import * as Mac from "effect/crypto/Mac";
@@ -28,17 +28,6 @@ const ApnsDeliveryJobContext = {
   userId: Schema.String,
   deviceId: Schema.String,
 };
-
-export const ApnsNotificationPayload = Schema.Struct({
-  title: Schema.String,
-  body: Schema.String,
-  environmentId: Schema.String,
-  threadId: Schema.String,
-  deepLink: Schema.String,
-  phase: Schema.optional(RelayAgentAwarenessPhase),
-  updatedAt: Schema.optional(Schema.String),
-});
-export type ApnsNotificationPayload = typeof ApnsNotificationPayload.Type;
 
 export const ApnsLiveActivityAlert = Schema.Struct({
   title: Schema.String,

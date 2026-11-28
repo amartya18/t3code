@@ -6,15 +6,22 @@ import { beforeEach, vi } from "vite-plus/test";
 import { describe, expect, it } from "@effect/vitest";
 import Constants from "expo-constants";
 import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import { Cookies, FetchHttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
 
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  ProjectId,
+  type EnvironmentId,
+  type OrchestrationV2ShellSnapshot,
+  ThreadId,
+} from "@t3tools/contracts";
 import type { RelayAgentActivityAggregateState } from "@t3tools/contracts/relay";
 import { verifyDpopProof } from "@t3tools/shared/dpop";
 import * as Dpop from "../cloud/dpop";
@@ -33,6 +40,7 @@ import {
   type Preferences,
 } from "../../persistence/mobile-preferences";
 import { MobileSecureStorageError } from "../../persistence/mobile-secure-storage";
+import { makeProjectShell, makeRawThreadShell } from "../../test-fixtures";
 import * as MobileStorage from "../../persistence/mobile-storage";
 import { makeRelayDeviceRegistrationRequest } from "./registrationPayload";
 import {
@@ -121,10 +129,36 @@ vi.mock("./agentLiveActivity", () => ({
   startAgentLiveActivity: widgetMocks.start,
 }));
 
-// Avoid importing the native connection stack; this gate only needs configs.
+const shellsMock = vi.hoisted(() => ({
+  states: new Map<
+    string,
+    { readonly status: string; readonly snapshot: Option.Option<OrchestrationV2ShellSnapshot> }
+  >(),
+  listeners: [] as Array<() => void>,
+}));
+
+// Avoid importing the native connection stack; these reads only need configs and shells.
 vi.mock("../../state/atom-registry", () => ({
   appAtomRegistry: {
-    get: () => environmentConfigsMock.configs,
+    get: (atom: unknown) =>
+      typeof atom === "object" && atom !== null && "shellOf" in atom
+        ? (shellsMock.states.get(String(atom.shellOf)) ?? {
+            status: "empty",
+            snapshot: Option.none(),
+          })
+        : environmentConfigsMock.configs,
+    subscribe: (_atom: unknown, listener: () => void) => {
+      shellsMock.listeners.push(listener);
+      return () => {
+        shellsMock.listeners.splice(shellsMock.listeners.indexOf(listener), 1);
+      };
+    },
+  },
+}));
+
+vi.mock("../../state/shell", () => ({
+  environmentShell: {
+    stateValueAtom: (environmentId: string) => ({ shellOf: environmentId }),
   },
 }));
 
@@ -184,6 +218,7 @@ vi.mock("react-native", () => ({
     },
   },
   AppState: {
+    currentState: "active",
     addEventListener: (_event: string, listener: (state: string) => void) => {
       appStateMock.listeners.push(listener);
       return {
@@ -345,6 +380,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     publishWidgetMock.mockClear();
     widgetMocks.dismissEnded.mockReset();
     environmentConfigsMock.configs.clear();
+    shellsMock.states.clear();
   });
 
   it("disables push features in Personal Team relay registrations", () => {
@@ -857,21 +893,19 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         listener({ type: os, data: "rotated" });
         yield* runBackgroundOperations();
         expect(registrations.at(-1)).toMatchObject({
+          pushToken: "rotated",
           preferences: { notificationsEnabled: false, liveActivitiesEnabled: os === "ios" },
         });
-        if (os === "android") {
-          expect(registrations.at(-1)).toMatchObject({ pushToken: "rotated" });
-          vi.mocked(Notifications.getPermissionsAsync).mockResolvedValueOnce({
-            granted: false,
-          } as Awaited<ReturnType<typeof Notifications.getPermissionsAsync>>);
-          yield* refreshAgentAwarenessRegistration();
-          expect(registrations.at(-1)).toMatchObject({
-            pushToken: "initial",
-            preferences: { notificationsEnabled: false, liveActivitiesEnabled: false },
-          });
-        } else {
-          expect(registrations.at(-1)).not.toHaveProperty("pushToken");
-        }
+        expect(agentAwarenessNotificationsReady()).toBe(false);
+        vi.mocked(Notifications.getPermissionsAsync).mockResolvedValueOnce({
+          granted: false,
+        } as Awaited<ReturnType<typeof Notifications.getPermissionsAsync>>);
+        yield* refreshAgentAwarenessRegistration();
+        expect(registrations.at(-1)).toMatchObject({
+          pushToken: "initial",
+          preferences: { notificationsEnabled: false, liveActivitiesEnabled: os === "ios" },
+        });
+        expect(agentAwarenessNotificationsReady()).toBe(false);
       }).pipe(
         Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
         Effect.provide(
@@ -1342,6 +1376,126 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         expect(publishWidgetMock).not.toHaveBeenCalled();
       }),
     );
+
+    describe("priming from connected servers", () => {
+      beforeEach(() => {
+        vi.mocked(loadPreferences).mockResolvedValue({
+          liveActivitiesEnabled: true,
+        } as Preferences);
+        widgetMocks.start.mockReturnValue({
+          getId: () => "primed-activity",
+          getPushToken: () => Promise.resolve(null),
+          addPushTokenListener: vi.fn(() => ({ remove: vi.fn() })),
+        });
+      });
+
+      const idle = { ...aggregate, activeCount: 0, activities: [] };
+
+      function connectServer(input: {
+        readonly agentActivityPublishing: boolean;
+        readonly shellStatus?: string;
+      }) {
+        environmentConfigsMock.configs.set("env-direct", {
+          environment: {
+            capabilities: { agentActivityPublishing: input.agentActivityPublishing },
+          },
+        });
+        const project = makeProjectShell({ id: ProjectId.make("project-1"), title: "fork" });
+        shellsMock.states.set("env-direct", {
+          status: input.shellStatus ?? "live",
+          snapshot: Option.some({
+            schemaVersion: 1,
+            snapshotSequence: 1,
+            projects: [project],
+            archivedThreads: [],
+            threads: [
+              makeRawThreadShell({
+                id: ThreadId.make("thread-direct"),
+                projectId: project.id,
+                title: "Ship direct pushes",
+                status: "running",
+                // it.effect's TestClock starts at the epoch.
+                updatedAt: DateTime.makeUnsafe(0),
+              }),
+            ],
+          }),
+        });
+      }
+
+      const startedRows = () =>
+        widgetMocks.start.mock.calls.map((call) =>
+          (
+            call as unknown as [
+              { readonly activities: RelayAgentActivityAggregateState["activities"] },
+            ]
+          )[0].activities.map((row) => [row.threadTitle, row.projectTitle]),
+        );
+
+      it.effect("starts a card for a server whose work the relay never sees", () => {
+        connectServer({ agentActivityPublishing: true });
+        const relay = fakeRelay(() => Effect.succeed({ aggregate: idle }));
+        setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token"), "user-a");
+
+        return Effect.gen(function* () {
+          yield* refreshActiveLiveActivityRemoteRegistration();
+
+          expect(startedRows()).toEqual([[["Ship direct pushes", "fork"]]]);
+        }).pipe(Effect.provide(relay));
+      });
+
+      it.effect("starts nothing for a server that does not publish agent activity", () => {
+        connectServer({ agentActivityPublishing: false });
+        const relay = fakeRelay(() => Effect.succeed({ aggregate: idle }));
+        setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token"), "user-a");
+
+        return Effect.gen(function* () {
+          yield* refreshActiveLiveActivityRemoteRegistration();
+
+          expect(widgetMocks.start).not.toHaveBeenCalled();
+        }).pipe(Effect.provide(relay));
+      });
+
+      it.effect("starts nothing from a cached shell that may show finished work", () => {
+        connectServer({ agentActivityPublishing: true, shellStatus: "cached" });
+        const relay = fakeRelay(() => Effect.succeed({ aggregate: idle }));
+        setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token"), "user-a");
+
+        return Effect.gen(function* () {
+          yield* refreshActiveLiveActivityRemoteRegistration();
+
+          expect(widgetMocks.start).not.toHaveBeenCalled();
+        }).pipe(Effect.provide(relay));
+      });
+
+      it.effect("starts the card once a resyncing server's shell turns live", () => {
+        connectServer({ agentActivityPublishing: true, shellStatus: "synchronizing" });
+        const relay = fakeRelay(() => Effect.succeed({ aggregate: idle }));
+        setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token"), "user-a");
+
+        return Effect.gen(function* () {
+          yield* runBackgroundOperations();
+          expect(widgetMocks.start).not.toHaveBeenCalled();
+
+          connectServer({ agentActivityPublishing: true });
+          for (const listener of shellsMock.listeners) listener();
+          yield* runBackgroundOperations();
+
+          expect(startedRows()).toEqual([[["Ship direct pushes", "fork"]]]);
+        }).pipe(Effect.provide(relay));
+      });
+
+      it.effect("prefers the relay's rows when it reports active work", () => {
+        connectServer({ agentActivityPublishing: true });
+        const relay = fakeRelay(() => Effect.succeed({ aggregate }));
+        setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token"), "user-a");
+
+        return Effect.gen(function* () {
+          yield* refreshActiveLiveActivityRemoteRegistration();
+
+          expect(startedRows()).toEqual([[["Fix the widget", "t3code"]]]);
+        }).pipe(Effect.provide(relay));
+      });
+    });
 
     it.effect("does not prime a Live Activity after sign-out during the preference read", () =>
       Effect.gen(function* () {

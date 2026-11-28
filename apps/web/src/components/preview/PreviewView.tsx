@@ -12,6 +12,7 @@ import {
 import {
   AuthOrchestrationOperateScope,
   DEFAULT_BROWSER_PROFILE_ID,
+  DESKTOP_PREVIEW_WINDOW_BAR_HEIGHT,
   INCOGNITO_BROWSER_PROFILE_ID,
   FILL_PREVIEW_VIEWPORT,
   type PreviewAnnotationPayload,
@@ -29,6 +30,7 @@ import {
 } from "@t3tools/shared/preview";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import {
   BROWSER_HISTORY_MAX_ENTRIES_PER_PROJECT,
@@ -79,6 +81,7 @@ import { showPreviewPopup } from "./showPreviewPopup";
 import { PreviewChromeRow } from "./PreviewChromeRow";
 import { PreviewEmptyState } from "./PreviewEmptyState";
 import { PreviewMoreMenu, type PreviewMoreMenuActions } from "./PreviewMoreMenu";
+import { PreviewWindowPlaceholder, usePreviewWindowActions } from "./PreviewWindowPlaceholder";
 import { commitBrowserViewportChange } from "~/browser/browserViewportActions";
 import { browserResponsiveViewportForToggle, useBrowserDefaults } from "~/browser/browserDefaults";
 import { BrowserDeviceToolbar } from "~/browser/BrowserDeviceToolbar";
@@ -90,6 +93,7 @@ import { PreviewFileNotShown, PreviewUnreachable } from "./PreviewUnreachable";
 import type { MessageResolver } from "~/i18n/messages";
 import { revealInFileExplorerLabel } from "./fileExplorerLabel";
 import { Badge } from "~/components/ui/badge";
+import { usePortalContainer } from "~/components/ui/portal-container";
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
 import {
   alternatePreviewRuntime,
@@ -111,14 +115,16 @@ import {
   useActiveBrowserRecordingTabIds,
 } from "~/browser/browserRecording";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { observeResize } from "~/lib/observeResize";
+import { SharedTooltipTrigger } from "~/components/ui/shared-tooltip";
 
 interface Props {
   threadRef: ScopedThreadRef;
   tabId?: string | null;
   configuredUrls?: ReadonlyArray<string> | undefined;
   visible: boolean;
+  /** Only the browser bar, drawn above the page in the tab's own desktop window. */
+  chromeOnly?: boolean;
   onSendAnnotation?: (
     annotation: PreviewAnnotationPayload,
     image: ComposerImageAttachment | null,
@@ -169,7 +175,13 @@ function focusPreviewWebview(runtimeTabId: string) {
 
 function focusPreviewPage(runtimeTabId: string) {
   const active = document.activeElement;
-  if (active && active !== document.body && !active.closest("[data-preview-panel-mode]")) return;
+  if (
+    active &&
+    active !== document.body &&
+    !active.closest("[data-preview-panel-mode], [data-browser-surface-overlay]")
+  ) {
+    return;
+  }
   focusPreviewWebview(runtimeTabId);
 }
 
@@ -178,6 +190,7 @@ export function PreviewView({
   tabId: requestedTabId,
   configuredUrls,
   visible,
+  chromeOnly = false,
   onSendAnnotation,
 }: Props) {
   const gt = useGT();
@@ -198,6 +211,7 @@ export function PreviewView({
     threadRef,
     BROWSER_HISTORY_MAX_ENTRIES_PER_PROJECT,
   );
+  const portalContainer = usePortalContainer();
   const miniPlayerTabId = usePreviewMiniPlayerStore((state) =>
     selectThreadPreviewMiniPlayerTabId(state.byThreadKey, threadRef),
   );
@@ -251,6 +265,8 @@ export function PreviewView({
   const desktopOverlay =
     tabId && !isServerTab ? (previewState.desktopByTabId[tabId] ?? null) : null;
   const layoutZoomFactor = useBrowserLayoutZoomFactor(desktopOverlay?.zoomFactor ?? 1);
+  const inWindow = desktopOverlay?.inWindow ?? false;
+  const windowActions = usePreviewWindowActions(runtimeTabId);
   // A new Electron tab is Idle until its first URL commits, while the server already has it Loading.
   const desktopNavStatus =
     !serverOwnsRendering && desktopOverlay?.navStatus._tag !== "Idle"
@@ -287,7 +303,8 @@ export function PreviewView({
     if (runtimeTabId && previewBridge) {
       await previewBridge.navigate(runtimeTabId, resolvedUrl);
       rememberPreviewUrl(threadRef, resolvedUrl);
-      focusPreviewPage(runtimeTabId);
+      if (chromeOnly) void previewBridge.window.focus(runtimeTabId).catch(() => undefined);
+      else focusPreviewPage(runtimeTabId);
       return activeProfileId;
     }
     const result = await openPreviewSession({ openPreview: open, threadRef, url: resolvedUrl });
@@ -521,6 +538,13 @@ export function PreviewView({
   const desktopCall = (op: ((tabId: string) => Promise<void>) | undefined) => () => {
     if (op && runtimeTabId) void op(runtimeTabId).catch(() => undefined);
   };
+  // A window's page fills the window below its bar: no separate window, and no room for a find bar.
+  const panelOnlyMoreMenuActions = chromeOnly
+    ? {}
+    : {
+        toggleNativePictureInPicture: () => handleNativePictureInPicture(),
+        ...(canFindInPage ? { find: handleFind } : {}),
+      };
   const moreMenuActions: PreviewMoreMenuActions | null = serverOwnsRendering
     ? {
         hardReload: () => void adjustServerTab({ hardReload: true }),
@@ -533,8 +557,8 @@ export function PreviewView({
         ...(nativeServerTab && previewBridge
           ? {
               openDevTools: desktopCall(previewBridge.openDevTools),
-              toggleNativePictureInPicture: () => handleNativePictureInPicture(),
-              ...(canFindInPage ? { find: handleFind } : {}),
+              ...panelOnlyMoreMenuActions,
+              toggleWindow: inWindow ? windowActions.close : windowActions.open,
             }
           : {}),
       }
@@ -557,8 +581,8 @@ export function PreviewView({
               ?.clearCache(threadRef.environmentId, activeProfileId)
               .catch(() => undefined),
           openDevTools: desktopCall(previewBridge.openDevTools),
-          toggleNativePictureInPicture: () => handleNativePictureInPicture(),
-          ...(canFindInPage ? { find: handleFind } : {}),
+          ...panelOnlyMoreMenuActions,
+          toggleWindow: inWindow ? windowActions.close : windowActions.open,
         }
       : null;
 
@@ -821,9 +845,10 @@ export function PreviewView({
       void previewBridge.cancelPickElement(runtimeTabId).catch(() => undefined);
       return;
     }
-    // Capture app focus before main moves it into guest webContents.
-    const previouslyFocused =
-      typeof document !== "undefined" ? (document.activeElement as HTMLElement | null) : null;
+    // Capture app focus before main moves it into guest webContents. A window's bar has its own document.
+    const ownerDocument =
+      urlInputRef.current?.ownerDocument ?? (typeof document === "undefined" ? null : document);
+    const previouslyFocused = (ownerDocument?.activeElement as HTMLElement | null) ?? null;
     const pickRequest = { cancelled: false };
     let submitted = false;
     pickActiveRef.current = pickRequest;
@@ -864,7 +889,9 @@ export function PreviewView({
       if (pickRequest.cancelled) return;
       // Main's WebContents.focus() cannot move the embedder's DOM focus into a guest, so key
       // presses would stay in the app; only focusing the <webview> element hands them to the page.
-      focusPreviewWebview(runtimeTabId);
+      // A window's page is no guest, so main focuses it there.
+      if (chromeOnly) void bridge.window.focus(runtimeTabId).catch(() => undefined);
+      else focusPreviewWebview(runtimeTabId);
       const result = await bridge.pickElement(runtimeTabId, voice);
       if (!result || pickRequest.cancelled) return;
       // The accepted pick must survive further clicks, tab changes, and unmount; stop cancellation here.
@@ -973,7 +1000,8 @@ export function PreviewView({
   );
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to preview and desktop menu actions while the view is visible
   useEffect(() => {
-    if (!visible) return;
+    // A window's bar leaves the app's preview shortcuts to the panel.
+    if (!visible || chromeOnly) return;
     const unsubscribeAction = subscribePreviewAction((action) => onPreviewAction(action));
     // A focused page swallows its own keydowns, so the desktop forwards these
     // shortcuts from the guest as menu actions instead.
@@ -988,7 +1016,56 @@ export function PreviewView({
       unsubscribeAction();
       unsubscribeMenu?.();
     };
-  }, [visible]);
+  }, [chromeOnly, visible]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the desktop reports the focus-url shortcut pressed in this tab's own window
+  useEffect(() => {
+    if (!chromeOnly || !runtimeTabId || !previewBridge) return;
+    return previewBridge.window.onFocusUrl((tabId) => {
+      if (tabId !== runtimeTabId) return;
+      onPreviewAction("focus-url");
+      // An address that already has focus keeps its caret, so select it all again.
+      urlInputRef.current?.select();
+    });
+  }, [chromeOnly, runtimeTabId]);
+
+  const emptyState = showEmptyState ? (
+    <PreviewEmptyState
+      threadRef={threadRef}
+      environmentId={threadRef.environmentId}
+      configuredUrls={configuredUrls}
+      recentEntries={recentHistoryEntries}
+      onRemoveRecent={(url) => removeUrlForThread(threadRef, url)}
+      onOpenUrl={(next) => void handleOpenServerUrl(next)}
+    />
+  ) : null;
+
+  const desktopSlotShown = Boolean(
+    runtimeTabId && snapshot && !isServerTab && !showEmptyState && previewBridge && !inWindow,
+  );
+  const pageOverlays = (
+    <>
+      {runtimeTabId &&
+      desktopOverlay &&
+      !inWindow &&
+      !showEmptyState &&
+      !isUnreachable &&
+      !activeRecordingTabIds.has(runtimeTabId) ? (
+        <AgentBrowserCursor
+          tabId={runtimeTabId}
+          zoomFactor={layoutZoomFactor}
+          controller={controller}
+        />
+      ) : null}
+      {find && canFindInPage && find.tabId === runtimeTabId ? (
+        <PreviewFindBar
+          key={find.tabId}
+          tabId={find.tabId}
+          focusRequestId={find.requestId}
+          onClose={closeFind}
+        />
+      ) : null}
+    </>
+  );
 
   return (
     <div
@@ -1023,7 +1100,9 @@ export function PreviewView({
         captureDisabled={!desktopOverlay || isUnreachable}
         recording={recordingRuntimeTabId !== null}
         onPictureInPicture={
-          tabId && (isServerTab || previewBridge) ? handlePictureInPicture : undefined
+          tabId && (isServerTab || previewBridge) && !chromeOnly
+            ? handlePictureInPicture
+            : undefined
         }
         pictureInPicture={miniPlayerTabId === tabId}
         pictureInPictureDisabled={
@@ -1039,12 +1118,12 @@ export function PreviewView({
         }
         leadingActions={
           activeProfileId !== browserDefaults.profileId ? (
-            <Tooltip>
-              <TooltipTrigger render={<Badge variant="outline" className="max-w-28 shrink-0" />}>
-                <span className="truncate">{activeProfileName}</span>
-              </TooltipTrigger>
-              <TooltipPopup side="top">{activeProfileName}</TooltipPopup>
-            </Tooltip>
+            <SharedTooltipTrigger
+              render={<Badge variant="outline" className="max-w-28 shrink-0" />}
+              label={activeProfileName}
+            >
+              <span className="truncate">{activeProfileName}</span>
+            </SharedTooltipTrigger>
           ) : null
         }
         trailingActions={
@@ -1055,7 +1134,7 @@ export function PreviewView({
                 (serverOwnsRendering || (desktopOverlay?.hasWebContents ?? false))
               }
               actions={moreMenuActions}
-              {...(moveTarget
+              {...(moveTarget && !chromeOnly
                 ? { move: { label: moveLabel, onMove: () => void handleMoveTab() } }
                 : {})}
               profileName={activeProfileName}
@@ -1071,134 +1150,134 @@ export function PreviewView({
                   : (desktopOverlay?.colorScheme ?? "system")
               }
               deviceToolbarVisible={viewport._tag !== "fill"}
-              onToggleDeviceToolbar={handleToggleDeviceToolbar}
+              // The window's own size is the viewport.
+              onToggleDeviceToolbar={chromeOnly ? undefined : handleToggleDeviceToolbar}
               nativePictureInPicture={desktopOverlay?.pictureInPicture ?? false}
+              inWindow={inWindow}
+              recording={recordingRuntimeTabId !== null}
             />
           ) : null
         }
       />
 
-      <div ref={serverBodyRef} className="relative min-h-0 flex-1 overflow-hidden">
-        {runtimeTabId && snapshot && isServerTab ? (
-          <>
-            {viewport._tag !== "fill" && !showEmptyState && !isUnreachable ? (
-              <div className="absolute inset-x-0 top-0 z-10">
-                <BrowserDeviceToolbar
-                  setting={viewport}
-                  width={serverToolbarWidth}
-                  aspectRatio={serverAspectRatioLocked ? viewport.width / viewport.height : null}
-                  onAspectRatioChange={(ratio) => setServerAspectRatioLocked(ratio !== null)}
-                  onChange={(setting) =>
-                    commitBrowserViewportChange(
-                      { threadRef, tabId: snapshot.tabId, runtimeTabId },
-                      setting,
-                    )
+      {chromeOnly ? (
+        // Among the window's overlays, so the desktop lifts the bar over the native page for it.
+        emptyState && portalContainer ? (
+          createPortal(
+            <div
+              className="fixed inset-x-0 bottom-0 flex flex-col bg-background"
+              style={{ top: DESKTOP_PREVIEW_WINDOW_BAR_HEIGHT }}
+            >
+              {emptyState}
+            </div>,
+            portalContainer,
+          )
+        ) : null
+      ) : (
+        <div ref={serverBodyRef} className="relative min-h-0 flex-1 overflow-hidden">
+          {runtimeTabId && snapshot && isServerTab ? (
+            <>
+              {viewport._tag !== "fill" && !showEmptyState && !isUnreachable ? (
+                <div className="absolute inset-x-0 top-0 z-10">
+                  <BrowserDeviceToolbar
+                    setting={viewport}
+                    width={serverToolbarWidth}
+                    aspectRatio={serverAspectRatioLocked ? viewport.width / viewport.height : null}
+                    onAspectRatioChange={(ratio) => setServerAspectRatioLocked(ratio !== null)}
+                    onChange={(setting) =>
+                      commitBrowserViewportChange(
+                        { threadRef, tabId: snapshot.tabId, runtimeTabId },
+                        setting,
+                      )
+                    }
+                  />
+                </div>
+              ) : null}
+              <div
+                ref={serverSurfaceBoxRef}
+                className={cn(
+                  "absolute inset-x-0 bottom-0",
+                  (showEmptyState || isUnreachable) && "invisible",
+                )}
+                style={{ top: viewport._tag !== "fill" ? BROWSER_DEVICE_TOOLBAR_HEIGHT : 0 }}
+              >
+                <ServerBrowserSurface
+                  key={runtimeTabId}
+                  ref={serverSurfaceRef}
+                  environmentId={threadRef.environmentId}
+                  threadId={threadRef.threadId}
+                  tabId={snapshot.tabId}
+                  pdfUrl={
+                    navStatus._tag === "Success"
+                      ? previewPdfAssetUrl(url, environmentHttpBaseUrl)
+                      : null
                   }
+                  visible={visible}
+                  onFirstFrame={() => setServerStreamSettledTabId(runtimeTabId)}
+                  onNoFrames={() => setServerStreamSettledTabId(runtimeTabId)}
+                  onControl={(control) =>
+                    setServerControlledTabId(control?.controller === "you" ? runtimeTabId : null)
+                  }
+                  onPopup={(popupTabId) => showPreviewPopup(threadRef, popupTabId, "panel")}
+                  // Stays connected under the empty state so a URL picked there reaches the page.
+                  className="absolute inset-0 h-full w-full"
                 />
               </div>
-            ) : null}
-            <div
-              ref={serverSurfaceBoxRef}
-              className={cn(
-                "absolute inset-x-0 bottom-0",
-                (showEmptyState || isUnreachable) && "invisible",
-              )}
-              style={{ top: viewport._tag !== "fill" ? BROWSER_DEVICE_TOOLBAR_HEIGHT : 0 }}
-            >
-              <ServerBrowserSurface
-                key={runtimeTabId}
-                ref={serverSurfaceRef}
-                environmentId={threadRef.environmentId}
-                threadId={threadRef.threadId}
-                tabId={snapshot.tabId}
-                pdfUrl={
-                  navStatus._tag === "Success"
-                    ? previewPdfAssetUrl(url, environmentHttpBaseUrl)
-                    : null
-                }
-                visible={visible}
-                onFirstFrame={() => setServerStreamSettledTabId(runtimeTabId)}
-                onNoFrames={() => setServerStreamSettledTabId(runtimeTabId)}
-                onControl={(control) =>
-                  setServerControlledTabId(control?.controller === "you" ? runtimeTabId : null)
-                }
-                onPopup={(popupTabId) => showPreviewPopup(threadRef, popupTabId, "panel")}
-                // Stays connected under the empty state so a URL picked there reaches the page.
-                className="absolute inset-0 h-full w-full"
+            </>
+          ) : runtimeTabId && snapshot && (inWindow || !showEmptyState) ? (
+            previewBridge ? (
+              inWindow ? (
+                <PreviewWindowPlaceholder
+                  runtimeTabId={runtimeTabId}
+                  className="absolute inset-0 h-full w-full"
+                />
+              ) : (
+                <BrowserSurfaceSlot
+                  key={runtimeTabId}
+                  tabId={runtimeTabId}
+                  visible={visible && !isUnreachable}
+                  className="absolute inset-0 h-full w-full"
+                >
+                  {pageOverlays}
+                </BrowserSurfaceSlot>
+              )
+            ) : (
+              <div className="flex h-full items-center justify-center p-8 text-center">
+                <p className="max-w-sm text-sm text-muted-foreground">
+                  <T>This tab is open in the T3 Code desktop app.</T>
+                </p>
+              </div>
+            )
+          ) : null}
+          {inWindow ? null : emptyState}
+          {snapshot && desktopOverlay ? (
+            <ZoomIndicator zoomFactor={desktopOverlay.zoomFactor} />
+          ) : null}
+          {desktopSlotShown ? null : pageOverlays}
+          {inWindow ? null : navStatus._tag === "LoadFailed" && navStatus.download ? (
+            <div className="absolute inset-0 z-10 bg-background">
+              <ServerTabFileNotShown
+                threadRef={threadRef}
+                tabId={snapshot?.tabId ?? ""}
+                url={navStatus.url}
+                download={navStatus.download}
               />
             </div>
-          </>
-        ) : runtimeTabId && snapshot && !showEmptyState ? (
-          previewBridge ? (
-            <BrowserSurfaceSlot
-              key={runtimeTabId}
-              tabId={runtimeTabId}
-              visible={visible && !isUnreachable}
-              className="absolute inset-0 h-full w-full"
-            />
-          ) : (
-            <div className="flex h-full items-center justify-center p-8 text-center">
-              <p className="max-w-sm text-sm text-muted-foreground">
-                <T>This tab is open in the T3 Code desktop app.</T>
-              </p>
+          ) : navStatus._tag === "LoadFailed" ? (
+            <div className="absolute inset-0 z-10 bg-background">
+              <PreviewUnreachable
+                url={navStatus.url}
+                code={navStatus.code}
+                description={navStatus.description}
+                onReload={handleRefresh}
+                {...(moveTarget === "server"
+                  ? { move: { label: moveLabel, onMove: () => void handleMoveTab() } }
+                  : {})}
+              />
             </div>
-          )
-        ) : null}
-        {showEmptyState ? (
-          <PreviewEmptyState
-            threadRef={threadRef}
-            environmentId={threadRef.environmentId}
-            configuredUrls={configuredUrls}
-            recentEntries={recentHistoryEntries}
-            onRemoveRecent={(url) => removeUrlForThread(threadRef, url)}
-            onOpenUrl={(next) => void handleOpenServerUrl(next)}
-          />
-        ) : null}
-        {snapshot && desktopOverlay ? (
-          <ZoomIndicator zoomFactor={desktopOverlay.zoomFactor} />
-        ) : null}
-        {runtimeTabId &&
-        desktopOverlay &&
-        !showEmptyState &&
-        !isUnreachable &&
-        !activeRecordingTabIds.has(runtimeTabId) ? (
-          <AgentBrowserCursor
-            tabId={runtimeTabId}
-            zoomFactor={layoutZoomFactor}
-            controller={controller}
-          />
-        ) : null}
-        {find && canFindInPage && find.tabId === runtimeTabId ? (
-          <PreviewFindBar
-            key={find.tabId}
-            tabId={find.tabId}
-            focusRequestId={find.requestId}
-            onClose={closeFind}
-          />
-        ) : null}
-        {navStatus._tag === "LoadFailed" && navStatus.download ? (
-          <div className="absolute inset-0 z-10 bg-background">
-            <ServerTabFileNotShown
-              threadRef={threadRef}
-              tabId={snapshot?.tabId ?? ""}
-              url={navStatus.url}
-              download={navStatus.download}
-            />
-          </div>
-        ) : navStatus._tag === "LoadFailed" ? (
-          <div className="absolute inset-0 z-10 bg-background">
-            <PreviewUnreachable
-              url={navStatus.url}
-              code={navStatus.code}
-              description={navStatus.description}
-              onReload={handleRefresh}
-              {...(moveTarget === "server"
-                ? { move: { label: moveLabel, onMove: () => void handleMoveTab() } }
-                : {})}
-            />
-          </div>
-        ) : null}
-      </div>
+          ) : null}
+        </div>
+      )}
     </div>
   );
 }

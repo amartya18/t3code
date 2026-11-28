@@ -1620,6 +1620,12 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:provider:install-remove",
       tag: WS_METHODS.providerInstallRemove,
     }),
+    // Short-lived so opening a mode picker shows a setting changed a moment ago.
+    providerRuntimeModeLimits: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:provider-runtime-mode-limits",
+      tag: WS_METHODS.serverGetProviderRuntimeModeLimits,
+      staleTimeMs: 5_000,
+    }),
     traceDiagnostics: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:trace-diagnostics",
       tag: WS_METHODS.serverGetTraceDiagnostics,
@@ -1666,6 +1672,11 @@ export function createServerEnvironmentAtoms<R, E>(
         return Atom.make((get) => workflowRunRefreshKey(snapshot(get), input.runId));
       },
       isFinal: (detail) => detail.run.endedAt !== null,
+    }),
+    // Read when an item's view opens: the live list holds only the newest runs of every subject.
+    workflowRunsAbout: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:workflows:about",
+      tag: WS_METHODS.workflowsAbout,
     }),
     // Read again whenever the server loads the files or finds them wrong, which `revision` says.
     workflowDefinition: createEnvironmentRpcQueryAtomFamily(runtime, {
@@ -2052,9 +2063,17 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:register-push-device",
       tag: WS_METHODS.notificationsRegisterDevice,
     }),
+    unregisterPushDevice: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:unregister-push-device",
+      tag: WS_METHODS.notificationsUnregisterDevice,
+    }),
     registerPushLiveActivity: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:register-push-live-activity",
       tag: WS_METHODS.notificationsRegisterLiveActivity,
+    }),
+    submitClientDiagnostic: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:client-diagnostics:submit",
+      tag: WS_METHODS.clientDiagnosticsSubmit,
     }),
     checkOtlpEndpoint: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:check-otlp-endpoint",

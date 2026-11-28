@@ -268,6 +268,7 @@ import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import { commandFeatureUsage, featureUsage } from "./telemetry/FeatureUsage.ts";
 import type { TelemetryOwner } from "./telemetry/Identify.ts";
 import * as UsageService from "./usage/UsageService.ts";
+import * as ClientDiagnostics from "./diagnostics/ClientDiagnostics.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as TriageService from "./triage/TriageService.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
@@ -1642,6 +1643,7 @@ export const layerWsRpc = (
       const sessions = yield* SessionStore.SessionStore;
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
       const triage = yield* TriageService.TriageService;
+      const clientDiagnostics = yield* ClientDiagnostics.ClientDiagnostics;
       const hostResources = yield* HostResources.HostResources;
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
       const resourceTelemetry = yield* ResourceTelemetry.ResourceTelemetry;
@@ -2422,6 +2424,8 @@ export const layerWsRpc = (
         [WS_METHODS.workflowsCounts]: (_input) => workflows.counts,
         [WS_METHODS.workflowsGet]: (input) =>
           workflows.get(input.runId).pipe(Effect.mapError(toWorkflowRequestError)),
+        [WS_METHODS.workflowsAbout]: (input) =>
+          workflows.about(input).pipe(Effect.mapError(toWorkflowRequestError)),
         [WS_METHODS.workflowsAnswer]: (input) =>
           serverAuth.listClientSessions(currentSessionId).pipe(
             Effect.map((sessions) =>
@@ -2705,6 +2709,14 @@ export const layerWsRpc = (
                 }),
             };
           }),
+        [WS_METHODS.serverGetProviderRuntimeModeLimits]: Effect.fnUntraced(function* (input) {
+          return {
+            limits: yield* providerRegistry.runtimeModeLimits({
+              instanceId: input.instanceId,
+              scanCwd: yield* projectService.workspaceScanDirectory(input.cwd),
+            }),
+          };
+        }),
         [WS_METHODS.mcpAppsCallTool]: (input) => mcpAppRequests.callTool(input),
         [WS_METHODS.mcpAppsToolInfo]: (input) => mcpAppRequests.toolInfo(input),
         [WS_METHODS.mcpAppsUpdateModelContext]: (input) => mcpAppRequests.updateModelContext(input),
@@ -2897,9 +2909,16 @@ export const layerWsRpc = (
         [WS_METHODS.serverPrepareTriage]: (input) => triage.prepare(input),
         [WS_METHODS.serverSignalProcess]: (input) => processDiagnostics.signal(input),
         [WS_METHODS.notificationsRegisterDevice]: (input) =>
-          directApnsDevices.register(input).pipe(
+          directApnsDevices.register(input, currentSessionId).pipe(
             Effect.tapError((cause) =>
               Effect.logWarning("push device registration failed", { cause }),
+            ),
+            Effect.orDie,
+          ),
+        [WS_METHODS.notificationsUnregisterDevice]: (input) =>
+          directApnsDevices.unregister(input.deviceId).pipe(
+            Effect.tapError((cause) =>
+              Effect.logWarning("push device unregistration failed", { cause }),
             ),
             Effect.orDie,
           ),
@@ -2910,6 +2929,7 @@ export const layerWsRpc = (
             ),
             Effect.orDie,
           ),
+        [WS_METHODS.clientDiagnosticsSubmit]: (input) => clientDiagnostics.submit(input),
         [WS_METHODS.serverReportClientActivity]: (input, metadata) =>
           Ref.update(rpcClientIds, (clientIds) => {
             const next = new Set(clientIds);

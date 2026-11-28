@@ -4,6 +4,7 @@ import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  type FleetInvokeInput,
   GitCommandError,
   ProjectId,
   ProviderInstanceId,
@@ -15,6 +16,7 @@ import {
   type RuntimeMode,
   type OrchestrationV2ThreadShell,
   ThreadId,
+  type ThreadCustomMode,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -31,6 +33,8 @@ import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as FleetService from "../../../home/FleetService.ts";
+import * as HomeService from "../../../home/HomeService.ts";
 import { notHomeLayer } from "../../../home/HomeTestkit.ts";
 import * as DocumentText from "../../../provider/DocumentText.ts";
 import { OrchestratorRuntimeModeAboveCeilingError } from "../../../orchestration-v2/Orchestrator.ts";
@@ -68,6 +72,9 @@ const clientLaunchHarness = (input: {
   readonly hostedAppUrl?: string;
   /** The orchestrator refuses the new thread's mode, as under a managed ceiling. */
   readonly refusedByCeiling?: true;
+  readonly caller?: { readonly customMode: ThreadCustomMode | null; readonly home?: true };
+  readonly fleet?: Array<FleetInvokeInput>;
+  readonly forwarded?: Array<unknown>;
 }) => {
   const projectId = ProjectId.make("project:client-target");
   const modelSelection = {
@@ -78,6 +85,29 @@ const clientLaunchHarness = (input: {
   const projectDefaults: { model: ModelSelection | null } = {
     model: input.overrideModel === undefined ? modelSelection : null,
   };
+  const callerId = ThreadId.make("thread:caller");
+  const callerShell = {
+    id: callerId,
+    projectId,
+    modelSelection,
+    deletedAt: null,
+    archivedAt: null,
+    activeRunId: "run:caller",
+    providerInstanceId: modelSelection.instanceId,
+    runtimeMode: "full-access",
+    interactionMode: "default",
+  } as unknown as OrchestrationV2ThreadShell;
+  const launchedResult = (launch: {
+    readonly threadId?: ThreadId | undefined;
+    readonly projectId?: ProjectId | undefined;
+  }) => ({
+    threadId: launch.threadId ?? ThreadId.make("thread:launched"),
+    link: "link",
+    projectId: launch.projectId ?? projectId,
+    modelSelection,
+    runId: null,
+    status: null,
+  });
   const layerDependencies = Layer.mergeAll(
     Layer.mock(ProviderRegistry.ProviderRegistry)({
       getProviders: Effect.succeed(input.providers ?? []),
@@ -111,19 +141,30 @@ const clientLaunchHarness = (input: {
     Layer.succeed(McpInvocationContext.McpInvocationContext, {
       environmentId: EnvironmentId.make("environment"),
       requestNamespace: "client:session-1",
-      thread: undefined,
-      client: {
-        sessionId: "session-1",
-        label: "Claude Code",
-        access: input.runtimeModeCeiling,
-        hostedAppUrl: input.hostedAppUrl,
-      },
+      thread:
+        input.caller === undefined
+          ? undefined
+          : {
+              threadId: callerId,
+              providerSessionId: "session-1",
+              providerInstanceId: modelSelection.instanceId,
+            },
+      client:
+        input.caller === undefined
+          ? {
+              sessionId: "session-1",
+              label: "Claude Code",
+              access: input.runtimeModeCeiling,
+              hostedAppUrl: input.hostedAppUrl,
+            }
+          : undefined,
       issuedAt: 0,
       capabilities: new Set(["orchestration" as const]),
     }),
     Layer.mock(ThreadManagement.ThreadManagementService)({
       // A thread exists once a launch started it.
       getThreadShell: (threadId) => {
+        if (input.caller !== undefined && threadId === callerId) return Effect.succeed(callerShell);
         const launch = input.launched.find((candidate) => candidate.threadId === threadId);
         return Effect.succeed(
           launch === undefined
@@ -136,6 +177,10 @@ const clientLaunchHarness = (input: {
               } as unknown as OrchestrationV2ThreadShell),
         );
       },
+      getThreadRecords: (threadId) =>
+        Effect.succeed({
+          thread: { ...callerShell, id: threadId, customMode: input.caller?.customMode ?? null },
+        } as never),
     }),
     Layer.mock(ThreadLaunch.ThreadLaunchService)({
       checkWorktreeBase: input.checkWorktreeBase ?? (() => Effect.void),
@@ -168,6 +213,10 @@ const clientLaunchHarness = (input: {
               projectId: launch.projectId,
               title: launch.title,
               modelSelection: launch.modelSelection,
+              customMode:
+                launch.customMode === undefined
+                  ? null
+                  : { status: "on", skill: launch.customMode, updatedAt: "2026-01-01T00:00:00Z" },
             },
             runs: [],
           },
@@ -188,13 +237,33 @@ const clientLaunchHarness = (input: {
         ),
       workspaceScanDirectory: Effect.succeed,
     }),
-    Layer.mock(PeerForwarding.PeerForwarding)({}),
+    Layer.mock(PeerForwarding.PeerForwarding)({
+      call: (_scope, _tool, _environmentId, params) => {
+        input.forwarded?.push(params);
+        return Effect.succeed(launchedResult({}) as never);
+      },
+    }),
     Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
       namedProjectsRoot: "/projects",
       isScratchProject: () => Effect.succeed(false),
+      isInHomeFolder: () => Effect.succeed(false),
     }),
     DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)),
-    notHomeLayer,
+    input.caller?.home === true
+      ? Layer.mergeAll(
+          Layer.mock(HomeService.HomeService)({
+            isHome: (threadId) => Effect.succeed(threadId === callerId),
+          }),
+          Layer.mock(FleetService.FleetService)({
+            execute: (call) => {
+              input.fleet?.push(call);
+              return Effect.succeed(
+                launchedResult(call.request.input as Parameters<typeof launchedResult>[0]),
+              );
+            },
+          }),
+        )
+      : notHomeLayer,
   ).pipe(
     Layer.provideMerge(GitVcsDriver.layer),
     Layer.provideMerge(VcsProcess.layer),
@@ -387,6 +456,108 @@ it.effect("a launch steps an inherited mode down to the provider's, and refuses 
   }),
 );
 
+const launchFromThread = Effect.fn("test.launchFromThread")(function* (
+  callerMode: ThreadCustomMode | null,
+  params: {
+    readonly customMode?: string | null;
+    readonly environmentId?: EnvironmentId;
+    readonly home?: true;
+  } = {},
+) {
+  const { home, ...rest } = params;
+  const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+  const fleet: Array<FleetInvokeInput> = [];
+  const forwarded: Array<unknown> = [];
+  const { projectId, dependencies } = clientLaunchHarness({
+    runtimeModeCeiling: "full-access",
+    launched,
+    fleet,
+    forwarded,
+    caller: { customMode: callerMode, ...(home === undefined ? {} : { home }) },
+  });
+  const toolkit = yield* ProjectToolkit.pipe(
+    Effect.provide(
+      McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+    ),
+  );
+  const result = yield* toolkit
+    .handle("t3_thread_launch", { projectId, title: "Fix", message: "Fix the bug", ...rest })
+    .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+  return { result: result.at(-1)?.result, launched, fleet, forwarded };
+});
+
+const customMode = (status: "on" | "off", skill: string): ThreadCustomMode => ({
+  status,
+  skill,
+  updatedAt: "2026-01-01T00:00:00Z",
+});
+
+it.effect("a thread's launch keeps the caller's custom mode on", () =>
+  Effect.gen(function* () {
+    const { result, launched } = yield* launchFromThread(customMode("on", "t3-pstack:poteto-mode"));
+    expect(launched[0]?.customMode).toBe("t3-pstack:poteto-mode");
+    expect(result).toMatchObject({ customMode: "t3-pstack:poteto-mode" });
+  }),
+);
+
+it.effect("a launch with customMode null starts without the caller's mode", () =>
+  Effect.gen(function* () {
+    const { result, launched } = yield* launchFromThread(
+      customMode("on", "t3-pstack:poteto-mode"),
+      { customMode: null },
+    );
+    expect(launched[0]?.customMode).toBeUndefined();
+    expect(result).toMatchObject({ customMode: null });
+  }),
+);
+
+it.effect("a launch that names a skill gets it instead of the caller's mode", () =>
+  Effect.gen(function* () {
+    const { result, launched } = yield* launchFromThread(
+      customMode("on", "t3-pstack:poteto-mode"),
+      { customMode: "review" },
+    );
+    expect(launched[0]?.customMode).toBe("review");
+    expect(result).toMatchObject({ customMode: "review" });
+  }),
+);
+
+it.effect("a caller with no mode on launches a thread with none", () =>
+  Effect.gen(function* () {
+    for (const callerMode of [null, customMode("off", "t3-pstack:poteto-mode")]) {
+      const { result, launched } = yield* launchFromThread(callerMode);
+      expect(launched[0]?.customMode).toBeUndefined();
+      expect(result).toMatchObject({ customMode: null });
+    }
+  }),
+);
+
+it.effect("a launch in a linked environment sends only a mode it names", () =>
+  Effect.gen(function* () {
+    const environmentId = EnvironmentId.make("environment:laptop");
+    const callerMode = customMode("on", "t3-pstack:poteto-mode");
+    const inherited = yield* launchFromThread(callerMode, { environmentId });
+    const named = yield* launchFromThread(callerMode, { environmentId, customMode: "review" });
+    expect(inherited.launched).toHaveLength(0);
+    expect(inherited.forwarded).toHaveLength(1);
+    expect(inherited.forwarded[0]).not.toHaveProperty("customMode");
+    expect(named.forwarded[0]).toMatchObject({ customMode: "review" });
+  }),
+);
+
+it.effect("Home's launch without attachments keeps Home's custom mode on", () =>
+  Effect.gen(function* () {
+    const { fleet } = yield* launchFromThread(customMode("on", "t3-pstack:poteto-mode"), {
+      home: true,
+    });
+    expect(fleet).toHaveLength(1);
+    expect(fleet[0]?.request).toMatchObject({
+      op: "threads.launch",
+      input: { customMode: "t3-pstack:poteto-mode" },
+    });
+  }),
+);
+
 it.effect("a launch with a model its provider does not advertise creates no thread", () =>
   Effect.gen(function* () {
     const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
@@ -561,6 +732,89 @@ it.effect(
         ],
       ]);
     }),
+);
+
+it.effect("only a full-access client may pick the agent's own mode at launch", () =>
+  Effect.gen(function* () {
+    const agent = ProviderInstanceId.make("acp-agent");
+    const launchAs = (runtimeModeCeiling: "approval-required" | "full-access") =>
+      Effect.gen(function* () {
+        const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+        const { projectId, dependencies } = clientLaunchHarness({
+          runtimeModeCeiling,
+          launched,
+          providers: [
+            {
+              instanceId: agent,
+              driver: ProviderDriverKind.make("acpRegistry"),
+              enabled: true,
+              installed: true,
+              status: "ready",
+              version: null,
+              auth: { status: "authenticated" },
+              checkedAt: "2026-01-01T00:00:00Z",
+              models: [
+                {
+                  slug: "default",
+                  name: "Default",
+                  isCustom: false,
+                  capabilities: {
+                    optionDescriptors: [
+                      {
+                        id: "_t3/session-mode",
+                        label: "Mode",
+                        type: "select",
+                        options: [
+                          { id: "default", label: "Default" },
+                          { id: "yolo", label: "YOLO" },
+                        ],
+                        currentValue: "default",
+                      },
+                    ],
+                  },
+                },
+              ],
+              slashCommands: [],
+              skills: [],
+            },
+          ],
+        });
+        const toolkit = yield* ProjectToolkit.pipe(
+          Effect.provide(
+            McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+              Layer.provide(dependencies),
+            ),
+          ),
+        );
+        const result = yield* toolkit
+          .handle("t3_thread_launch", {
+            projectId,
+            title: "Fix",
+            message: "Fix the bug",
+            modelSelection: {
+              instanceId: agent,
+              model: "default",
+              options: [{ id: "_t3/session-mode", value: "yolo" }],
+            },
+          })
+          .pipe(
+            Stream.unwrap,
+            Stream.runCollect,
+            Effect.map((collected) => collected.at(-1)?.result),
+            Effect.provide(dependencies),
+          );
+        return { result, launched };
+      });
+
+    const supervised = yield* launchAs("approval-required");
+    expect(supervised.result).toMatchObject({ code: "runtime_mode_escalation_denied" });
+    expect(supervised.launched).toHaveLength(0);
+
+    const fullAccess = yield* launchAs("full-access");
+    expect(fullAccess.launched.map((launch) => launch.modelSelection.options)).toEqual([
+      [{ id: "_t3/session-mode", value: "yolo" }],
+    ]);
+  }),
 );
 
 it.effect("a launch retried with the same clientRequestId replays the first one", () =>

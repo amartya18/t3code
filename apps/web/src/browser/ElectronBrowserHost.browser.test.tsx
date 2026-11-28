@@ -1,10 +1,12 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   DEFAULT_CLIENT_SETTINGS,
+  desktopPreviewWindowReturnUrl,
   EnvironmentId,
   ThreadId,
   type ClientSettings,
   type DesktopPreviewBridge,
+  type DesktopPreviewTabState,
   type PreviewSessionSnapshot,
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -18,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   closeTab: vi.fn<DesktopPreviewBridge["closeTab"]>(),
   registerWebview: vi.fn<DesktopPreviewBridge["registerWebview"]>(),
   getPreviewConfig: vi.fn<DesktopPreviewBridge["getPreviewConfig"]>(),
+  stateListeners: new Set<(tabId: string, state: DesktopPreviewTabState) => void>(),
 }));
 
 vi.mock(import("~/env"), async (original) => ({ ...(await original()), isElectron: true }));
@@ -43,7 +46,11 @@ vi.mock(import("~/components/preview/previewBridge"), async (original) => ({
     closeTab: mocks.closeTab,
     registerWebview: mocks.registerWebview,
     getPreviewConfig: mocks.getPreviewConfig,
-    onStateChange: () => () => {},
+    setShown: async () => undefined,
+    onStateChange: (listener: (tabId: string, state: DesktopPreviewTabState) => void) => {
+      mocks.stateListeners.add(listener);
+      return () => mocks.stateListeners.delete(listener);
+    },
   } as never,
 }));
 
@@ -56,7 +63,12 @@ import {
   __resetClientSettingsPersistenceForTests,
   ensureClientSettingsHydrated,
 } from "~/hooks/useSettings";
-import { reconcilePreviewServerSessions, resetPreviewStateForTests } from "~/previewStateStore";
+import {
+  applyPreviewDesktopState,
+  reconcilePreviewServerSessions,
+  resetPreviewStateForTests,
+} from "~/previewStateStore";
+import "~/index.css";
 import { AppAtomRegistryProvider } from "~/rpc/atomRegistry";
 import { ElectronBrowserHost } from "./ElectronBrowserHost";
 
@@ -86,6 +98,7 @@ function setup(): Disposable {
     webPreferences: "contextIsolation=yes",
     preloadUrl: null,
   });
+  mocks.stateListeners.clear();
   return {
     [Symbol.dispose]() {
       resetPreviewStateForTests();
@@ -160,5 +173,76 @@ describe("ElectronBrowserHost", () => {
     const after = webviews();
     expect(after).toHaveLength(2);
     expect(after.every((node, index) => node.isSameNode(before[index]!))).toBe(true);
+  });
+  it("shows the dark theme's background, not white, behind a page that hasn't painted", async () => {
+    using _state = setup();
+    document.documentElement.classList.add("dark");
+    using _theme = { [Symbol.dispose]: () => document.documentElement.classList.remove("dark") };
+    reconcilePreviewServerSessions(threadRef, {
+      sessions: [snapshot("tab_7", "2026-01-01T00:00:01.000Z")],
+      serverEpoch: "server-a",
+      revision: 1,
+    });
+    await using screen = await renderHost();
+
+    const background = getComputedStyle(screen.container.querySelector("webview")!).backgroundColor;
+    expect(background).not.toBe("rgb(255, 255, 255)");
+    expect(background).toBe(getComputedStyle(document.body).backgroundColor);
+  });
+
+  it("still recovers a crashed tab after trips to its own window", async () => {
+    using _state = setup();
+    reconcilePreviewServerSessions(threadRef, {
+      sessions: [snapshot("tab_7", "2026-01-01T00:00:01.000Z")],
+      serverEpoch: "server-a",
+      revision: 1,
+    });
+    await using screen = await renderHost();
+    using _timers = fakeTimers();
+    const webview = () => screen.container.querySelector("webview");
+    const runtimeTabId = webview()!.getAttribute("data-preview-tab")!;
+    const pageUrl = webview()!.getAttribute("src");
+    const tabState = (inWindow: boolean) => ({
+      hasWebContents: true,
+      navStatus: { _tag: "Success" as const, url: "https://example.com/tab_7", title: "tab_7" },
+      canGoBack: false,
+      canGoForward: false,
+      loading: false,
+      zoomFactor: 1,
+      pictureInPicture: false,
+      inWindow,
+      colorScheme: "system" as const,
+      audioMuted: false,
+      audible: false,
+      controller: "none" as const,
+      favicon: null,
+    });
+    const registerGuest = (webContentsId: number) =>
+      act(async () => {
+        Object.assign(webview()!, { getWebContentsId: () => webContentsId });
+        webview()!.dispatchEvent(new Event("dom-ready"));
+        await vi.waitFor(() =>
+          expect(mocks.registerWebview).toHaveBeenLastCalledWith(runtimeTabId, webContentsId),
+        );
+      });
+
+    for (const webContentsId of [42, 43, 44]) {
+      await registerGuest(webContentsId);
+      await act(() => applyPreviewDesktopState(threadRef, "tab_7", tabState(true)));
+      await act(() => {
+        for (const listener of mocks.stateListeners) {
+          listener(runtimeTabId, { webContentsId: null } as DesktopPreviewTabState);
+        }
+        applyPreviewDesktopState(threadRef, "tab_7", tabState(false));
+      });
+      expect(webview()!.getAttribute("src")).toBe(desktopPreviewWindowReturnUrl(runtimeTabId));
+    }
+    await registerGuest(45);
+    await act(async () => {
+      webview()!.dispatchEvent(new Event("render-process-gone"));
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+
+    expect(webview()!.getAttribute("src")).toBe(pageUrl);
   });
 });

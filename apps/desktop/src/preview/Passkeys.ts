@@ -173,9 +173,8 @@ const make = Effect.gen(function* () {
         if (typeof publicKey !== "object" || publicKey === null) {
           return { success: false, error: "TypeError" };
         }
-        const host = guest.hostWebContents
-          ? BrowserWindow.fromWebContents(guest.hostWebContents)
-          : null;
+        // A tab moved into its own window has no host page and is its window's contents.
+        const host = BrowserWindow.fromWebContents(guest.hostWebContents ?? guest);
         if (!host || host.isDestroyed()) return notAllowed;
 
         ceremonyPending = true;

@@ -1,0 +1,8 @@
+{
+  "platforms": ["apple"],
+  "apple": {
+    "modules": ["T3DiagnosticsModule"],
+    "appDelegateSubscribers": ["T3DiagnosticsSubscriber"],
+    "podspecPath": "ios/T3Diagnostics.podspec"
+  }
+}

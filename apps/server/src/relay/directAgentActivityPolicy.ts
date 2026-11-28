@@ -1,23 +1,20 @@
 // The server-side twin of the relay's delivery choice (infra/relay ApnsDeliveries.chooseDelivery
 // and ApnsClient's request builders), for forks that push with their own APNs key. The pure
-// aggregate, alert and payload rules are imported from the relay so both stay identical.
+// aggregate, alert and payload rules live in @t3tools/shared so both stay identical.
 import type { PushDeviceRegistration } from "@t3tools/contracts";
 import type {
   RelayAgentActivityAggregateState,
   RelayAgentActivityState,
 } from "@t3tools/contracts/relay";
 
-import {
-  makeAggregateState,
-  statusForPhase,
-} from "../../../../infra/relay/src/agentActivity/agentActivityAggregate.ts";
+import { makeAggregateState, statusForPhase } from "@t3tools/shared/agentActivityAggregate";
 import {
   alertForAttentionTransition,
   alertForNewlyTerminal,
   rowPhasesChanged,
   shouldAlertForActivity,
   type AgentActivityAlert,
-} from "../../../../infra/relay/src/agentActivity/agentActivityAlerts.ts";
+} from "@t3tools/shared/agentActivityAlerts";
 import {
   isExpiredAgentActivityState,
   isTerminalPhase,
@@ -25,15 +22,17 @@ import {
   notificationForActivity,
   sanitizeAgentActivityAggregateState,
   truncateText,
-} from "../../../../infra/relay/src/agentActivity/agentActivityPayloads.ts";
+} from "@t3tools/shared/agentActivityPayloads";
 
 export { makeAggregateState, isExpiredAgentActivityState, isTerminalPhase };
-export { TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS } from "../../../../infra/relay/src/agentActivity/agentActivityAggregate.ts";
+export { TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS } from "@t3tools/shared/agentActivityAggregate";
 
 const MIN_LIVE_ACTIVITY_UPDATE_INTERVAL_MS = 15_000;
 const FRESHLY_ARMED_GRACE_MS = 2 * 60 * 1_000;
 const LIVE_ACTIVITY_NAME = "AgentActivity";
-const STALE_AFTER_SECONDS = 10 * 60;
+export const LIVE_ACTIVITY_SWEEP_INTERVAL_MS = 5 * 60 * 1_000;
+const MISSED_SWEEPS_BEFORE_STALE = 3;
+const STALE_AFTER_SECONDS = (MISSED_SWEEPS_BEFORE_STALE * LIVE_ACTIVITY_SWEEP_INTERVAL_MS) / 1_000;
 const DISMISS_AFTER_SECONDS = 5 * 60;
 const CONTENTLESS_DISMISS_AFTER_SECONDS = 15;
 const MAX_LIVE_ACTIVITY_PAYLOAD_BYTES = 4096;
@@ -196,20 +195,42 @@ export function chooseDirectPushes(input: {
       ...alertPush,
     ];
   }
-  const aggregate = sanitizeAgentActivityAggregateState(liveActivity.aggregate);
-  return [
-    {
-      kind: "live_activity_update",
-      aggregate,
-      request: liveActivityRequest({
-        token: liveActivity.token,
-        event: "update",
-        state: aggregate,
-        alert: liveActivity.alert,
-        nowSeconds,
-      }),
-    },
-  ];
+  return [liveActivityUpdate({ ...liveActivity, nowSeconds })];
+}
+
+export function chooseLiveActivityRefresh(input: {
+  readonly device: DirectPushDevice;
+  readonly aggregate: RelayAgentActivityAggregateState;
+  readonly nowMs: number;
+}): DirectPush | null {
+  const token = input.device.activityPushToken;
+  if (!token || !input.device.liveActivitiesEnabled) return null;
+  return liveActivityUpdate({
+    token,
+    aggregate: input.aggregate,
+    alert: null,
+    nowSeconds: Math.floor(input.nowMs / 1_000),
+  });
+}
+
+function liveActivityUpdate(input: {
+  readonly token: string;
+  readonly aggregate: RelayAgentActivityAggregateState;
+  readonly alert: AgentActivityAlert | null;
+  readonly nowSeconds: number;
+}): DirectPush {
+  const aggregate = sanitizeAgentActivityAggregateState(input.aggregate);
+  return {
+    kind: "live_activity_update",
+    aggregate,
+    request: liveActivityRequest({
+      token: input.token,
+      event: "update",
+      state: aggregate,
+      alert: input.alert,
+      nowSeconds: input.nowSeconds,
+    }),
+  };
 }
 
 function alertRequest(
