@@ -138,7 +138,6 @@ export type VoiceSpeechEvent =
       readonly state: "started" | "finished" | "stopped";
       readonly atMs: number;
     }
-  /** The engine couldn't voice a chunk, for example when iOS refused Kokoro the GPU. */
   | {
       readonly type: "speakFailed";
       readonly id: string;
@@ -694,7 +693,6 @@ function onPlaybackEvent(
     : then(next, (done) => afterSpeech(done, event.atMs, config));
 }
 
-/** The reply shows whole with a note, so a reply the voice couldn't play is never lost. */
 function onSpeakFailed(
   state: VoiceSpeechState,
   event: Extract<VoiceSpeechEvent, { type: "speakFailed" }>,

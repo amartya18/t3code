@@ -16,7 +16,6 @@ export interface TranscriptMessage {
 
 export type TranscriptLine =
   | { readonly id: string; readonly kind: "agent"; readonly text: string }
-  /** A reply the voice couldn't play, shown whole. */
   | { readonly id: string; readonly kind: "unplayed"; readonly text: string }
   | { readonly id: string; readonly kind: "user"; readonly text: string }
   | { readonly id: string; readonly kind: "homeReply" }

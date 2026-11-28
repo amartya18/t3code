@@ -74,8 +74,6 @@ actor VoiceEngine {
     try ModelStore.delete()
   }
 
-  /// Loads what `start()` needs, without the mic. Returns each model's load time in ms, empty
-  /// when the models aren't downloaded or the engine is running.
   func prepare() async throws -> [String: Int] {
     let config = try requireConfig()
     guard !running, ModelStore.isReady(config) else { return [:] }
@@ -103,7 +101,6 @@ actor VoiceEngine {
     }
   }
 
-  /// Loads run one after another, so a second caller waits for the first and then finds its models loaded.
   private func load(_ config: VoiceConfig) async throws -> [String: Int] {
     let previous = loading
     let task = Task {

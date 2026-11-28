@@ -26,7 +26,7 @@ export interface VoiceModeSettings {
   readonly voiceId: KokoroVoiceId;
   /** Dev only: Claude turns run with extended thinking, to compare reply latency. */
   readonly thinking: boolean;
-  /** Dev only: Kokoro's last stages on the GPU, which iOS refuses while the app is in the background. */
+  /** Dev only. */
   readonly kokoroGpu: boolean;
   readonly tuning: VoiceTuning;
 }
@@ -103,7 +103,6 @@ export function useVoiceModeSettings(): VoiceModeSettings | null {
   return project === undefined ? null : voiceModeSettings(stored, project);
 }
 
-/** The stored choices for a project, with defaults for whatever was never set. */
 export function voiceModeSettings(
   stored: StoredVoiceSettings,
   project: { readonly environmentId: EnvironmentId; readonly id: ProjectId },

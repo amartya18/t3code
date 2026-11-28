@@ -1,8 +1,6 @@
 @_implementationOnly import FluidAudio
 import Foundation
 
-/// A word Parakeet should favour, with the spellings it is heard as. A higher `minSimilarity` keeps
-/// it from replacing common words it resembles.
 struct VocabularyTerm: Equatable, Sendable {
   let text: String
   let aliases: [String]
@@ -26,7 +24,6 @@ struct Transcript: Sendable {
   }
 
   let text: String
-  /// Words the vocabulary rescoring swapped, in order.
   let replaced: [Swap]
 }
 

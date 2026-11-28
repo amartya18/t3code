@@ -10,7 +10,6 @@ import type { VoiceModeSettings } from "./voiceSettings";
 
 const PARTS: ReadonlyArray<VoiceModelPart> = ["vad", "asr", "turn", "tts"];
 
-/** Home warms the voice up once per app process, and only where a call could start. */
 export function shouldPrepareVoice(input: {
   readonly available: boolean;
   readonly hasVoiceProject: boolean;
@@ -19,7 +18,6 @@ export function shouldPrepareVoice(input: {
   return input.available && input.hasVoiceProject && !input.alreadyAsked;
 }
 
-/** Loads the downloaded voice models ahead of the first call, without the mic. */
 export async function prepareVoice(
   engine: VoiceEngine,
   config: VoiceEngineConfig,
@@ -50,7 +48,6 @@ export async function prepareVoice(
 
 let asked = false;
 
-/** Called from Home's thread screen; models load only when they're downloaded. */
 export function prepareVoiceOnce(settings: VoiceModeSettings | null) {
   const due = shouldPrepareVoice({
     available: isVoiceEngineAvailable(),

@@ -36,7 +36,6 @@ struct VoiceConfig: Equatable {
   let voiceId: String
   let speed: Float
   let vocoderFloat32: Bool
-  /// Kokoro's noise and tail stages on the GPU; iOS refuses GPU work while the app is in the background.
   let kokoroGpu: Bool
   let aec: Bool
   let logStages: Bool
