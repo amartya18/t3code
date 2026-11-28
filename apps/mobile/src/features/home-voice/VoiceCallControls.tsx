@@ -26,7 +26,7 @@ import { followMicLevel, micWaveEnergy, SWEEPS, waveBar } from "./callWave";
 import { useVoiceClock } from "./useVoiceCall";
 import { voiceSentAtom } from "./useVoiceSpeech";
 import { VoiceCallSymbol } from "./VoiceCallSymbol";
-import { endVoiceSession, toggleVoiceMuted } from "./voiceSession";
+import { endVoiceSession, toggleVoiceMuted, toggleVoiceSpeaker } from "./voiceSession";
 
 export function CircleButton(props: {
   readonly icon: AppSymbolName;
@@ -104,6 +104,34 @@ export function MuteButton(props: { readonly muted: boolean; readonly size: numb
           type="monochrome"
         />
       )}
+    </Pressable>
+  );
+}
+
+/** The earpiece by default, like a phone call; on, the call plays from the speaker. */
+export function SpeakerButton(props: { readonly on: boolean; readonly size: number }) {
+  const gt = useGT();
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={gt("Speaker")}
+      accessibilityState={{ selected: props.on }}
+      hitSlop={4}
+      onPress={() => {
+        void Haptics.selectionAsync();
+        toggleVoiceSpeaker();
+      }}
+      style={{ width: props.size, height: props.size }}
+      className={cn(
+        "items-center justify-center rounded-full active:opacity-70",
+        props.on ? "bg-foreground" : "bg-subtle-strong",
+      )}
+    >
+      <VoiceCallSymbol
+        name="speaker"
+        size={Math.round(props.size * 0.42)}
+        tintColorClassName={props.on ? "accent-card" : "accent-foreground"}
+      />
     </Pressable>
   );
 }

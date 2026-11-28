@@ -81,6 +81,10 @@ export interface VoiceEngine {
   start(): Promise<void>;
   stop(): Promise<void>;
   setMuted(muted: boolean): void;
+  /** The built-in speaker instead of the earpiece; `start()` goes back to the earpiece. */
+  setSpeaker(on: boolean): void;
+  /** Plays a local sound file through the running call's output; resolves once it has played. */
+  playChime(fileUri: string): Promise<void>;
   /** Replaces the previous list. */
   setVocabulary(terms: ReadonlyArray<VoiceVocabularyTerm>): Promise<void>;
   /** Parakeet TDT 0.6B v3 on the mic audio between two engine times, from the recent-audio buffer. */
@@ -124,6 +128,8 @@ export const voiceEngine: VoiceEngine | null = native && {
   start: () => native.start(),
   stop: () => native.stop(),
   setMuted: (muted) => native.setMuted(muted),
+  setSpeaker: (on) => native.setSpeaker(on),
+  playChime: (fileUri) => native.playChime(fileUri),
   setVocabulary: (terms) => native.setVocabulary(terms),
   transcribe: (fromMs, toMs) => native.transcribe(fromMs, toMs),
   turnScore: (fromMs, toMs) => native.turnScore(fromMs, toMs),

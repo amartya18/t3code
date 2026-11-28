@@ -110,6 +110,8 @@ export interface VoiceSpeechState {
   readonly timing: TurnTiming | null;
   /** When the speech queue last moved, or null until the next tick stamps it. */
   readonly speechMovedAtMs: number | null;
+  /** The engine's audio output, such as `Receiver` or `Speaker`, for the dev log. */
+  readonly output: string | null;
 }
 
 export interface VoiceSpeechConfig extends TurnConfig {
@@ -192,6 +194,7 @@ const INITIAL: VoiceSpeechState = {
   ending: OPEN,
   timing: null,
   speechMovedAtMs: null,
+  output: null,
 };
 
 /** Older than any queue revision, so the queue drops every chunk of a reply marked with it. */
@@ -427,9 +430,9 @@ function onInterruption(state: VoiceSpeechState, phase: "began" | "ended"): Voic
 
 function onRoute(state: VoiceSpeechState, output: string): VoiceSpeechStep {
   const log: VoiceSpeechEffect = { type: "log", line: `[voice] route: ${output}` };
-  if (state.interrupt === null) return { state, effects: [log] };
+  if (state.interrupt === null) return { state: { ...state, output }, effects: [log] };
   return {
-    state: { ...state, interrupt: null, volume: 1 },
+    state: { ...state, output, interrupt: null, volume: 1 },
     effects: [log, { type: "duck", level: 1 }],
   };
 }
@@ -488,7 +491,10 @@ function onVoiceOverAgent(
   if (interrupt === null) return stay(state);
   return {
     state: { ...state, interrupt: null, volume: 1 },
-    effects: [{ type: "duck", level: 1 }, interruptLog(interrupt, "restore", event.atMs, config)],
+    effects: [
+      { type: "duck", level: 1 },
+      interruptLog(interrupt, state.output, "restore", event.atMs, config),
+    ],
   };
 }
 
@@ -501,7 +507,10 @@ function confirmInterrupt(
   if (interrupt === null || atMs - interrupt.heardAtMs < INTERRUPT_CONFIRM_MS) return stay(state);
   const stopped = stopSpeaking(state, STOP_FADE_MS);
   return then(
-    { ...stopped, effects: [...stopped.effects, interruptLog(interrupt, "stop", atMs, config)] },
+    {
+      ...stopped,
+      effects: [...stopped.effects, interruptLog(interrupt, state.output, "stop", atMs, config)],
+    },
     (next) => handOver(next, interrupt, atMs, config),
   );
 }
@@ -521,6 +530,7 @@ function handOver(
 
 function interruptLog(
   interrupt: Interrupt,
+  output: string | null,
   outcome: "stop" | "restore" | "end",
   atMs: number,
   config: VoiceSpeechConfig,
@@ -529,7 +539,7 @@ function interruptLog(
   const after = (ms: number) => `+${Math.round(ms - onsetMs)}ms`;
   return {
     type: "log",
-    line: `[voice] interrupt from speech onset: duck ${after(interrupt.heardAtMs)}, ${outcome} ${after(atMs)}`,
+    line: `[voice] interrupt from speech onset: duck ${after(interrupt.heardAtMs)}, ${outcome} ${after(atMs)}, on ${output ?? "unknown"}`,
   };
 }
 
@@ -750,7 +760,7 @@ function afterSpeech(
   return then(
     {
       state: { ...state, interrupt: null },
-      effects: [interruptLog(interrupt, "end", atMs, config)],
+      effects: [interruptLog(interrupt, state.output, "end", atMs, config)],
     },
     (next) => handOver(next, interrupt, atMs, config),
   );

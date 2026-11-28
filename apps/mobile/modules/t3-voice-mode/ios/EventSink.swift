@@ -49,6 +49,7 @@ final class Controls: @unchecked Sendable {
   private let lock = NSLock()
   private var _muted = false
   private var _volume: Float = 1
+  private var _speaker = false
   private var _stopBefore = 0
 
   var muted: Bool {
@@ -59,6 +60,11 @@ final class Controls: @unchecked Sendable {
   var volume: Float {
     get { lock.withLock { _volume } }
     set { lock.withLock { _volume = newValue } }
+  }
+
+  var speaker: Bool {
+    get { lock.withLock { _speaker } }
+    set { lock.withLock { _speaker = newValue } }
   }
 
   var stopBefore: Int { lock.withLock { _stopBefore } }

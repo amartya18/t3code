@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import UIKit
 
 /// One AVAudioEngine for the mic and the voice, so Apple's voice processing cancels our own speech.
 actor VoiceEngine {
@@ -20,6 +21,7 @@ actor VoiceEngine {
   private var engineObserver: NSObjectProtocol?
   private var stopping: Task<Void, Never>?
   private var restarting = false
+  private var speakerOverride = false
 
   init() {
     let events = EventSink()
@@ -85,6 +87,7 @@ actor VoiceEngine {
     guard !running else { return }
     let config = try requireConfig()
     running = true
+    controls.speaker = false
     do {
       guard await AVAudioApplication.requestRecordPermission() else { throw VoiceModeError.permissionDenied }
       guard ModelStore.isReady(config) else { throw VoiceModeError.modelsMissing }
@@ -144,6 +147,7 @@ actor VoiceEngine {
       await self.teardownAudio()
       await self.speaker.stopAll()
       self.listener.input.yield(.reset)
+      await self.leaveRoute()
       try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
     stopping = task
@@ -176,6 +180,16 @@ actor VoiceEngine {
     Task { await self.applyMute() }
   }
 
+  /// Every call starts on the earpiece; `start()` forgets the last call's choice.
+  nonisolated func setSpeaker(_ on: Bool) {
+    controls.speaker = on
+    Task { await self.applyRoute() }
+  }
+
+  func playChime(_ url: URL) async throws {
+    try await speaker.chime(url)
+  }
+
   nonisolated func duck(_ level: Double) {
     controls.volume = Float(min(max(level, 0), 1))
     Task { await self.speaker.applyVolume() }
@@ -191,11 +205,9 @@ actor VoiceEngine {
     input.isVoiceProcessingInputMuted = controls.muted
   }
 
-  private func activateSession(_ config: VoiceConfig) throws {
+  func activateSession(_ config: VoiceConfig) throws {
     let session = AVAudioSession.sharedInstance()
-    try session.setCategory(
-      .playAndRecord, mode: config.aec ? .voiceChat : .default,
-      options: [.defaultToSpeaker, .allowBluetoothHFP])
+    try session.setCategory(.playAndRecord, mode: config.aec ? .voiceChat : .default, options: [.allowBluetoothHFP])
     try session.setActive(true)
   }
 
@@ -211,7 +223,7 @@ actor VoiceEngine {
       Task { await self?.engineConfigurationChanged(engine) }
     }
     events.stage("mic.start")
-    emitRoute()
+    await applyRoute()
   }
 
   /// Taps the mic in its current format and starts the engine. Right after a route change or
@@ -278,12 +290,12 @@ actor VoiceEngine {
     for attempt in 1...3 {
       try? await Task.sleep(nanoseconds: UInt64(attempt) * 250_000_000)
       guard engine === audio, running, let config else { return }
-      if engine.isRunning { return emitRoute() }
+      if engine.isRunning { return await applyRoute() }
       do {
         try activateSession(config)
         try await run(engine, aec: config.aec)
         events.stage("mic.restart")
-        return emitRoute()
+        return await applyRoute()
       } catch {
         events.stage("mic.restart_failed:\(attempt)")
       }
@@ -303,7 +315,7 @@ actor VoiceEngine {
       },
       center.addObserver(forName: AVAudioSession.routeChangeNotification, object: session, queue: nil) {
         [weak self] _ in
-        Task { await self?.emitRoute() }
+        Task { await self?.applyRoute() }
       },
       center.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: session, queue: nil) {
         [weak self] _ in
@@ -319,9 +331,48 @@ actor VoiceEngine {
     await engineConfigurationChanged(engine)
   }
 
-  private func emitRoute() {
-    let output = AVAudioSession.sharedInstance().currentRoute.outputs.first?.portType.rawValue ?? "none"
-    events.send("route", ["output": output])
+  /// Converges the live call onto the chosen output after a toggle, a route change, an interruption
+  /// or a restart, since iOS drops the speaker override whenever the route changes.
+  private func applyRoute() async {
+    guard running, audio != nil else { return }
+    let output: AVAudioSession.Port?
+    do {
+      output = try routeSpeaker(controls.speaker)
+    } catch {
+      events.error("speaker_failed", error)
+      output = AVAudioSession.sharedInstance().currentRoute.outputs.first?.portType
+    }
+    await setNearEar(output == .builtInReceiver)
+    events.send("route", ["output": output?.rawValue ?? "none"])
+  }
+
+  /// Overrides only when the route has drifted from the choice: each override posts a route change
+  /// that calls back here, and a device with no earpiece stays on the speaker either way.
+  func routeSpeaker(_ on: Bool) throws -> AVAudioSession.Port? {
+    let session = AVAudioSession.sharedInstance()
+    let output = { session.currentRoute.outputs.first?.portType }
+    if on, !speakerOverride || output() != .builtInSpeaker {
+      try session.overrideOutputAudioPort(.speaker)
+      speakerOverride = true
+    } else if !on, speakerOverride {
+      try session.overrideOutputAudioPort(.none)
+      speakerOverride = false
+    }
+    return output()
+  }
+
+  private func leaveRoute() async {
+    _ = try? routeSpeaker(false)
+    await setNearEar(false)
+  }
+
+  /// The screen goes dark at the ear only while the call plays through the earpiece.
+  @discardableResult
+  func setNearEar(_ on: Bool) async -> Bool {
+    await MainActor.run { () -> Bool in
+      UIDevice.current.isProximityMonitoringEnabled = on
+      return UIDevice.current.isProximityMonitoringEnabled
+    }
   }
 }
 

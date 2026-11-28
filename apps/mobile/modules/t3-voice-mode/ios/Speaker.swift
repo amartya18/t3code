@@ -78,6 +78,21 @@ actor Speaker {
     for id in lost { finish(id, "stopped") }
   }
 
+  /// Plays a short sound file through the call's route on a node of its own, so stopping speech can't cut it.
+  func chime(_ url: URL) async throws {
+    guard let engine, engine.isRunning else { throw VoiceModeError.notStarted }
+    let file = try AVAudioFile(forReading: url)
+    let node = AVAudioPlayerNode()
+    engine.attach(node)
+    engine.connect(node, to: engine.mainMixerNode, format: file.processingFormat)
+    node.scheduleFile(file, at: nil, completionHandler: nil)
+    node.play()
+    let ms = Double(file.length) / file.processingFormat.sampleRate * 1000 + 60
+    try? await Task.sleep(nanoseconds: UInt64(ms * 1_000_000))
+    node.stop()
+    engine.detach(node)
+  }
+
   func stopAll() {
     for item in live { tasks[item.id]?.cancel() }
     let all = live.map(\.id)

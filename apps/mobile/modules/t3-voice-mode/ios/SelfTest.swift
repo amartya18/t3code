@@ -171,6 +171,8 @@ extension VoiceEngine {
       }
     }
 
+    report["route"] = await routeCheck(config)
+
     if let folder {
       try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
       try heard.withUnsafeBufferPointer { Data(buffer: $0) }.write(to: folder.appendingPathComponent("heard-16k-f32le.raw"))
@@ -181,6 +183,24 @@ extension VoiceEngine {
     let prepared = (report["prepareMs"] as? [String: Int])?.count == 4
     report["ok"] = errors.isEmpty && prepared && !transcript.isEmpty && started && report["meterReactMs"] != nil
     return try selfTestJSON(report)
+  }
+
+  /// The simulator may have a single route; the output after each toggle is reported, not asserted.
+  private func routeCheck(_ config: VoiceConfig) async -> [String: Any] {
+    let session = AVAudioSession.sharedInstance()
+    var result: [String: Any] = [:]
+    do {
+      try activateSession(config)
+      result["before"] = session.currentRoute.outputs.first?.portType.rawValue ?? "none"
+      result["speakerOn"] = try routeSpeaker(true)?.rawValue ?? "none"
+      result["speakerOff"] = try routeSpeaker(false)?.rawValue ?? "none"
+    } catch {
+      result["error"] = String(describing: error)
+    }
+    result["proximityOn"] = await setNearEar(true)
+    result["proximityOff"] = await setNearEar(false)
+    try? session.setActive(false, options: .notifyOthersOnDeactivation)
+    return result
   }
 }
 
