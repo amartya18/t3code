@@ -1,22 +1,14 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import { EMPTY_ENVIRONMENT_THREAD_STATE } from "@t3tools/client-runtime/state/threads";
 import { isHomeThreadId } from "@t3tools/contracts";
-import { useNavigation } from "@react-navigation/native";
-import * as Option from "effect/Option";
-import { AsyncResult } from "effect/reactivity";
 import { useGT } from "gt-react-native";
 import { useEffect, type ReactNode } from "react";
 import { Pressable, View } from "react-native";
 
-import * as Dialog from "../../components/ui/Dialog";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import { cn } from "../../lib/cn";
-import { appAtomRegistry } from "../../state/atom-registry";
-import { environmentThreads, environmentThreadShells } from "../../state/threads";
-import { readHomeView } from "./homeView";
+import { openHomeVoiceCall } from "./homeVoiceCall";
 import { prepareVoiceOnce } from "./voicePrepare";
 import { VoiceWaveIcon } from "./VoiceWaveIcon";
-import { startVoiceSession, voiceSessionAtom } from "./voiceSession";
 import { useVoiceModeSettings } from "./voiceSettings";
 
 /** Fork hook in ThreadComposer: in Home's thread, an empty composer's send slot starts voice mode. */
@@ -35,7 +27,6 @@ function HomeVoiceButton(props: {
   readonly large: boolean;
 }) {
   const gt = useGT();
-  const navigation = useNavigation();
   const settings = useVoiceModeSettings();
   const { scale } = useAndroidControlSizing();
   const circleSize = Math.round((props.large ? 44 : 30) * scale);
@@ -44,35 +35,11 @@ function HomeVoiceButton(props: {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the native voice models before the first call
   useEffect(() => prepareVoiceOnce(settings), [settings]);
 
-  const start = () => {
-    if (settings === null) {
-      Dialog.alert(
-        gt("No Voice project"),
-        gt(
-          "Voice mode needs a project titled Voice on Home's machine. Add one, or pick another project in Voice settings.",
-        ),
-      );
-      return;
-    }
-    if (appAtomRegistry.get(voiceSessionAtom) === null) {
-      const home = { environmentId: props.home.environmentId, threadId: props.home.id };
-      const homeState = AsyncResult.getOrElse(
-        appAtomRegistry.get(environmentThreads.stateAtom(home.environmentId, home.threadId)),
-        () => EMPTY_ENVIRONMENT_THREAD_STATE,
-      );
-      startVoiceSession({
-        settings,
-        home,
-        view: readHomeView({
-          homeShell: props.home,
-          homeMessages: Option.getOrNull(Option.map(homeState.data, (data) => data.messages)),
-          shells: appAtomRegistry.get(environmentThreadShells.threadShellsAtom),
-        }),
-        nowMs: Date.now(),
-      });
-    }
-    navigation.navigate("VoiceCall");
-  };
+  const start = () =>
+    void openHomeVoiceCall({
+      home: { environmentId: props.home.environmentId, threadId: props.home.id },
+      waitMs: 0,
+    });
 
   return (
     <Pressable

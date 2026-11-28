@@ -8,6 +8,7 @@ import { VoiceSessionSheet } from "./VoiceSessionSheet";
 export const HOME_VOICE_SCREENS = {
   VoiceCall: createNativeStackScreen({
     screen: VoiceCallScreen,
+    linking: "voice",
     options: { ...modalRoute(), gestureEnabled: false },
   }),
   VoiceSessionSettings: createNativeStackScreen({
