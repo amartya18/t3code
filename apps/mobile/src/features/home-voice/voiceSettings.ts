@@ -118,7 +118,7 @@ export function voiceModeSettings(
     modelSelection: stored.modelSelection ?? DEFAULT_VOICE_MODEL,
     voiceId: stored.voiceId ?? "af_heart",
     thinking: stored.thinking ?? false,
-    kokoroGpu: stored.kokoroGpu ?? false,
+    kokoroGpu: stored.kokoroGpu ?? true,
     tuning: voiceTuning(stored),
   };
 }

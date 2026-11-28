@@ -13,7 +13,7 @@ const { voiceModeSettings } = await import("./voiceSettings");
 
 const project = { environmentId: EnvironmentId.make("env"), id: ProjectId.make("voice") };
 
-it("runs Kokoro off the GPU until the dev toggle turns it on", () => {
-  expect(voiceModeSettings({}, project).kokoroGpu).toBe(false);
-  expect(voiceModeSettings({ kokoroGpu: true }, project).kokoroGpu).toBe(true);
+it("runs Kokoro on the GPU unless the dev toggle turns it off", () => {
+  expect(voiceModeSettings({}, project).kokoroGpu).toBe(true);
+  expect(voiceModeSettings({ kokoroGpu: false }, project).kokoroGpu).toBe(false);
 });

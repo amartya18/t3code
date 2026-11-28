@@ -76,7 +76,7 @@ export function useVoiceSpeech(session: VoiceSession) {
     engineConfig: voiceEngineConfig(
       settings?.voiceId ?? "af_heart",
       tuning,
-      settings?.kokoroGpu ?? false,
+      settings?.kokoroGpu ?? true,
     ),
     config: voiceSpeechConfig(tuning),
     send: (text, messageId) =>

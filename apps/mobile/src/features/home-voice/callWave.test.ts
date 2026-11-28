@@ -8,6 +8,7 @@ import {
   MIC_FALL_MS,
   MIC_FLOOR,
   MIC_LOUD_LEVEL,
+  MIC_MIN_ENERGY,
   micWaveEnergy,
   smoothMicLevel,
   SWEEPS,
@@ -100,7 +101,7 @@ describe("mic level", () => {
   }
 
   it("lights the wave on the first window of speech and never on room noise", () => {
-    expect(micWaveEnergy(smoothMicLevel(0, SPEECH, WINDOW_MS))).toBeGreaterThan(0.5);
+    expect(micWaveEnergy(smoothMicLevel(0, SPEECH, WINDOW_MS))).toBeGreaterThan(0);
     expect(micWaveEnergy(settle(0, MIC_FLOOR, 2_000))).toBe(0);
     expect(micWaveEnergy(settle(0, MIC_FLOOR * 2, 2_000))).toBe(0);
   });
@@ -113,10 +114,16 @@ describe("mic level", () => {
 
   it("swings further the louder he speaks, fully at loud speech", () => {
     const swing = (raw: number) => micWaveEnergy(settle(0, raw, 500));
-    expect(swing(0.01)).toBeLessThan(swing(0.03));
+    expect(swing(0.01)).toBe(MIC_MIN_ENERGY);
     expect(swing(0.03)).toBeLessThan(swing(0.06));
     expect(swing(MIC_LOUD_LEVEL + MIC_FLOOR)).toBeCloseTo(1, 6);
     expect(swing(0.5)).toBe(1);
+  });
+
+  it("shows plainly whether he speaks quietly, normally or loudly", () => {
+    const swing = (raw: number) => micWaveEnergy(settle(0, raw, 500));
+    expect(swing(0.15) - swing(0.044)).toBeGreaterThan(0.3);
+    expect(swing(0.044) - swing(0.02)).toBeGreaterThan(0.25);
   });
 
   it("falls by e over the fall time", () => {

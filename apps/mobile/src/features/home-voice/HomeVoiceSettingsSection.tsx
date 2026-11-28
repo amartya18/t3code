@@ -91,7 +91,7 @@ export function HomeVoiceSettingsSection() {
         <VoiceDownloadRow
           voiceId={settings?.voiceId ?? "af_heart"}
           tuning={settings?.tuning ?? DEFAULT_VOICE_TUNING}
-          kokoroGpu={settings?.kokoroGpu ?? false}
+          kokoroGpu={settings?.kokoroGpu ?? true}
         />
       )}
     </SettingsSection>
