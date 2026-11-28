@@ -12,7 +12,7 @@ import { Atom } from "effect/reactivity";
 
 import { writeFileAtomically } from "../../lib/atomic-file";
 import { appAtomRegistry } from "../../state/atom-registry";
-import { useProjects } from "../../state/entities";
+import { environmentProjects } from "../../state/projects";
 import { userHomeAtom } from "../../state/home";
 import { voiceTuning, type VoiceTuning } from "./voiceEngine";
 
@@ -63,7 +63,8 @@ async function settingsFile() {
 }
 
 let changedBeforeLoad = false;
-void settingsFile()
+/** Settles once the stored choice is read, so a cold launch does not resolve the default project. */
+export const storedVoiceSettingsLoaded: Promise<void> = settingsFile()
   .then(async (file) => (file.exists ? await file.text() : null))
   .then((raw) => {
     if (raw === null || changedBeforeLoad) return;
@@ -83,10 +84,10 @@ export async function saveVoiceSettings(patch: StoredVoiceSettings) {
  * The stored choice where it still exists, else Home's environment and its project titled
  * "Voice". Null when no Voice project is found.
  */
-export function useVoiceModeSettings(): VoiceModeSettings | null {
-  const stored = useAtomValue(storedVoiceSettingsAtom);
-  const home = userHomeThreadRef(useAtomValue(userHomeAtom));
-  const projects = useProjects();
+export const voiceModeSettingsAtom = Atom.make((get): VoiceModeSettings | null => {
+  const stored = get(storedVoiceSettingsAtom);
+  const home = userHomeThreadRef(get(userHomeAtom));
+  const projects = get(environmentProjects.projectsAtom);
   const storedProject = projects.find(
     (project) => project.environmentId === stored.environmentId && project.id === stored.projectId,
   );
@@ -107,4 +108,8 @@ export function useVoiceModeSettings(): VoiceModeSettings | null {
         thinking: stored.thinking ?? false,
         tuning: voiceTuning(stored),
       };
+}).pipe(Atom.withLabel("home-voice:mode-settings"));
+
+export function useVoiceModeSettings(): VoiceModeSettings | null {
+  return useAtomValue(voiceModeSettingsAtom);
 }

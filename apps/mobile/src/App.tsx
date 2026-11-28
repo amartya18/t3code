@@ -111,6 +111,7 @@ import {
 import { pruneNewTaskFlowStates } from "./features/threads/new-task-flow-state";
 import { pruneNewTaskBranchCheckouts } from "./features/threads/NewTaskDraftRouteScreen";
 import { installAppUpdateChecks } from "./features/updates/app-updates";
+import { takeVoiceCallLink } from "./features/home-voice/homeVoiceCall";
 
 import "../global.css";
 
@@ -136,6 +137,7 @@ function getAppStateFromPath(path: string, options: Parameters<typeof getStateFr
     withoutPairingTarget,
     startDevAutoConnect,
     takeScheduledTaskNewLink,
+    takeVoiceCallLink,
   );
 }
 
