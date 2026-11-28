@@ -41,8 +41,14 @@ vi.mock("../../state/thread-outbox", () => ({
 }));
 
 const { appAtomRegistry } = await import("../../state/atom-registry");
-const { endVoiceSession, pushHomeUpdates, sendVoiceMessage, startVoiceSession, voiceSessionAtom } =
-  await import("./voiceSession");
+const {
+  endVoiceSession,
+  pushHomeUpdates,
+  sendVoiceMessage,
+  startVoiceSession,
+  toggleVoiceSpeaker,
+  voiceSessionAtom,
+} = await import("./voiceSession");
 
 const START = Date.parse("2026-11-27T12:00:00.000Z");
 const settings = {
@@ -79,6 +85,18 @@ beforeEach(() => {
 });
 
 describe("a voice session", () => {
+  it("starts every call on the earpiece, whatever the last call chose", () => {
+    start();
+    toggleVoiceSpeaker();
+    expect(appAtomRegistry.get(voiceSessionAtom)!.speaker).toBe(true);
+    toggleVoiceSpeaker();
+    toggleVoiceSpeaker();
+    endVoiceSession();
+
+    start();
+    expect(appAtomRegistry.get(voiceSessionAtom)!.speaker).toBe(false);
+  });
+
   it("opens silent, and Amar's first line creates the thread", async () => {
     const thread = start();
     expect(outbox.queued).toEqual([]);

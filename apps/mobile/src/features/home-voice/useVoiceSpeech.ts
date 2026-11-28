@@ -67,7 +67,7 @@ export function retryVoiceEngine() {
 
 /** Runs on-device speech for the session's whole life, whether its call screen is open or not. */
 export function useVoiceSpeech(session: VoiceSession) {
-  const { thread, muted } = session;
+  const { thread, muted, speaker } = session;
   const settings = useVoiceModeSettings();
   const threadState = useVoiceThread(session);
   const messages = Option.getOrNull(Option.map(threadState.data, (data) => data.messages));
@@ -79,6 +79,7 @@ export function useVoiceSpeech(session: VoiceSession) {
       settings?.kokoroGpu ?? true,
     ),
     config: voiceSpeechConfig(tuning),
+    speaker,
     send: (text, messageId) =>
       settings === null
         ? Promise.reject(new Error("No voice project"))
@@ -95,16 +96,17 @@ export function useVoiceSpeech(session: VoiceSession) {
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the native engine runs for as long as the session does
   useEffect(() => {
-    if (voiceEngine === null) return;
+    const engine = voiceEngine;
+    if (engine === null) return;
     const driver = createVoiceSpeechDriver({
-      engine: voiceEngine,
+      engine,
       inputs: latest.current,
       previous: remembered?.key === key ? remembered.state : null,
       vocabulary: VOICE_VOCABULARY,
       now: Date.now,
       newMessageId: uuidv4,
       log: voiceDevLog,
-      chime: playVoiceChime,
+      chime: (sound) => playVoiceChime(engine, sound),
       onReady: () => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light),
       onHangUp: endVoiceSession,
       onChange: (state) => {

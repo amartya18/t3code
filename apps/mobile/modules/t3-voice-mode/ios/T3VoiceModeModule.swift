@@ -68,6 +68,14 @@ public final class T3VoiceModeModule: Module {
       try await self.engine.speak(id: id, text: text, seq: seq)
     }
 
+    Function("setSpeaker") { (on: Bool) in
+      self.engine.setSpeaker(on)
+    }
+
+    AsyncFunction("playChime") { (uri: String) async throws in
+      try await self.engine.playChime(URL(string: uri) ?? URL(fileURLWithPath: uri))
+    }
+
     Function("duck") { (level: Double) in
       self.engine.duck(level)
     }

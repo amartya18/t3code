@@ -27,6 +27,7 @@ let stopping: Promise<unknown> = Promise.resolve();
 export interface VoiceSpeechInputs {
   readonly engineConfig: VoiceEngineConfig;
   readonly config: VoiceSpeechConfig;
+  readonly speaker: boolean;
   /** Queues Amar's words in the voice thread under `messageId`. */
   readonly send: (text: string, messageId: string) => Promise<unknown>;
 }
@@ -136,7 +137,6 @@ export function createVoiceSpeechDriver(options: {
       case "start":
         stopping
           .then(() => engine.stop())
-          .then(() => chime("start"))
           .then(() => {
             if (disposed) return;
             const { vad, tts } = inputs.engineConfig;
@@ -150,10 +150,14 @@ export function createVoiceSpeechDriver(options: {
           .then(
             () => {
               if (disposed) return;
-              engine
-                .setVocabulary(options.vocabulary)
-                .catch((error) => devLog(`[voice] word list failed: ${errorCode(error)}`));
-              dispatch({ type: "started" });
+              engine.setSpeaker(inputs.speaker);
+              return chime("start").then(() => {
+                if (disposed) return;
+                engine
+                  .setVocabulary(options.vocabulary)
+                  .catch((error) => devLog(`[voice] word list failed: ${errorCode(error)}`));
+                dispatch({ type: "started" });
+              });
             },
             (error) => dispatch({ type: "startFailed", code: errorCode(error) }),
           );
@@ -237,7 +241,9 @@ export function createVoiceSpeechDriver(options: {
   const subscriptions = [
     engine.addListener("vad", (event) => {
       if (speechLevels !== null && speechLevels.length > 0) {
-        devLog(`[voice] mic while speaking: ${levelSummary(speechLevels)}`);
+        devLog(
+          `[voice] mic while speaking: ${levelSummary(speechLevels)}, on ${state.output ?? "unknown"}`,
+        );
       }
       speechLevels = event.speaking && inputs.engineConfig.logStages ? [] : null;
       dispatch({ type: "vad", speaking: event.speaking, speechMs: event.atMs, atMs: now() });
@@ -300,7 +306,9 @@ export function createVoiceSpeechDriver(options: {
     dispatch,
     update(next) {
       const reconfigure = JSON.stringify(next.engineConfig) !== JSON.stringify(inputs.engineConfig);
+      const reroute = next.speaker !== inputs.speaker;
       inputs = next;
+      if (reroute && !disposed) engine.setSpeaker(next.speaker);
       if (reconfigure && !disposed) {
         engine.configure(next.engineConfig).catch((error) => {
           dispatch({ type: "error", code: errorCode(error), message: String(error) });
@@ -314,8 +322,9 @@ export function createVoiceSpeechDriver(options: {
       if (watchdog !== null) clearInterval(watchdog);
       for (const subscription of subscriptions) subscription.remove();
       engine.stopSpeech(0);
-      const stopped = engine.stop().catch(() => {});
-      stopping = wentLive ? stopped.then(() => chime("end")) : stopped;
+      // The end chime plays on the call's own route, so it goes before the engine stops.
+      const stop = () => engine.stop().catch(() => {});
+      stopping = wentLive ? chime("end").then(stop) : stop();
     },
   };
 }

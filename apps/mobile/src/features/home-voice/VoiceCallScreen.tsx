@@ -41,6 +41,7 @@ import {
   MicWaveform,
   MuteButton,
   SessionSettingsButton,
+  SpeakerButton,
   useSendSweep,
   useThemeColor,
   useVoiceWave,
@@ -57,7 +58,7 @@ import {
 import { useVoiceModeSettings } from "./voiceSettings";
 import { voiceTranscript, type TranscriptLine } from "./voiceTranscript";
 
-/** The full-screen call: the session's time, its last few lines, mute and hang up. */
+/** The full-screen call: the session's time, its last few lines, speaker, mute and hang up. */
 export function VoiceCallScreen() {
   const session = useAtomValue(voiceSessionAtom);
   const navigation = useNavigation();
@@ -97,23 +98,36 @@ function VoiceCall(props: { readonly session: VoiceSession }) {
         {VOICE_ENGINE_SUPPORT === "available" ? null : (
           <TypedMessageField session={props.session} />
         )}
-        <CallControls muted={props.session.muted} paddingBottom={Math.max(insets.bottom, 16) + 8} />
+        <CallControls
+          muted={props.session.muted}
+          speaker={props.session.speaker}
+          paddingBottom={Math.max(insets.bottom, 16) + 8}
+        />
       </View>
     </KeyboardAvoidingView>
   );
 }
 
-const CALL_WAVE = callWaveHeights(29, 30);
+const SPEAKER = VOICE_ENGINE_SUPPORT === "available";
+// Fewer bars leave room for the speaker button on a 375 pt wide phone.
+const CALL_WAVE = callWaveHeights(SPEAKER ? 19 : 29, 30);
 
-/** Mute, the wave, and hang up, over a glow that rises while Amar talks. */
-function CallControls(props: { readonly muted: boolean; readonly paddingBottom: number }) {
+/** Speaker and mute, the wave, and hang up, over a glow that rises while Amar talks. */
+function CallControls(props: {
+  readonly muted: boolean;
+  readonly speaker: boolean;
+  readonly paddingBottom: number;
+}) {
   const wave = useVoiceWave();
   useSendSweep(wave);
   return (
     <View className="pt-5" style={{ paddingBottom: props.paddingBottom }}>
       <CallGlow wave={wave} />
       <View className="flex-row items-center justify-between px-7">
-        <MuteButton muted={props.muted} size={58} />
+        <View className="flex-row gap-3">
+          {SPEAKER ? <SpeakerButton on={props.speaker} size={58} /> : null}
+          <MuteButton muted={props.muted} size={58} />
+        </View>
         <MicWaveform heights={CALL_WAVE} wave={wave} dot={3} />
         <HangUpButton size={58} />
       </View>

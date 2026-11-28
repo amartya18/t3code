@@ -30,6 +30,10 @@ function fakeEngine() {
       });
     },
     setMuted: () => {},
+    setSpeaker: (on) => {
+      calls.push(`setSpeaker ${on}`);
+    },
+    playChime: async () => {},
     setVocabulary: async (words) => {
       calls.push(`setVocabulary ${words.map((term) => term.text).join(", ")}`);
     },
@@ -50,8 +54,12 @@ function engineConfig(logStages: boolean): VoiceEngineConfig {
   return { ...voiceEngineConfig("af_heart", DEFAULT_VOICE_TUNING, false), logStages };
 }
 
-function inputs(config: VoiceEngineConfig, send: (text: string) => Promise<unknown>) {
-  return { engineConfig: config, config: voiceSpeechConfig(DEFAULT_VOICE_TUNING), send };
+function inputs(
+  config: VoiceEngineConfig,
+  send: (text: string) => Promise<unknown>,
+  speaker = false,
+) {
+  return { engineConfig: config, config: voiceSpeechConfig(DEFAULT_VOICE_TUNING), speaker, send };
 }
 
 function open(
@@ -94,14 +102,34 @@ it("hanging up mid-speech stops the voice, and the next call starts only after t
   await settle();
   fake.finishStop();
   await settle();
-  expect(fake.calls.slice(-3)).toEqual(["stopped", "start", "setVocabulary T3, laptop13"]);
+  expect(fake.calls.slice(-4)).toEqual([
+    "stopped",
+    "start",
+    "setSpeaker false",
+    "setVocabulary T3, laptop13",
+  ]);
 });
 
 it("gives Parakeet the call's word list once the engine has started", async () => {
   const fake = fakeEngine();
   open({ ...fake.engine, stop: async () => {} });
   await settle();
-  expect(fake.calls).toEqual(["start", "setVocabulary T3, laptop13"]);
+  expect(fake.calls).toEqual(["start", "setSpeaker false", "setVocabulary T3, laptop13"]);
+});
+
+it("sends the speaker choice to the engine when it changes, and only then", async () => {
+  const fake = fakeEngine();
+  const driver = open({ ...fake.engine, stop: async () => {} });
+  await settle();
+  fake.calls.splice(0);
+  const config = engineConfig(false);
+
+  driver.update(inputs(config, async () => {}, true));
+  driver.update(inputs(config, async () => {}, true));
+  driver.update(inputs(config, async () => {}, false));
+
+  expect(fake.calls).toEqual(["setSpeaker true", "setSpeaker false"]);
+  driver.dispose();
 });
 
 it("feeds new detector holds from the sliders to the live engine without restarting it", async () => {
@@ -406,6 +434,7 @@ it("in development, logs how loud the mic was while he spoke", async () => {
     listeners.get("vad")!({ speaking, probability: 0.9, level: 0, atMs: 0 });
   const mic = (level: number) => listeners.get("micLevel")!({ level, atMs: 0 });
 
+  listeners.get("route")!({ output: "Receiver" });
   mic(0.5);
   vad(true);
   for (const level of [0.02, 0.04, 0.03, 0.01, 0.08]) mic(level);
@@ -413,7 +442,7 @@ it("in development, logs how loud the mic was while he spoke", async () => {
   mic(0.5);
 
   expect(logs.filter((line) => line.includes("mic while speaking"))).toEqual([
-    "+0.000s [voice] mic while speaking: median 0.030, p90 0.080, peak 0.080 over 5 windows",
+    "+0.000s [voice] mic while speaking: median 0.030, p90 0.080, peak 0.080 over 5 windows, on Receiver",
   ]);
   driver.dispose();
 });
@@ -456,7 +485,7 @@ function listening(fake: ReturnType<typeof fakeEngine>) {
   return { engine, listeners, chime };
 }
 
-it("plays the start chime with the mic still off, then starts the engine", async () => {
+it("plays the start chime through the started engine, before the call goes live", async () => {
   const fake = fakeEngine();
   const { engine, chime } = listening(fake);
   const driver = open(
@@ -464,11 +493,18 @@ it("plays the start chime with the mic still off, then starts the engine", async
     () => 0,
     null,
     async () => {},
-    { chime },
+    { chime, onReady: () => fake.calls.push("ready") },
   );
   await settle();
 
-  expect(fake.calls.slice(0, 3)).toEqual(["stop", "chime start", "start"]);
+  expect(fake.calls.slice(0, 6)).toEqual([
+    "stop",
+    "start",
+    "setSpeaker false",
+    "chime start",
+    "setVocabulary T3, laptop13",
+    "ready",
+  ]);
   driver.dispose();
   await settle();
 });
@@ -492,7 +528,7 @@ it("still starts the engine when the start chime fails", async () => {
   await settle();
 });
 
-it("hanging up a live call plays the end chime once, after the engine has stopped", async () => {
+it("hanging up a live call plays the end chime once, before the engine stops", async () => {
   const fake = fakeEngine();
   const { engine, chime } = listening(fake);
   const driver = open(
@@ -507,7 +543,7 @@ it("hanging up a live call plays the end chime once, after the engine has stoppe
 
   driver.dispose();
   await settle();
-  expect(fake.calls).toEqual(["stopSpeech", "stop", "chime end"]);
+  expect(fake.calls).toEqual(["stopSpeech", "chime end", "stop"]);
 });
 
 it("ending the call with [end call] plays the end chime once, after the goodbye has played", async () => {
@@ -539,7 +575,7 @@ it("ending the call with [end call] plays the end chime once, after the goodbye 
   listeners.get("playback")!({ id: "r1:0", state: "finished" });
   await settle();
 
-  expect(fake.calls).toEqual(["speak r1:0", "stopSpeech", "stop", "chime end"]);
+  expect(fake.calls).toEqual(["speak r1:0", "stopSpeech", "chime end", "stop"]);
 });
 
 it("hanging up before the call is live plays no end chime", async () => {

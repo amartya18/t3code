@@ -37,6 +37,8 @@ export interface VoiceSession extends HomeUpdateCursor {
   readonly threadCreated: boolean;
   readonly home: ScopedThreadRef;
   readonly muted: boolean;
+  /** The built-in speaker instead of the earpiece; every call starts on the earpiece. */
+  readonly speaker: boolean;
 }
 
 export const voiceSessionAtom = Atom.make<VoiceSession | null>(null).pipe(
@@ -59,6 +61,7 @@ export function startVoiceSession(input: {
     threadCreated: false,
     home: input.home,
     muted: false,
+    speaker: false,
     ...startHomeUpdateCursor(input.view, input.nowMs),
   });
 }
@@ -71,6 +74,12 @@ export function toggleVoiceMuted() {
   const session = appAtomRegistry.get(voiceSessionAtom);
   if (session !== null)
     appAtomRegistry.set(voiceSessionAtom, { ...session, muted: !session.muted });
+}
+
+export function toggleVoiceSpeaker() {
+  const session = appAtomRegistry.get(voiceSessionAtom);
+  if (session !== null)
+    appAtomRegistry.set(voiceSessionAtom, { ...session, speaker: !session.speaker });
 }
 
 /** Queues what Amar said (or typed) in the voice thread, on the session's current model. */

@@ -611,6 +611,7 @@ describe("interrupting the voice", () => {
 
   it("ducks at his voice and stops once it outlasts the confirm; what he says is his next turn", () => {
     const voice = playing();
+    voice.send({ type: "route", output: "Receiver" });
     const fromMs = voice.startTalking("Wait, ask Home instead.");
     expect(voice.engine.volume).toBe(0.25);
     voice.wait(200);
@@ -621,7 +622,9 @@ describe("interrupting the voice", () => {
     const toMs = voice.stopTalking();
     expect(voice.sent).toEqual(["Wait, ask Home instead."]);
     expect(voice.engine.transcribed).toEqual([[fromMs - 400, toMs]]);
-    expect(voice.logs).toContain("[voice] interrupt from speech onset: duck +250ms, stop +550ms");
+    expect(voice.logs).toContain(
+      "[voice] interrupt from speech onset: duck +250ms, stop +550ms, on Receiver",
+    );
 
     voice.reply("r1", `${LONG} One more sentence here.`);
     expect(voice.engine.synthesizing).toEqual([]);
@@ -638,7 +641,7 @@ describe("interrupting the voice", () => {
     expect(voice.engine.volume).toBe(1);
     expect(voice.engine.stops).toEqual([]);
     expect(voice.logs).toEqual([
-      "[voice] interrupt from speech onset: duck +250ms, restore +450ms",
+      "[voice] interrupt from speech onset: duck +250ms, restore +450ms, on unknown",
     ]);
 
     voice.wait(3_000);
@@ -663,7 +666,9 @@ describe("interrupting the voice", () => {
     expect(voice.engine.stops).toEqual([]);
     voice.stopTalking();
     expect(voice.sent).toEqual(["Thanks, now check the queue."]);
-    expect(voice.logs).toContain("[voice] interrupt from speech onset: duck +250ms, end +250ms");
+    expect(voice.logs).toContain(
+      "[voice] interrupt from speech onset: duck +250ms, end +250ms, on unknown",
+    );
   });
 
   it("restores the volume when he mutes under a duck, and never stops the agent for it", () => {

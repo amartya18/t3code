@@ -1,8 +1,9 @@
 import IconMicrophoneOff from "@tabler/icons-react-native/IconMicrophoneOff";
 import IconPhoneEnd from "@tabler/icons-react-native/IconPhoneEnd";
+import IconVolume from "@tabler/icons-react-native/IconVolume";
 import { withUniwind } from "uniwind";
 
-const ICONS = { hangUp: IconPhoneEnd, micOff: IconMicrophoneOff } as const;
+const ICONS = { hangUp: IconPhoneEnd, micOff: IconMicrophoneOff, speaker: IconVolume } as const;
 
 export const VoiceCallSymbol = withUniwind(function VoiceCallSymbol(props: {
   readonly name: keyof typeof ICONS;
