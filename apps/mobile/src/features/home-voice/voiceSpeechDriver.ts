@@ -61,6 +61,9 @@ export function createVoiceSpeechDriver(options: {
   let disposed = false;
   let wentLive = false;
   let speechLevels: Array<number> | null = null;
+  let kokoroRoute = "cpu";
+  const synthText = new Map<string, string>();
+  const synthStart = new Map<string, number>();
   const chime = (sound: "start" | "end") =>
     options
       .chime(sound)
@@ -132,7 +135,8 @@ export function createVoiceSpeechDriver(options: {
           .then(() => chime("start"))
           .then(() => {
             if (disposed) return;
-            const { vad } = inputs.engineConfig;
+            const { vad, tts } = inputs.engineConfig;
+            kokoroRoute = tts.gpu ? "gpu" : "cpu";
             devLog(
               `[voice] tuning: threshold ${vad.threshold}, min speech ${vad.minSpeechMs}ms, ` +
                 `silence before scoring ${vad.minSilenceMs}ms, wait when not done ${inputs.config.unfinishedWaitMs}ms`,
@@ -195,6 +199,7 @@ export function createVoiceSpeechDriver(options: {
       }
       case "speak":
         devLog(`[voice] speak ${effect.id}`);
+        if (inputs.engineConfig.logStages) synthText.set(effect.id, effect.text);
         engine
           .speak({ id: effect.id, text: effect.text })
           .catch((error) =>
@@ -242,11 +247,27 @@ export function createVoiceSpeechDriver(options: {
     engine.addListener("interruption", (event) =>
       dispatch({ type: "interruption", phase: event.phase }),
     ),
-    engine.addListener("stage", (event) => devLog(`[voice] stage ${event.name}`)),
+    engine.addListener("stage", (event) => {
+      devLog(`[voice] stage ${event.name}`);
+      const line = synthLine(event);
+      if (line !== null) devLog(line);
+    }),
     engine.addListener("error", (event) =>
       dispatch({ type: "error", code: event.code, message: event.message }),
     ),
   ];
+
+  function synthLine(stage: { readonly name: string; readonly atMs: number }): string | null {
+    const [name, id] = splitStage(stage.name);
+    if (name === "synth.start") synthStart.set(id, stage.atMs);
+    if (name !== "synth.end") return null;
+    const startedAt = synthStart.get(id);
+    const text = synthText.get(id);
+    synthStart.delete(id);
+    synthText.delete(id);
+    if (startedAt === undefined || text === undefined) return null;
+    return `[voice] synth ${Math.round(stage.atMs - startedAt)}ms, ${text.length} chars, route ${kokoroRoute}`;
+  }
 
   let due = now() + STALL_CHECK_MS;
   const watchdog = inputs.engineConfig.logStages
@@ -295,6 +316,11 @@ function levelSummary(levels: ReadonlyArray<number>): string {
   const at = (quantile: number) =>
     sorted[Math.min(sorted.length - 1, Math.floor(quantile * sorted.length))]!.toFixed(3);
   return `median ${at(0.5)}, p90 ${at(0.9)}, peak ${at(1)} over ${sorted.length} windows`;
+}
+
+function splitStage(name: string): readonly [string, string] {
+  const colon = name.indexOf(":");
+  return colon === -1 ? [name, ""] : [name.slice(0, colon), name.slice(colon + 1)];
 }
 
 /** Stamps a dev log line with the time since this session's engine opened. */
