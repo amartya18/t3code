@@ -276,6 +276,7 @@ import {
 } from "./pending-thread-feed";
 import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
 import { resolveThreadFeedFixedItemSize } from "./thread-feed-item-size";
+import { voiceRelayCard } from "../home-voice/groupVoiceRelays";
 import { useVoiceRelayFeed, voiceRelayFoldLabels } from "../home-voice/useVoiceRelayFeed";
 import { htmlRenderFrameHeight } from "@t3tools/shared/htmlRender";
 import { htmlRenderRowHeight, ThreadHtmlRender } from "./HtmlRenderWebView";
@@ -312,6 +313,7 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import {
   environmentThreadDetails,
   environmentThreadShells,
+  startOpeningEnvironmentThread,
   threadEnvironment,
 } from "../../state/threads";
 import { ThreadWorkflowOpening, useWorkflowOpening } from "./thread-workflow-opening";
@@ -1690,12 +1692,13 @@ function OpenSenderThreadButton(props: {
     <Pressable
       accessibilityRole="link"
       hitSlop={6}
-      onPress={() =>
+      onPress={() => {
+        startOpeningEnvironmentThread(props.environmentId, props.senderThreadId);
         openLinkedThread({
           environmentId: String(props.environmentId),
           threadId: String(props.senderThreadId),
-        })
-      }
+        });
+      }}
     >
       <Text className="font-t3-medium text-xs text-foreground-secondary">
         <T>Open thread</T>
@@ -2576,6 +2579,14 @@ function renderFeedEntry(
                   ) : null}
                 </View>
               ) : null}
+            </View>
+          ) : null}
+          {!bubbleBodyVisible && senderRef && voiceRelayCard(message) ? (
+            <View className="mt-1 flex-row justify-end pr-0.5">
+              <OpenSenderThreadButton
+                environmentId={senderRef.environmentId}
+                senderThreadId={senderRef.threadId}
+              />
             </View>
           ) : null}
           {bubbleBodyVisible ? (
