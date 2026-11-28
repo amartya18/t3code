@@ -9,6 +9,7 @@ on:
     branches-ignore: [main]
     paths:
       - apps/mobile/modules/t3-voice-mode/**
+      - apps/mobile/modules/t3-diagnostics/**
       - .github/workflows/fork-ios-compile.yml
   workflow_dispatch:
 
@@ -65,6 +66,13 @@ jobs:
           xcrun swiftc ios/AudioRing.swift ios/SpeechGate.swift ios/MicLevel.swift ios-tests/main.swift -o "$RUNNER_TEMP/voice-logic"
           "$RUNNER_TEMP/voice-logic"
 
+      - name: Diagnostics store checks
+        working-directory: apps/mobile/modules/t3-diagnostics
+        run: |
+          xcrun swiftc ios/DiagnosticStore.swift ios-tests/main.swift -o "$RUNNER_TEMP/diagnostics-store"
+          "$RUNNER_TEMP/diagnostics-store" | tee "$RUNNER_TEMP/diagnostics-store.log"
+          grep -q '^T3_DIAGNOSTICS_STORE_OK$' "$RUNNER_TEMP/diagnostics-store.log"
+
       - name: Setup dependencies
         uses: ./.github/actions/setup-ci-deps
         with:
@@ -103,6 +111,23 @@ jobs:
               echo "::error::$symbol is not in the app binary"
               exit 1
             fi
+          done
+
+      # The subscriber only runs if autolinking registered it with the app delegate.
+      - name: Check the diagnostics module is linked
+        run: |
+          for symbol in T3Diagnostics.T3DiagnosticsModule T3Diagnostics.T3DiagnosticsSubscriber T3Diagnostics.DiagnosticPayloadReceiver; do
+            if ! grep -m 1 -F "$symbol" "$RUNNER_TEMP/symbols.txt"; then
+              echo "::error::$symbol is not in the app binary"
+              exit 1
+            fi
+          done
+          providers="$(find apps/mobile/ios "$RUNNER_TEMP/derived" -name ExpoModulesProvider.swift 2>/dev/null)"
+          echo "$providers"
+          [ -n "$providers" ] || { echo "::error::No ExpoModulesProvider.swift found"; exit 1; }
+          for name in T3DiagnosticsModule T3DiagnosticsSubscriber; do
+            echo "$providers" | while read -r provider; do grep -n "$name" "$provider"; done | grep -q . \
+              || { echo "::error::$name is not registered in ExpoModulesProvider"; exit 1; }
           done
 
       # The widget extension builds only as the app's dependency; a skipped splice would still pass.
