@@ -402,14 +402,21 @@ function TranscriptLineText(props: {
       </View>
     );
   }
-  if (props.kind === "agent") {
-    return (
+  if (props.kind === "agent" || props.kind === "unplayed") {
+    const reply = (
       <Text
         className={cn("text-base", props.newest ? "text-foreground" : "text-foreground-muted")}
         style={{ maxWidth: "88%" }}
       >
         {props.text}
       </Text>
+    );
+    if (props.kind === "agent") return reply;
+    return (
+      <View className="gap-1">
+        {reply}
+        <Text className="text-xs text-foreground-muted">{gt("Couldn't play this reply")}</Text>
+      </View>
     );
   }
   return (

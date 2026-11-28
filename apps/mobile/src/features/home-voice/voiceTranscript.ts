@@ -16,6 +16,8 @@ export interface TranscriptMessage {
 
 export type TranscriptLine =
   | { readonly id: string; readonly kind: "agent"; readonly text: string }
+  /** A reply the voice couldn't play, shown whole. */
+  | { readonly id: string; readonly kind: "unplayed"; readonly text: string }
   | { readonly id: string; readonly kind: "user"; readonly text: string }
   | { readonly id: string; readonly kind: "homeReply" }
   | { readonly id: string; readonly kind: "homeNote"; readonly text: string };
@@ -32,6 +34,7 @@ function lineFor(
     const shown: ReplyShown | undefined =
       speech === null ? { kind: "whole" } : speech.shown.get(message.id);
     if (shown === undefined) return null;
+    if (shown.kind === "unplayed") return { id: message.id, kind: "unplayed", text };
     return { id: message.id, kind: "agent", text: shown.kind === "whole" ? text : shown.text };
   }
   if (text.startsWith(HOME_UPDATE)) {

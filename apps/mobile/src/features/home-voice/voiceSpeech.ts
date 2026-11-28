@@ -44,12 +44,17 @@ export interface OwnLine {
   readonly messageId: string;
 }
 
-/** How much of a reply the transcript shows: the chunks that started playing, or all of it. */
+/**
+ * How much of a reply the transcript shows: the chunks that started playing, or all of it.
+ * `unplayed` shows all of it, noting the voice couldn't play some of it.
+ */
 export type ReplyShown =
   | { readonly kind: "spoken"; readonly text: string }
-  | { readonly kind: "whole" };
+  | { readonly kind: "whole" }
+  | { readonly kind: "unplayed" };
 
 const WHOLE: ReplyShown = { kind: "whole" };
+const UNPLAYED: ReplyShown = { kind: "unplayed" };
 
 interface ReplyProgress {
   readonly spoken: number;
@@ -131,6 +136,13 @@ export type VoiceSpeechEvent =
       readonly type: "playback";
       readonly id: string;
       readonly state: "started" | "finished" | "stopped";
+      readonly atMs: number;
+    }
+  /** The engine couldn't voice a chunk, for example when iOS refused Kokoro the GPU. */
+  | {
+      readonly type: "speakFailed";
+      readonly id: string;
+      readonly code: string;
       readonly atMs: number;
     }
   | {
@@ -216,7 +228,12 @@ export function openVoiceSpeech(previous: VoiceSpeechState | null): VoiceSpeechS
           queue: bargeIn(previous.queue).queue,
           replies: previous.replies,
           progress: previous.progress,
-          shown: new Map(previous.replies.map((reply) => [reply.id, WHOLE])),
+          shown: new Map(
+            previous.replies.map((reply) => [
+              reply.id,
+              previous.shown.get(reply.id) === UNPLAYED ? UNPLAYED : WHOLE,
+            ]),
+          ),
         };
   return { state, effects: [{ type: "checkModels" }] };
 }
@@ -266,9 +283,13 @@ function showUnheard(state: VoiceSpeechState): VoiceSpeechState {
 }
 
 function showAll(state: VoiceSpeechState): VoiceSpeechState {
-  if (state.replies.every((reply) => state.shown.get(reply.id) === WHOLE)) return state;
+  const hidden = state.replies.filter((reply) => {
+    const shown = state.shown.get(reply.id);
+    return shown !== WHOLE && shown !== UNPLAYED;
+  });
+  if (hidden.length === 0) return state;
   const shown = new Map(state.shown);
-  for (const reply of state.replies) shown.set(reply.id, WHOLE);
+  for (const reply of hidden) shown.set(reply.id, WHOLE);
   return { ...state, shown };
 }
 
@@ -346,6 +367,15 @@ function stepSpeech(
       return withTurn(state, event, config);
     case "playback":
       return onPlaybackEvent(state, event, config);
+    case "speakFailed":
+      return then(
+        onPlaybackEvent(
+          state,
+          { type: "playback", id: event.id, state: "stopped", atMs: event.atMs },
+          config,
+        ),
+        (next) => onSpeakFailed(next, event),
+      );
     case "sent":
       return onSent(state, event);
     case "thread":
@@ -664,6 +694,25 @@ function onPlaybackEvent(
     : then(next, (done) => afterSpeech(done, event.atMs, config));
 }
 
+/** The reply shows whole with a note, so a reply the voice couldn't play is never lost. */
+function onSpeakFailed(
+  state: VoiceSpeechState,
+  event: Extract<VoiceSpeechEvent, { type: "speakFailed" }>,
+): VoiceSpeechStep {
+  const replyId = replyOf(event.id);
+  const log: VoiceSpeechEffect = {
+    type: "log",
+    line: `[voice] couldn't play ${event.id} (${event.code}); showing the reply as text`,
+  };
+  if (!state.progress.has(replyId) || state.shown.get(replyId) === UNPLAYED) {
+    return { state, effects: [log] };
+  }
+  return {
+    state: { ...state, shown: new Map(state.shown).set(replyId, UNPLAYED) },
+    effects: [log],
+  };
+}
+
 /** A chunk that starts playing shows; a reply whose every chunk played shows whole. */
 function reveal(
   state: VoiceSpeechState,
@@ -674,7 +723,7 @@ function reveal(
   if (playback === "stopped") return state;
   if (playback === "started") {
     const shown = state.shown.get(replyId);
-    if (shown?.kind === "whole") return state;
+    if (shown !== undefined && shown.kind !== "spoken") return state;
     const text = shown === undefined ? item.text : `${shown.text} ${item.text}`;
     return { ...state, shown: new Map(state.shown).set(replyId, { kind: "spoken", text }) };
   }

@@ -774,6 +774,23 @@ describe("what the transcript shows of a reply", () => {
     expect(voice.state().shown.get("r1")).toEqual({ kind: "whole" });
   });
 
+  it("shows a reply the voice couldn't play whole, with a note, and logs it", () => {
+    const voice = call();
+    voice.reply("r1", REPLY);
+    const [first] = voice.engine.synthesizing;
+    voice.send({ type: "playback", id: first!.id, state: "stopped" });
+    voice.send({ type: "speakFailed", id: first!.id, code: "synth_failed" });
+
+    expect(voice.state().shown.get("r1")).toEqual({ kind: "unplayed" });
+    expect(voice.logs).toContain(
+      `[voice] couldn't play ${first!.id} (synth_failed); showing the reply as text`,
+    );
+    voice.playAll();
+    expect(voice.state().shown.get("r1")).toEqual({ kind: "unplayed" });
+    voice.send({ type: "error", code: "engine_restart_failed", message: "gone" });
+    expect(voice.state().shown.get("r1")).toEqual({ kind: "unplayed" });
+  });
+
   it("shows replies whole while the voice can't speak them", () => {
     const voice = call({ models: "missing" });
     voice.reply("r1", "Hi. Home is idle.");

@@ -268,6 +268,43 @@ it("in development, stamps each line with the time since the session opened, on 
   vi.useRealTimers();
 });
 
+it("a sentence the engine couldn't voice reaches the call as a failed reply", async () => {
+  const listeners = new Map<string, (event: unknown) => void>();
+  const states: Array<ReadonlyMap<string, unknown>> = [];
+  const engine: VoiceEngine = {
+    ...fakeEngine().engine,
+    stop: async () => {},
+    speak: async () => {
+      throw Object.assign(new Error("noise stage failed"), { code: "synth_failed" });
+    },
+    addListener: (name, listener) => {
+      listeners.set(name, listener as (event: unknown) => void);
+      return { remove: () => {} };
+    },
+  };
+  const driver = open(
+    engine,
+    () => 0,
+    null,
+    async () => {},
+    {
+      onChange: (state) => states.push(state.shown),
+    },
+  );
+  await settle();
+  driver.dispatch({
+    type: "thread",
+    replies: [{ id: "r1", text: "Hello there.", streaming: false }],
+    userMessageIds: new Set(),
+    lastLine: null,
+    atMs: 0,
+  });
+  await settle();
+
+  expect(states.at(-1)?.get("r1")).toEqual({ kind: "unplayed" });
+  driver.dispose();
+});
+
 it("in development, logs how loud the mic was while he spoke", async () => {
   const logs: string[] = [];
   const listeners = new Map<string, (event: unknown) => void>();
