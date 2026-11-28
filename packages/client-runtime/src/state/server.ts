@@ -2071,6 +2071,10 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:register-push-live-activity",
       tag: WS_METHODS.notificationsRegisterLiveActivity,
     }),
+    submitClientDiagnostic: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:client-diagnostics:submit",
+      tag: WS_METHODS.clientDiagnosticsSubmit,
+    }),
     checkOtlpEndpoint: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:check-otlp-endpoint",
       tag: WS_METHODS.serverCheckOtlpEndpoint,

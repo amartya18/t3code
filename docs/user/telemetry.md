@@ -13,6 +13,10 @@ The server sends usage events to `ingest.t3.codes` under a hashed random install
 - **Managed policy**: Administrators can set `"telemetry": false` in [managed policy](./managed-policy.md#other-capabilities) for servers and desktop apps.
 - **Mobile app**: Toggle **Send crash reports** and **Send connection traces** separately in **Settings → About T3 Code → Diagnostics**.
 
+## iOS crash reports on your server
+
+The iOS app also sends the crash and diagnostic reports iOS gives it to the server that hosts your Home, which saves them as JSON in its `diagnostics` folder (for example `~/.t3/userdata/diagnostics`). These reports go only to your own server, so the **Send crash reports** toggle doesn't affect them.
+
 ## Relay connection diagnostics
 
 T3 Connect sends connection timings, request paths, environment/thread IDs, and error types (no addresses, logs, or stack frames) to Axiom. Disabled by the server telemetry opt-outs above or by `T3CODE_OTEL_SDK_DISABLED` / `OTEL_SDK_DISABLED`.
