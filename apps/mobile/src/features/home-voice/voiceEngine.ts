@@ -49,10 +49,14 @@ export function voiceTuning(stored: Partial<VoiceTuning>): VoiceTuning {
 }
 
 /** Tuning for the native engine; it holds no policy, so all of this ships over the air. */
-export function voiceEngineConfig(voiceId: string, tuning: VoiceTuning): VoiceEngineConfig {
+export function voiceEngineConfig(
+  voiceId: string,
+  tuning: VoiceTuning,
+  kokoroGpu: boolean,
+): VoiceEngineConfig {
   return {
     vad: { threshold: 0.5, minSpeechMs: tuning.minSpeechMs, minSilenceMs: tuning.minSilenceMs },
-    tts: { voiceId, speed: 1, vocoderFloat32: false },
+    tts: { voiceId, speed: 1, vocoderFloat32: false, gpu: kokoroGpu },
     aec: { enabled: ECHO_CANCELLATION },
     logStages: __DEV__,
   };

@@ -46,7 +46,7 @@ function fakeEngine() {
 }
 
 function engineConfig(logStages: boolean): VoiceEngineConfig {
-  return { ...voiceEngineConfig("af_heart", DEFAULT_VOICE_TUNING), logStages };
+  return { ...voiceEngineConfig("af_heart", DEFAULT_VOICE_TUNING, false), logStages };
 }
 
 function inputs(config: VoiceEngineConfig, send: (text: string) => Promise<unknown>) {
@@ -116,7 +116,7 @@ it("feeds new detector holds from the sliders to the live engine without restart
   const driver = open(engine);
   await settle();
   const tuning = { ...DEFAULT_VOICE_TUNING, minSpeechMs: 900, minSilenceMs: 1_200 };
-  driver.update(inputs(voiceEngineConfig("af_heart", tuning), async () => {}));
+  driver.update(inputs(voiceEngineConfig("af_heart", tuning, false), async () => {}));
   await settle();
 
   expect(configured.at(-1)).toMatchObject({ minSpeechMs: 900, minSilenceMs: 1_200 });

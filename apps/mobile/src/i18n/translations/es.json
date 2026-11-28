@@ -2481,6 +2481,8 @@
   "577a82cbd28c817e": "Mostrar modelos anteriores",
   "d399fd774a249937": "Opciones de desarrollo. Se aplican de inmediato a la llamada en curso.",
   "e6ea926d122bbdc1": "Razonamiento (dev)",
+  "3b37835e5531c23f": "Kokoro en la GPU (dev)",
+  "809178f9c80f5427": "Se aplica desde la próxima llamada.",
   "f53067e7d3f642bb": "Duración mínima del habla (dev)",
   "030782a4e91d426e": "Silencio antes de evaluar (dev)",
   "1a2b9e59a43cecc0": "Espera si no ha terminado (dev)",

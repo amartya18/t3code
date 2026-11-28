@@ -2481,6 +2481,8 @@
   "577a82cbd28c817e": "Afficher les modèles plus anciens",
   "d399fd774a249937": "Options de développement. Elles s’appliquent tout de suite à l’appel en cours.",
   "e6ea926d122bbdc1": "Réflexion (dev)",
+  "3b37835e5531c23f": "Kokoro sur le GPU (dev)",
+  "809178f9c80f5427": "S’applique à partir du prochain appel.",
   "f53067e7d3f642bb": "Durée minimale de parole (dev)",
   "030782a4e91d426e": "Silence avant l’évaluation (dev)",
   "1a2b9e59a43cecc0": "Attente si pas terminé (dev)",

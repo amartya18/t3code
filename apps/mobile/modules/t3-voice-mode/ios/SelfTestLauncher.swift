@@ -20,7 +20,7 @@ public class VoiceSelfTestLauncher: ExpoAppDelegateSubscriber {
       await engine.configure(
         VoiceConfig(
           vad: .init(threshold: 0.5, minSpeechMs: 250, minSilenceMs: 300), voiceId: "af_heart", speed: 1,
-          vocoderFloat32: false, aec: false, logStages: false))
+          vocoderFloat32: false, kokoroGpu: false, aec: false, logStages: false))
       let started = Date()
       try await engine.downloadModels()
       print("T3_VOICE_SELF_TEST_DOWNLOAD_MS \(Int(Date().timeIntervalSince(started) * 1000))")

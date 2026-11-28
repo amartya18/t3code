@@ -14,8 +14,13 @@ actor Speaker {
 
   private let events: EventSink
   private let controls: Controls
+  private struct Build: Equatable {
+    let float32: Bool
+    let gpu: Bool
+  }
+
   private var tts: KokoroAneManager?
-  private var ttsFloat32: Bool?
+  private var build: Build?
   private var voice = ""
   private var speed: Float = 1
   private var engine: AVAudioEngine?
@@ -37,20 +42,22 @@ actor Speaker {
 
   func load(_ config: VoiceConfig) async throws {
     apply(config)
-    guard tts == nil || ttsFloat32 != config.vocoderFloat32 else { return }
+    let wanted = Build(float32: config.vocoderFloat32, gpu: config.kokoroGpu)
+    guard tts == nil || build != wanted else { return }
     let manager = KokoroAneManager(
       variant: .english, directory: ModelStore.root,
+      computeUnits: config.kokoroGpu ? .aneTailGpu : .aneTailCpu,
       vocoderPrecision: config.vocoderFloat32 ? .float32 : .float16)
     try await manager.initialize(preloadVoices: [config.voiceId])
     await tts?.cleanup()
     tts = manager
-    ttsFloat32 = config.vocoderFloat32
+    build = wanted
   }
 
   func unload() async {
     await tts?.cleanup()
     tts = nil
-    ttsFloat32 = nil
+    build = nil
   }
 
   func synthesize(_ text: String) async throws -> KokoroAneSynthesisResult {
