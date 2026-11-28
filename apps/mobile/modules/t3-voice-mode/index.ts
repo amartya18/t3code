@@ -1,6 +1,6 @@
 import { requireOptionalNativeModule, type EventSubscription } from "expo";
 
-/** `aec` and `tts.vocoderFloat32` apply on the next `start()`; the rest at once. */
+/** `aec`, `tts.vocoderFloat32` and `tts.gpu` apply on the next `prepare()` or `start()`; the rest at once. */
 export interface VoiceEngineConfig {
   readonly vad: {
     readonly threshold: number;
@@ -66,6 +66,11 @@ export interface VoiceEngine {
   modelStatus(): Promise<VoiceModelStatus>;
   downloadModels(): Promise<void>;
   deleteModels(): Promise<void>;
+  /**
+   * Loads the models `start()` loads, without the mic or the audio session. `loadMs` is each
+   * model's time from the load's start; empty when the models aren't downloaded or the engine runs.
+   */
+  prepare(): Promise<{ readonly loadMs: Partial<Record<VoiceModelPart, number>> }>;
   start(): Promise<void>;
   stop(): Promise<void>;
   setMuted(muted: boolean): void;
@@ -101,6 +106,7 @@ export const voiceEngine: VoiceEngine | null = native && {
   modelStatus: () => native.modelStatus(),
   downloadModels: () => native.downloadModels(),
   deleteModels: () => native.deleteModels(),
+  prepare: () => native.prepare(),
   start: () => native.start(),
   stop: () => native.stop(),
   setMuted: (muted) => native.setMuted(muted),

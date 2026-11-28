@@ -33,6 +33,10 @@ public final class T3VoiceModeModule: Module {
       try await self.engine.deleteModels()
     }
 
+    AsyncFunction("prepare") { () async throws -> [String: Any] in
+      ["loadMs": try await self.engine.prepare()]
+    }
+
     AsyncFunction("start") { () async throws in
       try await self.engine.start()
     }
