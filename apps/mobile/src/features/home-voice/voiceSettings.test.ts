@@ -6,7 +6,7 @@ vi.mock("react-native", () => ({ Platform: { OS: "ios", Version: "26.0" } }));
 vi.mock("../../../modules/t3-voice-mode", () => ({ voiceEngine: null }));
 vi.mock("expo-file-system", () => ({}));
 vi.mock("../../lib/atomic-file", () => ({ writeFileAtomically: async () => {} }));
-vi.mock("../../state/entities", () => ({ useProjects: () => [] }));
+vi.mock("../../state/projects", () => ({ environmentProjects: { projectsAtom: Atom.make([]) } }));
 vi.mock("../../state/home", () => ({ userHomeAtom: Atom.make(null) }));
 
 const { voiceModeSettings } = await import("./voiceSettings");
