@@ -3,6 +3,10 @@ import AVFoundation
 import Foundation
 
 extension VoiceEngine {
+  private static let routeSentences = [
+    "Sure, I can do that.", "The build finished without any errors.", "Want me to open the pull request now?",
+  ]
+
   /// `dumpTo` keeps the 16 kHz audio for off-device comparison.
   func selfTest(dumpTo folder: URL? = nil) async throws -> String {
     let config = try requireConfig()
@@ -24,6 +28,38 @@ extension VoiceEngine {
       defer { mark = Date() }
       return Int(Date().timeIntervalSince(mark) * 1000)
     }
+
+    let footprintBefore = footprintMB()
+    do {
+      report["prepareMs"] = try await prepare()
+    } catch {
+      errors["prepare"] = String(describing: error)
+    }
+    report["footprintMB"] = ["before": footprintBefore, "prepared": footprintMB()]
+
+    var routes: [String: Any] = [:]
+    for gpu in [false, true] {
+      let route = gpu ? "gpu" : "cpu"
+      let routeConfig = VoiceConfig(
+        vad: config.vad, voiceId: config.voiceId, speed: config.speed, vocoderFloat32: config.vocoderFloat32,
+        kokoroGpu: gpu, aec: config.aec, logStages: config.logStages)
+      do {
+        _ = lap()
+        try await speaker.load(routeConfig)
+        let loadMs = lap()
+        var sentenceMs: [Int] = []
+        for line in Self.routeSentences {
+          let result = try await speaker.synthesize(line)
+          guard !result.samples.isEmpty else { throw VoiceModeError.make("bad_audio", "Kokoro returned no audio.") }
+          sentenceMs.append(lap())
+        }
+        routes[route] = ["loadMs": loadMs, "firstMs": sentenceMs[0], "sentenceMs": sentenceMs]
+      } catch {
+        errors["tts.\(route)"] = String(describing: error)
+      }
+    }
+    report["kokoroRoutes"] = routes
+    _ = lap()
 
     var speech: [Float] = []
     do {
@@ -122,7 +158,8 @@ extension VoiceEngine {
     report["errors"] = errors
     let transcript = report["transcript"] as? String ?? ""
     let started = (report["vadChanges"] as? [[String: Any]])?.contains { $0["speaking"] as? Bool == true } ?? false
-    report["ok"] = errors.isEmpty && !transcript.isEmpty && started && report["meterReactMs"] != nil
+    let prepared = (report["prepareMs"] as? [String: Int])?.count == 4
+    report["ok"] = errors.isEmpty && prepared && !transcript.isEmpty && started && report["meterReactMs"] != nil
     return try selfTestJSON(report)
   }
 }
@@ -141,6 +178,18 @@ private func resampled(_ samples: [Float], rate: Int) throws -> [Float] {
     throw VoiceModeError.make("bad_audio", "Kokoro's audio didn't convert to 16 kHz.")
   }
   return converted
+}
+
+/// The app's memory as iOS counts it against its limit.
+private func footprintMB() -> Int {
+  var info = task_vm_info_data_t()
+  var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
+  let result = withUnsafeMutablePointer(to: &info) {
+    $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+      task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+    }
+  }
+  return result == KERN_SUCCESS ? Int(info.phys_footprint / 1_048_576) : -1
 }
 
 func selfTestJSON(_ report: [String: Any]) throws -> String {

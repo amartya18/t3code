@@ -15,6 +15,7 @@ actor VoiceEngine {
   private var audio: AVAudioEngine?
   private var running = false
   private var downloading = false
+  private var loading: Task<[String: Int], Error>?
   private var sessionObservers: [NSObjectProtocol] = []
   private var engineObserver: NSObjectProtocol?
   private var stopping: Task<Void, Never>?
@@ -65,11 +66,20 @@ actor VoiceEngine {
 
   func deleteModels() async throws {
     guard !running, !downloading else { throw VoiceModeError.busy }
+    _ = await loading?.result
     await listener.unload()
     await transcriber.unload()
     await turn.unload()
     await speaker.unload()
     try ModelStore.delete()
+  }
+
+  /// Loads what `start()` needs, without the mic. Returns each model's load time in ms, empty
+  /// when the models aren't downloaded or the engine is running.
+  func prepare() async throws -> [String: Int] {
+    let config = try requireConfig()
+    guard !running, ModelStore.isReady(config) else { return [:] }
+    return try await load(config)
   }
 
   func start() async throws {
@@ -80,13 +90,7 @@ actor VoiceEngine {
     do {
       guard await AVAudioApplication.requestRecordPermission() else { throw VoiceModeError.permissionDenied }
       guard ModelStore.isReady(config) else { throw VoiceModeError.modelsMissing }
-      events.stage("load.start")
-      async let heard: Void = listener.load()
-      async let written: Void = transcriber.load()
-      async let turned: Void = turn.load()
-      async let spoken: Void = speaker.load(config)
-      _ = try await (heard, written, turned, spoken)
-      events.stage("load.end")
+      _ = try await load(config)
       guard running else { return }
       ring.clear()
       listener.input.yield(.reset)
@@ -97,6 +101,38 @@ actor VoiceEngine {
       await stop()
       throw error
     }
+  }
+
+  /// Loads run one after another, so a second caller waits for the first and then finds its models loaded.
+  private func load(_ config: VoiceConfig) async throws -> [String: Int] {
+    let previous = loading
+    let task = Task {
+      _ = await previous?.result
+      return try await self.loadModels(config)
+    }
+    loading = task
+    return try await task.value
+  }
+
+  private func loadModels(_ config: VoiceConfig) async throws -> [String: Int] {
+    let began = nowMs()
+    events.stage("load.start")
+    async let heard = timed("vad", since: began) { try await self.listener.load() }
+    async let written = timed("asr", since: began) { try await self.transcriber.load() }
+    async let turned = timed("turn", since: began) { try await self.turn.load() }
+    async let spoken = timed("tts", since: began) { try await self.speaker.load(config) }
+    let (vad, asr, turnLoad, tts) = try await (heard, written, turned, spoken)
+    events.stage("load.end \(Int(nowMs() - began))ms")
+    return Dictionary(uniqueKeysWithValues: [vad, asr, turnLoad, tts])
+  }
+
+  private nonisolated func timed(
+    _ part: String, since began: Double, _ work: () async throws -> Void
+  ) async throws -> (String, Int) {
+    try await work()
+    let ms = Int(nowMs() - began)
+    events.stage("load.\(part).end \(ms)ms")
+    return (part, ms)
   }
 
   func stop() async {

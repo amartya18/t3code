@@ -16,6 +16,7 @@ function fakeEngine() {
     modelStatus: async () => ({ state: "ready", bytesOnDisk: 1 }),
     downloadModels: async () => {},
     deleteModels: async () => {},
+    prepare: async () => ({ loadMs: {} }),
     start: async () => {
       calls.push("start");
     },

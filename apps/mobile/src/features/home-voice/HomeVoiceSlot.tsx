@@ -5,7 +5,7 @@ import { useNavigation } from "@react-navigation/native";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import { useGT } from "gt-react-native";
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { Pressable, View } from "react-native";
 
 import * as Dialog from "../../components/ui/Dialog";
@@ -14,6 +14,7 @@ import { cn } from "../../lib/cn";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentThreads, environmentThreadShells } from "../../state/threads";
 import { readHomeView } from "./homeView";
+import { prepareVoiceOnce } from "./voicePrepare";
 import { VoiceWaveIcon } from "./VoiceWaveIcon";
 import { startVoiceSession, voiceSessionAtom } from "./voiceSession";
 import { useVoiceModeSettings } from "./voiceSettings";
@@ -39,6 +40,9 @@ function HomeVoiceButton(props: {
   const { scale } = useAndroidControlSizing();
   const circleSize = Math.round((props.large ? 44 : 30) * scale);
   const unavailable = settings === null;
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the native voice models before the first call
+  useEffect(() => prepareVoiceOnce(settings), [settings]);
 
   const start = () => {
     if (settings === null) {
