@@ -105,6 +105,17 @@ jobs:
             fi
           done
 
+      # The widget extension builds only as the app's dependency; a skipped splice would still pass.
+      - name: Check the voice call control is built
+        run: |
+          appex="$RUNNER_TEMP/derived/Build/Products/Debug-iphonesimulator/T3CodeDev.app/PlugIns/ExpoWidgetsTarget.appex"
+          ls "$appex"
+          for binary in "$appex/ExpoWidgetsTarget" "$appex/ExpoWidgetsTarget.debug.dylib"; do
+            if [ -f "$binary" ]; then nm -U "$binary" | xcrun swift-demangle >> "$RUNNER_TEMP/widget-symbols.txt"; fi
+          done
+          grep -m 1 -F "StartVoiceCallControl" "$RUNNER_TEMP/widget-symbols.txt" || { echo "::error::The control is not in the widget extension"; exit 1; }
+          grep -rl "StartVoiceCallIntent" "$appex/Metadata.appintents" || { echo "::error::The control's intent is not in the App Intents metadata"; exit 1; }
+
       - name: Restore voice models
         id: models
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
