@@ -60,6 +60,7 @@ export function createVoiceSpeechDriver(options: {
   let ramp: ReturnType<typeof setInterval> | null = null;
   let disposed = false;
   let wentLive = false;
+  let speechLevels: Array<number> | null = null;
   const chime = (sound: "start" | "end") =>
     options
       .chime(sound)
@@ -221,9 +222,17 @@ export function createVoiceSpeechDriver(options: {
   };
 
   const subscriptions = [
-    engine.addListener("vad", (event) =>
-      dispatch({ type: "vad", speaking: event.speaking, speechMs: event.atMs, atMs: now() }),
-    ),
+    engine.addListener("vad", (event) => {
+      if (speechLevels !== null && speechLevels.length > 0) {
+        devLog(`[voice] mic while speaking: ${levelSummary(speechLevels)}`);
+      }
+      speechLevels = event.speaking && inputs.engineConfig.logStages ? [] : null;
+      dispatch({ type: "vad", speaking: event.speaking, speechMs: event.atMs, atMs: now() });
+    }),
+    // Dev only: with a listener, every level window crosses to JS, even with the call minimized.
+    ...(inputs.engineConfig.logStages
+      ? [engine.addListener("micLevel", (event) => speechLevels?.push(event.level))]
+      : []),
     engine.addListener("playback", (event) =>
       dispatch({ type: "playback", id: event.id, state: event.state, atMs: now() }),
     ),
@@ -280,6 +289,13 @@ export function createVoiceSpeechDriver(options: {
       stopping = wentLive ? stopped.then(() => chime("end")) : stopped;
     },
   };
+}
+
+function levelSummary(levels: ReadonlyArray<number>): string {
+  const sorted = [...levels].sort((left, right) => left - right);
+  const at = (quantile: number) =>
+    sorted[Math.min(sorted.length - 1, Math.floor(quantile * sorted.length))]!.toFixed(3);
+  return `median ${at(0.5)}, p90 ${at(0.9)}, peak ${at(1)} over ${sorted.length} windows`;
 }
 
 /** Stamps a dev log line with the time since this session's engine opened. */

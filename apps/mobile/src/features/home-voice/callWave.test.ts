@@ -7,6 +7,7 @@ import {
   followMicLevel,
   MIC_FALL_MS,
   MIC_FLOOR,
+  MIC_LOUD_LEVEL,
   micWaveEnergy,
   smoothMicLevel,
   SWEEPS,
@@ -99,15 +100,23 @@ describe("mic level", () => {
   }
 
   it("lights the wave on the first window of speech and never on room noise", () => {
-    expect(micWaveEnergy(smoothMicLevel(0, SPEECH, WINDOW_MS))).toBe(1);
+    expect(micWaveEnergy(smoothMicLevel(0, SPEECH, WINDOW_MS))).toBeGreaterThan(0.5);
     expect(micWaveEnergy(settle(0, MIC_FLOOR, 2_000))).toBe(0);
     expect(micWaveEnergy(settle(0, MIC_FLOOR * 2, 2_000))).toBe(0);
   });
 
   it("holds through a pause between words and settles soon after speech stops", () => {
     const talking = settle(0, SPEECH, 500);
-    expect(micWaveEnergy(settle(talking, 0.001, 150))).toBe(1);
+    expect(micWaveEnergy(settle(talking, 0.001, 150))).toBeGreaterThan(0);
     expect(micWaveEnergy(settle(talking, 0.001, 500))).toBe(0);
+  });
+
+  it("swings further the louder he speaks, fully at loud speech", () => {
+    const swing = (raw: number) => micWaveEnergy(settle(0, raw, 500));
+    expect(swing(0.01)).toBeLessThan(swing(0.03));
+    expect(swing(0.03)).toBeLessThan(swing(0.06));
+    expect(swing(MIC_LOUD_LEVEL + MIC_FLOOR)).toBeCloseTo(1, 6);
+    expect(swing(0.5)).toBe(1);
   });
 
   it("falls by e over the fall time", () => {

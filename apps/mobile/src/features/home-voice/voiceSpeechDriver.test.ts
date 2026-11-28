@@ -267,6 +267,41 @@ it("in development, stamps each line with the time since the session opened, on 
   vi.useRealTimers();
 });
 
+it("in development, logs how loud the mic was while he spoke", async () => {
+  const logs: string[] = [];
+  const listeners = new Map<string, (event: unknown) => void>();
+  const engine: VoiceEngine = {
+    ...fakeEngine().engine,
+    stop: async () => {},
+    addListener: (name, listener) => {
+      listeners.set(name, listener as (event: unknown) => void);
+      return { remove: () => {} };
+    },
+  };
+  const driver = open(
+    engine,
+    () => 0,
+    (line) => {
+      logs.push(line);
+    },
+  );
+  await settle();
+  const vad = (speaking: boolean) =>
+    listeners.get("vad")!({ speaking, probability: 0.9, level: 0, atMs: 0 });
+  const mic = (level: number) => listeners.get("micLevel")!({ level, atMs: 0 });
+
+  mic(0.5);
+  vad(true);
+  for (const level of [0.02, 0.04, 0.03, 0.01, 0.08]) mic(level);
+  vad(false);
+  mic(0.5);
+
+  expect(logs.filter((line) => line.includes("mic while speaking"))).toEqual([
+    "+0.000s [voice] mic while speaking: median 0.030, p90 0.080, peak 0.080 over 5 windows",
+  ]);
+  driver.dispose();
+});
+
 it("in development, logs the tuning the engine starts with", async () => {
   const logs: string[] = [];
   const driver = open(
@@ -279,7 +314,7 @@ it("in development, logs the tuning the engine starts with", async () => {
   await settle();
 
   expect(logs).toContain(
-    "+0.000s [voice] tuning: threshold 0.5, min speech 250ms, silence before scoring 200ms, wait when not done 3000ms",
+    "+0.000s [voice] tuning: threshold 0.5, min speech 150ms, silence before scoring 200ms, wait when not done 3000ms",
   );
   driver.dispose();
 });

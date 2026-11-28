@@ -12,8 +12,8 @@ export const MIC_FALL_MS = 100;
 export const MIC_FLOOR = 0.003;
 /** The wave turns active once the level above the floor passes this. */
 export const MIC_ACTIVE_LEVEL = 0.005;
-/** 0 swings an active wave fully at any level; otherwise energy is level × this. */
-export const MIC_LOUDNESS_SCALE = 0;
+/** Level where an active wave swings fully; above MIC_ACTIVE_LEVEL, energy rises with loudness in dB. */
+export const MIC_LOUD_LEVEL = 0.1;
 
 /** One moment of the call's wave and glow, read on the UI thread. */
 export interface WaveMoment {
@@ -37,7 +37,10 @@ export function smoothMicLevel(previous: number, raw: number, dtMs: number): num
 export function micWaveEnergy(level: number): number {
   "worklet";
   if (level <= MIC_ACTIVE_LEVEL) return 0;
-  return MIC_LOUDNESS_SCALE > 0 ? Math.min(1, level * MIC_LOUDNESS_SCALE) : 1;
+  return Math.min(
+    1,
+    Math.log(level / MIC_ACTIVE_LEVEL) / Math.log(MIC_LOUD_LEVEL / MIC_ACTIVE_LEVEL),
+  );
 }
 
 export function followMicLevel(
