@@ -34,7 +34,8 @@ public final class T3VoiceModeModule: Module {
     }
 
     AsyncFunction("prepare") { () async throws -> [String: Any] in
-      ["loadMs": try await self.engine.prepare()]
+      let loadMs = try await self.engine.prepare()
+      return ["loadMs": loadMs]
     }
 
     AsyncFunction("start") { () async throws in
