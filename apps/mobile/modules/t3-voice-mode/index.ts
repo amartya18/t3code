@@ -11,6 +11,8 @@ export interface VoiceEngineConfig {
     readonly voiceId: string;
     readonly speed: number;
     readonly vocoderFloat32: boolean;
+    /** Kokoro's noise and tail stages on the GPU, which iOS refuses while the app is in the background. */
+    readonly gpu: boolean;
   };
   readonly aec: { readonly enabled: boolean };
   readonly logStages: boolean;

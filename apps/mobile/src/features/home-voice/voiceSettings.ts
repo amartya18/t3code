@@ -26,6 +26,8 @@ export interface VoiceModeSettings {
   readonly voiceId: KokoroVoiceId;
   /** Dev only: Claude turns run with extended thinking, to compare reply latency. */
   readonly thinking: boolean;
+  /** Dev only: Kokoro's last stages on the GPU, which iOS refuses while the app is in the background. */
+  readonly kokoroGpu: boolean;
   readonly tuning: VoiceTuning;
 }
 
@@ -43,6 +45,7 @@ const StoredVoiceSettings = Schema.Struct({
   modelSelection: Schema.optional(ModelSelection),
   voiceId: Schema.optional(Schema.Literals(KOKORO_VOICES)),
   thinking: Schema.optional(Schema.Boolean),
+  kokoroGpu: Schema.optional(Schema.Boolean),
   minSpeechMs: Schema.optional(Schema.Number),
   minSilenceMs: Schema.optional(Schema.Number),
   turnWaitMs: Schema.optional(Schema.Number),
@@ -97,14 +100,21 @@ export function useVoiceModeSettings(): VoiceModeSettings | null {
         project.environmentId === home?.environmentId &&
         project.title.trim().toLowerCase() === VOICE_PROJECT_TITLE,
     );
-  return project === undefined
-    ? null
-    : {
-        environmentId: project.environmentId,
-        projectId: project.id,
-        modelSelection: stored.modelSelection ?? DEFAULT_VOICE_MODEL,
-        voiceId: stored.voiceId ?? "af_heart",
-        thinking: stored.thinking ?? false,
-        tuning: voiceTuning(stored),
-      };
+  return project === undefined ? null : voiceModeSettings(stored, project);
+}
+
+/** The stored choices for a project, with defaults for whatever was never set. */
+export function voiceModeSettings(
+  stored: StoredVoiceSettings,
+  project: { readonly environmentId: EnvironmentId; readonly id: ProjectId },
+): VoiceModeSettings {
+  return {
+    environmentId: project.environmentId,
+    projectId: project.id,
+    modelSelection: stored.modelSelection ?? DEFAULT_VOICE_MODEL,
+    voiceId: stored.voiceId ?? "af_heart",
+    thinking: stored.thinking ?? false,
+    kokoroGpu: stored.kokoroGpu ?? false,
+    tuning: voiceTuning(stored),
+  };
 }

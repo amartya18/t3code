@@ -11,6 +11,7 @@ struct TtsConfigRecord: Record {
   @Field(.required) var voiceId: String = ""
   @Field(.required) var speed: Double = 0
   @Field(.required) var vocoderFloat32: Bool = false
+  @Field var gpu: Bool = false
 }
 
 struct AecConfigRecord: Record {
@@ -29,6 +30,8 @@ struct VoiceConfig: Equatable {
   let voiceId: String
   let speed: Float
   let vocoderFloat32: Bool
+  /// Kokoro's noise and tail stages on the GPU; iOS refuses GPU work while the app is in the background.
+  let kokoroGpu: Bool
   let aec: Bool
   let logStages: Bool
 }
@@ -51,7 +54,7 @@ extension VoiceConfig {
         threshold: Float(record.vad.threshold), minSpeechMs: Double(record.vad.minSpeechMs),
         minSilenceMs: Double(record.vad.minSilenceMs)),
       voiceId: voice, speed: Float(record.tts.speed), vocoderFloat32: record.tts.vocoderFloat32,
-      aec: record.aec.enabled, logStages: record.logStages)
+      kokoroGpu: record.tts.gpu, aec: record.aec.enabled, logStages: record.logStages)
   }
 }
 

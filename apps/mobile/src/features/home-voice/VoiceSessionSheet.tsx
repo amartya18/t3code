@@ -131,6 +131,15 @@ export function VoiceSessionSheet() {
               value={settings.thinking}
               onValueChange={(thinking) => void saveVoiceSettings({ thinking })}
             />
+            <View className="border-t border-border-subtle">
+              <ListToggleRow
+                icon="bolt.circle"
+                label={gt("Kokoro on GPU (dev)")}
+                description={gt("Applies from the next call.")}
+                value={settings.kokoroGpu}
+                onValueChange={(kokoroGpu) => void saveVoiceSettings({ kokoroGpu })}
+              />
+            </View>
             <TuningRow
               tuning={settings.tuning}
               setting="minSpeechMs"

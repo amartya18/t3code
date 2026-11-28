@@ -2481,6 +2481,8 @@
   "577a82cbd28c817e": "Show older models",
   "d399fd774a249937": "Developer options. They apply to the live call at once.",
   "e6ea926d122bbdc1": "Thinking (dev)",
+  "3b37835e5531c23f": "Kokoro on GPU (dev)",
+  "809178f9c80f5427": "Applies from the next call.",
   "f53067e7d3f642bb": "Minimum speech (dev)",
   "030782a4e91d426e": "Silence before scoring (dev)",
   "1a2b9e59a43cecc0": "Wait when not done (dev)",

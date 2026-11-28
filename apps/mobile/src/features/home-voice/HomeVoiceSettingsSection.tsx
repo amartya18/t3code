@@ -91,6 +91,7 @@ export function HomeVoiceSettingsSection() {
         <VoiceDownloadRow
           voiceId={settings?.voiceId ?? "af_heart"}
           tuning={settings?.tuning ?? DEFAULT_VOICE_TUNING}
+          kokoroGpu={settings?.kokoroGpu ?? false}
         />
       )}
     </SettingsSection>
@@ -98,7 +99,11 @@ export function HomeVoiceSettingsSection() {
 }
 
 /** The on-device speech models: their size on disk, and a way to free it. */
-function VoiceDownloadRow(props: { readonly voiceId: string; readonly tuning: VoiceTuning }) {
+function VoiceDownloadRow(props: {
+  readonly voiceId: string;
+  readonly tuning: VoiceTuning;
+  readonly kokoroGpu: boolean;
+}) {
   const gt = useGT();
   const sessionLive = useAtomValue(voiceSessionAtom) !== null;
   const [bytes, setBytes] = useState<number | null>(null);
@@ -110,7 +115,13 @@ function VoiceDownloadRow(props: { readonly voiceId: string; readonly tuning: Vo
     const engine = voiceEngine;
     let current = true;
     void engine
-      .configure(voiceEngineConfig(props.voiceId, { minSpeechMs, minSilenceMs, turnWaitMs }))
+      .configure(
+        voiceEngineConfig(
+          props.voiceId,
+          { minSpeechMs, minSilenceMs, turnWaitMs },
+          props.kokoroGpu,
+        ),
+      )
       .then(() => engine.modelStatus())
       .then((status) => {
         if (current) setBytes(status.bytesOnDisk);
@@ -119,7 +130,7 @@ function VoiceDownloadRow(props: { readonly voiceId: string; readonly tuning: Vo
     return () => {
       current = false;
     };
-  }, [props.voiceId, minSpeechMs, minSilenceMs, turnWaitMs]);
+  }, [props.voiceId, minSpeechMs, minSilenceMs, turnWaitMs, props.kokoroGpu]);
 
   const label = gt("Voice download");
   const size = bytes === null ? "" : bytes === 0 ? gt("None") : formatBytes(bytes);

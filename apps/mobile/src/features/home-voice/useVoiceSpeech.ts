@@ -73,7 +73,11 @@ export function useVoiceSpeech(session: VoiceSession) {
   const messages = Option.getOrNull(Option.map(threadState.data, (data) => data.messages));
   const tuning = settings?.tuning ?? DEFAULT_VOICE_TUNING;
   const inputs: VoiceSpeechInputs = {
-    engineConfig: voiceEngineConfig(settings?.voiceId ?? "af_heart", tuning),
+    engineConfig: voiceEngineConfig(
+      settings?.voiceId ?? "af_heart",
+      tuning,
+      settings?.kokoroGpu ?? false,
+    ),
     config: voiceSpeechConfig(tuning),
     send: (text, messageId) =>
       settings === null
