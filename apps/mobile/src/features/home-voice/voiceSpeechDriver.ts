@@ -195,11 +195,10 @@ export function createVoiceSpeechDriver(options: {
       }
       case "speak":
         devLog(`[voice] speak ${effect.id}`);
-        // `speak` rejects without a playback event when the engine never took the item.
         engine
           .speak({ id: effect.id, text: effect.text })
-          .catch(() =>
-            dispatch({ type: "playback", id: effect.id, state: "stopped", atMs: now() }),
+          .catch((error) =>
+            dispatch({ type: "speakFailed", id: effect.id, code: errorCode(error), atMs: now() }),
           );
         return;
       case "stopSpeech":

@@ -28,6 +28,15 @@ describe("voiceTranscript", () => {
     ]);
   });
 
+  it("shows a reply the voice couldn't play whole, marked as unplayed", () => {
+    expect(
+      voiceTranscript([agent("r", "Home is idle. Nothing to report.")], [], {
+        own: null,
+        shown: new Map([["r", { kind: "unplayed" }]]),
+      }),
+    ).toEqual([{ id: "r", kind: "unplayed", text: "Home is idle. Nothing to report." }]);
+  });
+
   it("hides the end-call marker, and a reply that is only the marker", () => {
     expect(
       voiceTranscript(
